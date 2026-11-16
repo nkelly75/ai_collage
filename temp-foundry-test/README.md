@@ -78,3 +78,54 @@ The `.venv` and Python caches are ignored by Git. Leave this directory in place
 while experimenting; it contains no Azure credentials.
 
 Reference: [Microsoft's keyless authentication guidance](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/managed-identity).
+
+## Agent Framework two-turn example
+
+`agent_smoke_test.py` adds a minimal Microsoft Agent Framework example alongside
+the unchanged direct-SDK sample. Install the updated requirements into the same
+virtual environment, then run it from the repository root:
+
+```powershell
+.\temp-foundry-test\.venv\Scripts\python.exe -m pip install -r .\temp-foundry-test\requirements.txt
+.\temp-foundry-test\.venv\Scripts\python.exe .\temp-foundry-test\agent_smoke_test.py
+```
+
+It uses the same Azure login, resource role, deployment, and token scope as the
+original sample, with asynchronous `DefaultAzureCredential`. A keyless
+`AsyncOpenAI` client is passed into the framework's `OpenAIChatClient` so request
+timeouts and disabled SDK retries are explicit. No API key or hosted agent is
+required. The `aiohttp` requirement supplies Azure Identity's asynchronous HTTP
+transport.
+
+The script creates one agent and reuses one session for:
+
+1. "What is the capital of France?"
+2. "What are three top tourist attractions there? Name the city in your answer."
+
+Expect the first answer to identify Paris, and the second to name Paris and
+three of its attractions, such as the Eiffel Tower, Louvre, and Notre-Dame.
+Exact wording and selections can vary. Neither the second prompt nor the agent
+instructions supplies the city name: the framework carries the first exchange
+into the second request using its in-memory session history.
+
+The session lasts only for this process. `store=False` disables provider response
+storage; this does not disable all service logging/retention. There is no session
+serialization, web search, function tool, UI, or interactive chat loop.
+The framework provider is pinned in `requirements.txt`; the minimal provider
+package brings its required core dependencies without the umbrella package.
+
+Each successful run makes two paid model requests with a 60-second timeout and
+256 maximum output tokens per request, including reasoning tokens. The script
+prints reported usage, surfaces failures/incomplete responses, and stops on
+error. It never automatically retries.
+
+For the approved implementation exercise, the retry budget is **one initial
+attempt plus two corrective retries total**, with at most three live executions
+(six requests, at most 1,536 allocated output tokens plus input). No Git writes,
+Azure configuration changes, scope expansion, or increased token limits are
+authorized by that budget. Stop and report a blocker when it is exhausted.
+Each manual rerun also incurs usage; the script does not maintain a persistent
+cross-process spending or run counter.
+
+References: [Framework sessions](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/conversations/)
+and [OpenAI provider](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/model-providers/openai).

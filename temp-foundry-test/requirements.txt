@@ -1,2 +1,4 @@
 openai>=2,<3
 azure-identity>=1.25,<2
+agent-framework-openai==1.18.2
+aiohttp>=3.9,<4
