@@ -17,6 +17,7 @@ Width = Annotated[float, Field(strict=True, gt=0, le=1)]
 ProjectId = Annotated[
     str, Field(strict=True, pattern=r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 ]
+HexColor = Annotated[str, Field(strict=True, pattern=r"^#[0-9a-fA-F]{6}$")]
 
 
 class CollageError(Exception):
@@ -40,7 +41,12 @@ class Model(BaseModel):
 
 class Background(Model):
     type: Literal["color"]
-    value: Annotated[str, Field(strict=True, pattern=r"^#[0-9a-fA-F]{6}$")]
+    value: HexColor
+
+
+class Border(Model):
+    width_px: Annotated[int, Field(strict=True, ge=0)]
+    color: HexColor
 
 
 class Canvas(Model):
@@ -61,6 +67,7 @@ class Element(Model):
     source_image_id: PositiveInt
     box_normalized: Box
     z_index: Annotated[int, Field(strict=True)]
+    border: Border | None = None
 
 
 class InputLayout(Model):
@@ -83,6 +90,17 @@ class PixelBox(Model):
 class ResolvedElement(Element):
     box_normalized: ResolvedBox
     box_pixels: PixelBox
+
+    @property
+    def photo_box_pixels(self) -> PixelBox:
+        inset = self.border.width_px if self.border is not None else 0
+        outer = self.box_pixels
+        return PixelBox(
+            x=outer.x + inset,
+            y=outer.y + inset,
+            width=outer.width - 2 * inset,
+            height=outer.height - 2 * inset,
+        )
 
 
 class ResolvedLayout(Model):

@@ -7,12 +7,26 @@ keeping geometry, validation, and rendering deterministic.
 **Available today:** a local Python CLI that imports JPEG/PNG photos, renders
 JSON layouts to PNG, and keeps accepted layout versions. It preserves whole
 photos without cropping or stretching, supports different canvas aspect ratios,
-solid backgrounds, and overlapping images with explicit stacking.
+solid backgrounds, optional outside photo borders, and overlapping images with
+explicit stacking.
 
 The collage application runs offline without credentials or model calls.
 Natural-language design, a graphical UI, and Azure hosting are planned, not
 implemented. Separate Foundry connectivity experiments are not part of the
 collage workflow.
+
+## Where the idea came from
+
+The project began with a conversation between the author and their daughter,
+Emma. She had made a collage in the Android app PicCollage and wanted to improve
+it. Attempts to adjust the result through ChatGPT and Copilot made it worse
+rather than delivering the changes she wanted.
+
+That experience inspired the separation at the heart of this project: let an
+LLM propose creative layouts and adjustments, but let deterministic code
+position, resize, and composite the original photos instead of regenerating
+them. [Emma's original collage](photos/em_manual_collage.jpg) is a useful
+reference for exploring which layout capabilities the project needs.
 
 ## Quick start
 
@@ -36,6 +50,10 @@ Use `examples\portrait_9x16.json` instead for a **900x1600 (9:16)** canvas.
 Canvas dimensions and positions are defined in the JSON, not separate CLI
 aspect-ratio flags.
 
+For an asymmetric **1200x1800 (2:3)** composition with borders and a larger
+foreground photo, see [Emma's layered example](docs/cli-guide.md#emmas-layered-23-example)
+and its editable recipe, `examples\emma_2x3.json`.
+
 ## Editable recipes and saved results
 
 Files under `examples` are **input recipes**: edit their canvas, photo positions,
@@ -58,6 +76,7 @@ relationship, storage paths, and versioning behavior.
 | Document | Purpose |
 |---|---|
 | [Local CLI guide](docs/cli-guide.md) | Setup, commands, examples, layout rules, limits, storage, and tests |
+| [Layout design decisions](docs/layout-decisions.md) | Discussed extensions, including outside borders and their layout-box semantics; implementation status is explicit |
 | [Project blueprint](ai_collage_builder_project_blueprint.md) | Product direction, proposed architecture, and roadmap |
 | [Phase 1 implementation plan](phase_1_implementation_plan.md) | Agreed scope, guardrails, and implementation records |
 | [Foundry experiments](temp-foundry-test/README.md) | Separate keyless model-connectivity examples; running them makes paid service calls |

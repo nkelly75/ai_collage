@@ -4,7 +4,7 @@ import warnings
 from fractions import Fraction
 from pathlib import Path
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 
 from .models import (
     MAX_FILE_BYTES,
@@ -71,15 +71,27 @@ def resolve_layout(
         photo = by_id[element.source_image_id]
         box = element.box_normalized
         x, y, width = (Fraction(str(value)) for value in (box.x, box.y, box.width))
-        height = width * canvas.width * photo.height / (canvas.height * photo.width)
+        border_width = element.border.width_px if element.border is not None else 0
+        photo_width = width * canvas.width - 2 * border_width
+        if photo_width <= 0:
+            raise CollageError(f"Element {element.id} border leaves no positive photo area.")
+        height = (
+            photo_width * photo.height / photo.width + 2 * border_width
+        ) / canvas.height
         if x + width > 1 or y + height > 1:
             raise CollageError(f"Element {element.id} extends beyond the canvas.")
         pixel_width = round_half_up(width * canvas.width)
-        pixel_height = round_half_up(Fraction(pixel_width * photo.height, photo.width))
+        photo_pixel_width = pixel_width - 2 * border_width
+        if photo_pixel_width <= 0:
+            raise CollageError(f"Element {element.id} rounds to zero photo pixels.")
+        photo_pixel_height = round_half_up(
+            Fraction(photo_pixel_width * photo.height, photo.width)
+        )
+        pixel_height = photo_pixel_height + 2 * border_width
         pixel_x = round_half_up(x * canvas.width)
         pixel_y = round_half_up(y * canvas.height)
-        if pixel_width == 0 or pixel_height == 0:
-            raise CollageError(f"Element {element.id} rounds to zero pixels.")
+        if photo_pixel_height == 0:
+            raise CollageError(f"Element {element.id} rounds to zero photo pixels.")
         if (
             pixel_x + pixel_width > canvas.width
             or pixel_y + pixel_height > canvas.height
@@ -119,6 +131,7 @@ def render_layout(
         (layout.canvas.width, layout.canvas.height),
         layout.canvas.background.value,
     ) as canvas:
+        draw = ImageDraw.Draw(canvas)
         for element in sorted(layout.elements, key=lambda item: item.z_index):
             photo = by_id[element.source_image_id]
             image, _ = load_photo(paths[photo.source_image_id])
@@ -127,7 +140,19 @@ def render_layout(
                     raise CollageError(
                         f"Photo {photo.source_image_id} dimensions differ from project metadata."
                     )
-                box = element.box_pixels
+                if element.border is not None and element.border.width_px > 0:
+                    outer = element.box_pixels
+                    draw.rectangle(
+                        (
+                            outer.x,
+                            outer.y,
+                            outer.x + outer.width - 1,
+                            outer.y + outer.height - 1,
+                        ),
+                        outline=element.border.color,
+                        width=element.border.width_px,
+                    )
+                box = element.photo_box_pixels
                 with image.resize(
                     (box.width, box.height), Image.Resampling.LANCZOS
                 ) as resized:
