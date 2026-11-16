@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "canvas": {
+    "width": 900,
+    "height": 1200,
+    "background": { "type": "color", "value": "#FFFFFF" }
+  },
+  "elements": [
+    {
+      "id": 1,
+      "type": "image",
+      "source_image_id": 1,
+      "box_normalized": { "x": 0.04, "y": 0.04, "width": 0.44 },
+      "z_index": 1
+    },
+    {
+      "id": 2,
+      "type": "image",
+      "source_image_id": 2,
+      "box_normalized": { "x": 0.52, "y": 0.04, "width": 0.44 },
+      "z_index": 2
+    },
+    {
+      "id": 3,
+      "type": "image",
+      "source_image_id": 3,
+      "box_normalized": { "x": 0.04, "y": 0.52, "width": 0.44 },
+      "z_index": 3
+    },
+    {
+      "id": 4,
+      "type": "image",
+      "source_image_id": 4,
+      "box_normalized": { "x": 0.52, "y": 0.52, "width": 0.44 },
+      "z_index": 4
+    }
+  ]
+}

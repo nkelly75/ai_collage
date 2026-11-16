@@ -1,11 +1,21 @@
 # Phase 1 Implementation Plan: Local Collage Engine
 
-**Status: Discussion draft, not approved for implementation.**
+**Status: Step 1 approved and implemented; Step 2 remains unapproved.**
 
 This repository plan refines `ai_collage_builder_project_blueprint.md`.
-Only plan updates are currently authorized. The initial Autopilot implementation
-scope, once explicitly approved, is **Step 1 only**. Step 2 is context for later
-planning, not part of that implementation brief.
+The user explicitly approved **Step 1 only** after confirming the contracts
+below. Step 2 is context for later planning, not part of that implementation
+brief. The original proposals below are the accepted Step 1 contract.
+
+Implementation uses the root `ai_collage` package, Pillow, Pydantic v2 strict
+models, standard-library argparse, root `requirements.txt` /
+`requirements-dev.txt`, a separate root `.venv`, and pytest tests in `tests`.
+Usage and verification commands are in `README.md`; the editable starter is
+`examples\portrait_9x16.json`. The supplied-photo preview is at
+`.collage-data\users\local-dev\projects\portrait-demo\renders\v0001.png`.
+The documented starter positions/dimensions and unchanged source photo hashes
+were verified. Corrective retry cycles used: **0 of 2**. No Git writes or service
+calls were made. Stop here for review; do not begin Step 2.
 
 ## Two-step boundary
 
@@ -190,7 +200,7 @@ implementation, using this content if the contract is confirmed:
 - Photo numbers are stable within the project, in CLI import order. Underlying
   owner-scoped uploads have separate generated asset IDs; layout JSON cannot
   provide a `src` filesystem path or relabel uploaded photos.
-- Proposed Step 1 rule: each imported photo appears exactly once. Element IDs
+- Confirmed Step 1 rule: each imported photo appears exactly once. Element IDs
   and `z_index` values are unique; ascending `z_index` renders back to front.
 - Permit only documented fields. Reject supplied height, rotation, shadows,
   captions, non-neutral crop/pan/zoom, and image backgrounds with clear errors.
@@ -308,7 +318,7 @@ Hand-authored layouts prove deterministic execution, not LLM design quality.
 
 - **Initial implementation scope: Step 1 only.** No model integration, Agent
   Framework wiring, conversation persistence, or Step 2 experiment is included.
-  Current permission is still limited to planning-document updates.
+  The user's implementation approval covers only the offline brief.
 - **No Git writes:** No stage, commit, push, branch/ref changes, checkout, stash,
   reset, Git configuration changes, or other Git mutations. Read-only inspection
   is allowed. Ordinary file edits within the approved brief are allowed;
@@ -329,11 +339,12 @@ Hand-authored layouts prove deterministic execution, not LLM design quality.
 - Approval for Step 1 never authorizes Step 2. Return to planning at that boundary
   or when a material unresolved design decision arises.
 
-## Open decisions before implementation approval
+## Contract decisions accepted with Step 1 approval
 
 - CLI commands/layout schema; pixel rounding and resource limits.
 - Local data location and overwrite/version behavior.
-- Exact app dependency manifest, package/test paths, and environment setup commands.
+- Package/test organization and environment commands are documented above and
+  in `README.md`; no smoke-test environment changes are included.
 
 ## Proposed todos
 
@@ -346,11 +357,9 @@ Hand-authored layouts prove deterministic execution, not LLM design quality.
 
 ## Implementation approval boundary
 
-The discussion draft is now in the repository for user review. Further plan
-refinement is allowed, but application code, dependencies, fixtures, and generated
-outputs must wait for explicit Step 1 implementation approval. Keep the existing
-blueprint and smoke-test code unchanged. Finishing Step 1 is a stop/review point,
-not permission to continue into Step 2.
+The user explicitly approved the offline Step 1 implementation. Keep the
+existing blueprint and smoke-test code unchanged. Finishing Step 1 is a
+stop/review point, not permission to continue into Step 2.
 
 ## Decisions confirmed during refinement
 
@@ -373,6 +382,8 @@ not permission to continue into Step 2.
 - The supplied photos and curated layout examples may be committed by the user;
   ignore generated working copies/state instead. No Git writes by Copilot.
 - The first Autopilot implementation brief covers Step 1 only.
+- Each imported photo appears exactly once per layout; omission and reuse are
+  deferred beyond Step 1.
 
 ## Supplied working images (metadata inspected, files unchanged)
 
