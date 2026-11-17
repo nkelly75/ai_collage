@@ -91,8 +91,9 @@ still apply to any subsequent approved implementation.
 
 **Status: implemented following explicit approval.** This increment covers
 fixed frames, crop-to-fill, pan/zoom, tests, and a separate framed Emma example.
-Rounded corners and model-generated layouts remain later, separately approved
-steps. See the [CLI guide](cli-guide.md#fixed-frames-pan-and-zoom) for syntax.
+Rounded corners were a separately approved follow-up, described below;
+model-generated layouts remain deferred. See the
+[CLI guide](cli-guide.md#fixed-frames-pan-and-zoom) for syntax.
 
 - Preserve the existing whole-photo mode and its derived height. Existing input
   recipes, saved versions, and examples must keep their current behavior.
@@ -132,10 +133,11 @@ framed approximation.
 Bridge/Eye placements while reframing the bookshop and breakfast. It does not
 reconstruct the reference's original settings or change the whole-photo baseline.
 
-## Subsequent increment: rounded corners
+## Rounded corners
 
-**Status: radius model agreed in discussion; not implemented.** Add this after
-the fixed-frame geometry is settled.
+**Status: implemented following explicit approval.** An image element accepts
+`corner_radius_px`, a nonnegative integer in output pixels, defaulting to zero.
+See the [CLI guide](cli-guide.md#rounded-corners) for syntax and examples.
 
 - Specify one corner radius in pixels at the **photo's edge**, not two
   independently adjustable radii.
@@ -153,7 +155,16 @@ the fixed-frame geometry is settled.
 - Rounded photo corners intentionally mask small corner regions in the render;
   they do not alter source files. This is distinct from a border accidentally
   painting over the photo.
+- Reject a radius larger than half the smaller actual photo dimension after
+  rounding and border inset. Do not silently clamp invalid values.
+- Smoothly antialias both edges while preserving photo alpha and avoiding a
+  compositing seam between the photo and border.
 
-Each increment gets its own approval, focused tests, and visual review before
-proceeding. These notes record decisions, not a combined implementation
-authorization.
+`examples\emma_rounded_2x3.json` adds a 10-pixel photo radius to the refined
+framed composition without changing its crops, borders, or placement. The
+square-corner recipes and accepted versions remain unchanged.
+
+Tilt and text/captions remain deferred and unimplemented. Tilt still needs an
+explicit policy for rotated frames at canvas edges; this increment does not
+authorize either feature. Each increment gets its own approval, focused tests,
+and visual review.

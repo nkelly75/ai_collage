@@ -9,7 +9,8 @@ JSON layouts to PNG, and keeps accepted layout versions. Preserve whole photos,
 or opt into fixed rectangular frames with crop-to-fill, pan, and 1x-4x zoom.
 Both modes avoid stretching and support different canvas aspect ratios, solid
 backgrounds, optional outside photo borders, and overlapping images with
-explicit stacking. Rounded corners are not implemented yet.
+explicit stacking. Optional rounded corners work with or without borders.
+Tilt and captions are not implemented yet.
 
 The collage application runs offline without credentials or model calls.
 Natural-language design, a graphical UI, and Azure hosting are planned, not
@@ -57,6 +58,9 @@ and its editable recipe, `examples\emma_2x3.json`.
 The separate [framed variation](docs/cli-guide.md#emmas-framed-variation) uses
 `examples\emma_framed_2x3.json` to adjust the bookshop and breakfast crops without
 changing that whole-photo baseline.
+`examples\emma_rounded_2x3.json` adds subtle rounded corners to the refined
+framed composition; see [rounded corners](docs/cli-guide.md#rounded-corners)
+for the single-radius setting.
 
 ## Editable recipes and saved results
 
@@ -87,7 +91,7 @@ workflow, then inspect the resulting pixels. For example:
 - A square drawn inside a wide image should remain square when rendered into a
   tall frame, rather than becoming stretched.
 - Known border colours and transparent areas let tests check border thickness
-  and which overlapping layer shows through.
+  and which overlapping layer shows through, including at rounded corners.
 
 Because the starting pictures are deliberately simple, the expected colours
 and positions are known in advance. Checks can be exact where appropriate,

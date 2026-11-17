@@ -87,6 +87,21 @@ def framed_layout_data(width=100, height=100):
     return data
 
 
+def rounded_layout_data(framed=False, border_width=5):
+    data = framed_layout_data() if framed else layout_data()
+    front, back = data["elements"]
+    front["box_normalized"] = {"x": 0.2, "y": 0.2, "width": 0.6}
+    back["box_normalized"] = {"x": 0.1, "y": 0.1, "width": 0.8}
+    if framed:
+        front["box_normalized"]["height"] = 0.6
+        back["box_normalized"]["height"] = 0.8
+    front.update(z_index=2, corner_radius_px=10)
+    back["z_index"] = 1
+    if border_width:
+        front["border"] = {"width_px": border_width, "color": "#FFFFFF"}
+    return data
+
+
 @pytest.mark.parametrize("canvas", [(100, 100), (200, 100), (100, 200)])
 @pytest.mark.parametrize("border_width", [0, 2])
 def test_geometry_and_whole_photo_corners(
@@ -310,7 +325,8 @@ def test_border_does_not_fill_transparent_photo_interior(
 
 
 @pytest.mark.parametrize("foreground", [1, 2])
-def test_photo_and_border_share_one_stacking_layer(store, tmp_path, foreground):
+@pytest.mark.parametrize("radius", [0, 2])
+def test_photo_and_border_share_one_stacking_layer(store, tmp_path, foreground, radius):
     sources = [
         photo_file(tmp_path / "back.png", (20, 20), "red"),
         photo_file(tmp_path / "front.png", (20, 20), "blue"),
@@ -321,6 +337,8 @@ def test_photo_and_border_share_one_stacking_layer(store, tmp_path, foreground):
     data["elements"][0]["border"] = {"width_px": 3, "color": "#00FF00"}
     data["elements"][1]["box_normalized"] = {"x": 0.4, "y": 0.3, "width": 0.3}
     data["elements"][1]["border"] = {"width_px": 2, "color": "#FFFF00"}
+    for element in data["elements"]:
+        element["corner_radius_px"] = radius
     if foreground == 1:
         data["elements"][0]["z_index"] = 3
     _, output = store.apply_layout("layered-borders", write_layout(tmp_path, data))
@@ -348,6 +366,7 @@ def test_legacy_and_zero_border_snapshots_preserve_output(store, sources, tmp_pa
         element.pop("border", None)
         element.pop("framing", None)
         element.pop("source_crop", None)
+        element.pop("corner_radius_px", None)
     saved_layout.write_text(json.dumps(legacy), encoding="utf-8")
     legacy_bytes = saved_layout.read_bytes()
     store.render("legacy-border", 1)
@@ -601,6 +620,179 @@ def test_whole_photo_mode_rejects_even_null_input_height(store, sources, tmp_pat
         store.apply_layout("null-height", write_layout(tmp_path, data))
 
 
+@pytest.mark.parametrize("framed", [False, True])
+@pytest.mark.parametrize("border_width", [0, 5])
+def test_rounded_corners_reveal_lower_layer_and_keep_concentric_border(
+    store, tmp_path, framed, border_width
+):
+    sources = [
+        photo_file(tmp_path / "front.png", (40, 40), "red"),
+        photo_file(tmp_path / "back.png", (40, 40), "blue"),
+    ]
+    original = sources[0].read_bytes()
+    store.create("rounded", sources)
+    data = rounded_layout_data(framed, border_width)
+    resolved, output = store.apply_layout("rounded", write_layout(tmp_path, data))
+    element = resolved.elements[0]
+    assert element.box_pixels.model_dump() == {
+        "x": 20, "y": 20, "width": 60, "height": 60
+    }
+    assert store.load_layout(store.load("rounded"), 1) == resolved
+    with Image.open(output) as image:
+        for point in [(20, 20), (79, 20), (20, 79), (79, 79)]:
+            assert image.getpixel(point) == (0, 0, 255)
+        assert image.getpixel((50, 20)) == (
+            (255, 255, 255) if border_width else (255, 0, 0)
+        )
+        assert image.getpixel((50, 50)) == (255, 0, 0)
+        if border_width:
+            for point in [(26, 26), (73, 26), (26, 73), (73, 73)]:
+                assert all(channel >= 250 for channel in image.getpixel(point))
+            inner_edge = [
+                image.getpixel((x, y))
+                for y in range(27, 34) for x in range(27, 34)
+            ]
+            assert all(red == 255 and green == blue for red, green, blue in inner_edge)
+            assert any(0 < green < 255 for _, green, _ in inner_edge)
+            outer_edge = [
+                image.getpixel((x, y))
+                for y in range(20, 35) for x in range(20, 25)
+            ]
+            assert any(0 < red < 255 for red, _, _ in outer_edge)
+            assert all(red == green and blue == 255 for red, green, blue in outer_edge)
+    previous_output = output.read_bytes()
+    store.render("rounded")
+    assert output.read_bytes() == previous_output
+    assert sources[0].read_bytes() == original
+
+
+@pytest.mark.parametrize("alpha, expected", [
+    (0, (0, 0, 255)), (128, (128, 0, 127)),
+])
+@pytest.mark.parametrize("border_width", [0, 5])
+def test_rounded_photo_retains_source_transparency(
+    store, tmp_path, alpha, expected, border_width
+):
+    source = tmp_path / "transparent.png"
+    with Image.new("RGBA", (40, 40), (255, 0, 0, alpha)) as image:
+        image.save(source)
+    store.create("rounded-alpha", [
+        source, photo_file(tmp_path / "back.png", (40, 40), "blue")
+    ])
+    _, output = store.apply_layout(
+        "rounded-alpha", write_layout(tmp_path, rounded_layout_data(True, border_width))
+    )
+    with Image.open(output) as image:
+        assert image.getpixel((50, 50)) == expected
+        assert image.getpixel((20, 20)) == (0, 0, 255)
+        if border_width:
+            assert image.getpixel((50, 20)) == (255, 255, 255)
+
+
+def test_borderless_rounded_edges_are_smooth_and_symmetric(store, tmp_path):
+    store.create("rounded-smooth", [
+        photo_file(tmp_path / "front.png", (40, 40), "white"),
+        photo_file(tmp_path / "back.png", (40, 40), "black"),
+    ])
+    data = rounded_layout_data(border_width=0)
+    _, output = store.apply_layout("rounded-smooth", write_layout(tmp_path, data))
+    with Image.open(output) as image:
+        pixels = []
+        for y in range(10):
+            for x in range(10):
+                pixel = image.getpixel((20 + x, 20 + y))
+                assert pixel == image.getpixel((79 - x, 20 + y))
+                assert pixel == image.getpixel((20 + x, 79 - y))
+                assert pixel == image.getpixel((79 - x, 79 - y))
+                assert pixel[0] == pixel[1] == pixel[2]
+                pixels.append(pixel[0])
+        assert 0 in pixels and 255 in pixels
+        assert any(0 < value < 255 for value in pixels)
+
+
+@pytest.mark.parametrize("framed", [False, True])
+@pytest.mark.parametrize("border_width", [0, 2])
+def test_zero_radius_and_legacy_snapshots_preserve_exact_output(
+    store, sources, tmp_path, framed, border_width
+):
+    store.create("legacy-radius", sources)
+    data = framed_layout_data() if framed else layout_data()
+    for element in data["elements"]:
+        element["border"] = {"width_px": border_width, "color": "#00FF00"}
+    first, output = store.apply_layout("legacy-radius", write_layout(tmp_path, data))
+    expected = output.read_bytes()
+    saved_layout = store.version_paths("legacy-radius", 1)[0]
+    legacy = json.loads(saved_layout.read_text())
+    for element in legacy["elements"]:
+        del element["corner_radius_px"]
+    saved_layout.write_text(json.dumps(legacy), encoding="utf-8")
+    legacy_bytes = saved_layout.read_bytes()
+    store.render("legacy-radius")
+    assert output.read_bytes() == expected
+    assert saved_layout.read_bytes() == legacy_bytes
+    for element in data["elements"]:
+        element["corner_radius_px"] = 0
+    second, output = store.apply_layout("legacy-radius", write_layout(tmp_path, data))
+    assert output.read_bytes() == expected
+    for old, new in zip(first.elements, second.elements, strict=True):
+        assert old.box_pixels == new.box_pixels
+        assert old.source_crop == new.source_crop
+
+
+@pytest.mark.parametrize("radius, error", [
+    (-1, ValidationError), (1.5, ValidationError), (True, ValidationError),
+    ("10", ValidationError), (None, ValidationError),
+    (float("nan"), CollageError), (float("inf"), CollageError),
+])
+def test_invalid_corner_radius_preserves_accepted_state(
+    store, sources, tmp_path, radius, error
+):
+    store.create("invalid-radius", sources)
+    store.apply_layout("invalid-radius", write_layout(tmp_path))
+    directory = store.project_dir("invalid-radius")
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    data = layout_data()
+    data["elements"][0]["corner_radius_px"] = radius
+    with pytest.raises(error):
+        store.apply_layout("invalid-radius", write_layout(tmp_path, data))
+    assert {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("framed, border_width, maximum", [
+    (False, 0, 5), (False, 2, 4), (True, 0, 10), (True, 2, 8),
+])
+def test_corner_radius_limit_uses_actual_inset_photo_dimensions(
+    store, sources, tmp_path, framed, border_width, maximum
+):
+    store.create("radius-limit", sources)
+    data = framed_layout_data() if framed else layout_data()
+    element = data["elements"][0]
+    element["border"] = {"width_px": border_width, "color": "#FFFFFF"}
+    element["corner_radius_px"] = maximum
+    store.apply_layout("radius-limit", write_layout(tmp_path, data))
+    directory = store.project_dir("radius-limit")
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    element["corner_radius_px"] += 1
+    with pytest.raises(CollageError, match="half the smaller photo dimension"):
+        store.apply_layout("radius-limit", write_layout(tmp_path, data))
+    assert {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()} == before
+
+
+def test_invalid_saved_radius_cannot_replace_accepted_preview(store, sources, tmp_path):
+    store.create("tampered-radius", sources)
+    data = layout_data()
+    data["elements"][0]["corner_radius_px"] = 3
+    _, output = store.apply_layout("tampered-radius", write_layout(tmp_path, data))
+    previous_output = output.read_bytes()
+    saved_layout = store.version_paths("tampered-radius", 1)[0]
+    saved = json.loads(saved_layout.read_text())
+    saved["elements"][0]["corner_radius_px"] = 999
+    saved_layout.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(CollageError, match="corner_radius_px"):
+        store.render("tampered-radius")
+    assert output.read_bytes() == previous_output
+
+
 def test_half_up_rounding_and_continuous_bounds(store, tmp_path):
     paths = [photo_file(tmp_path / f"{number}.png", (4, 3)) for number in (1, 2)]
     project = store.create("rounding", paths)
@@ -717,7 +909,10 @@ def test_failed_publication_rolls_back_new_files(
     directory = store.project_dir("rollback")
     before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
     if framed:
-        path = write_layout(tmp_path, framed_layout_data())
+        data = framed_layout_data()
+        for element in data["elements"]:
+            element["corner_radius_px"] = 2
+        path = write_layout(tmp_path, data)
 
     def fail_render(layout, photos, paths, output):
         output.write_bytes(b"partial image")
@@ -888,6 +1083,7 @@ def test_cli_persists_across_processes_without_credentials_or_network(
     if framed:
         for element in data["elements"]:
             element["framing"].update(zoom=2, pan_x=0.25, pan_y=0.75)
+            element["corner_radius_px"] = 2
     if border_width:
         for element in data["elements"]:
             element["border"] = {"width_px": border_width, "color": "#00FF00"}
@@ -899,6 +1095,7 @@ def test_cli_persists_across_processes_without_credentials_or_network(
         saved = json.loads(Path(json.loads(applied.stdout)["layout_path"]).read_text())
         assert all(element["source_crop"] is not None for element in saved["elements"])
         assert all(element["framing"]["zoom"] == 2 for element in saved["elements"])
+        assert all(element["corner_radius_px"] == 2 for element in saved["elements"])
     for source in sources:
         source.unlink()
     inspected = run_cli(data_dir, "inspect", "--project", "cli")

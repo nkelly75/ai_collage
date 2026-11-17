@@ -77,6 +77,7 @@ class Element(Model):
     z_index: Annotated[int, Field(strict=True)]
     border: Border | None = None
     framing: Framing | None = None
+    corner_radius_px: Annotated[int, Field(strict=True, ge=0)] = 0
 
 
 class InputLayout(Model):

@@ -124,6 +124,21 @@ To try the current recipe in an existing `emma-framed-demo`, run only
 `apply-layout` again, not `create`. Open the new render path printed by that
 command; earlier saved versions remain unchanged.
 
+### Emma's rounded variation
+
+`examples\emma_rounded_2x3.json` keeps the refined framed composition and
+15-pixel white borders, adding a 10-pixel photo-edge corner radius to every
+image. The derived outer radius is 25 pixels; neither placement nor crop changes.
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage apply-layout --project emma-framed-demo --layout .\examples\emma_rounded_2x3.json
+```
+
+This creates the next accepted version (version 3 if that project has just the
+two earlier framed versions). Open the new render path printed by the command.
+Square-corner recipes and prior snapshots are unchanged. A fresh project can
+also use this recipe with the same four-photo import order.
+
 ## Input layouts and saved versions
 
 The input layout is an editable **design recipe**. A file such as
@@ -157,7 +172,8 @@ recipes under `examples`. Photo IDs resolve through the receiving project's
 ## Layout contract
 
 See `examples\portrait_9x16.json` for the whole-photo baseline. Its shown fields
-are required; optional `border` and `framing` objects are described below.
+are required; optional `border`, `framing`, and `corner_radius_px` settings are
+described below.
 Unknown fields are rejected, including rotation, shadow, path, caption, a
 standalone `crop` object, or image background. Pan/zoom belong inside
 `framing`, not at element level. Backgrounds use `type: "color"` and a six-digit
@@ -179,8 +195,9 @@ positions and width round to nearest integer, with exact halves upward.
 Subtract the left/right border
 from the rounded outer width to find the photo width, derive and round its
 height using the oriented photo ratio, then add the top/bottom border. Integer
-bounds are checked again. Photos retain their entire frame, with aspect-ratio
-differences limited to pixel rounding; placements that leave no photo area or
+bounds are checked again. Without corner rounding, photos retain their entire
+source rectangle, with aspect-ratio differences limited to pixel rounding;
+placements that leave no photo area or
 round its width/height to zero pixels fail. No invalid placement is silently
 clamped or clipped. Cover mode uses the independent-height sequence below
 instead of deriving height from the source.
@@ -272,6 +289,37 @@ mode, supplying height (even `null`) is invalid. Whole-photo and cover elements
 may coexist in one layout, as in the framed Emma example. Existing recipes and
 snapshots need no migration.
 
+### Rounded corners
+
+Each image element may contain:
+
+```json
+"corner_radius_px": 10
+```
+
+This is one nonnegative integer radius in output-canvas pixels at the
+**photo's edge**, not the outside of its border. For a positive radius, add
+the border width to obtain the outer radius: photo radius 10 with border 15
+gives outer radius 25. The curves share corner centers, so both edges are
+rounded and border thickness is maintained around the bend.
+
+Omitting the setting or supplying zero keeps **both** edges square and retains
+the previous rendering exactly. `null`, fractional values, and negative values
+are invalid. A positive radius must be no larger than half the smaller actual
+photo dimension, after pixel rounding and border inset. Oversized values fail
+explicitly rather than being clamped.
+
+The same setting works in whole-photo and cover modes, with or without a
+border. It does not change the outer box, source window, pan/zoom, or stacking.
+Corner edges are smoothly antialiased. Outside the curved outer boundary,
+lower layers show through; the curved border remains an outside ring, not an
+opaque backing behind transparent photo pixels.
+
+Rounding intentionally masks small photo-corner regions in the render, without
+modifying the original files. Radius is resolution-specific, like border
+thickness. Saved snapshots retain the single radius and old snapshots default
+to zero without migration. Tilt and text/captions remain unsupported.
+
 ## Stored state and version control
 
 ```text
@@ -292,7 +340,7 @@ to the owner's uploads directory. The fixed local owner is `local-dev`, not an
 authentication system.
 
 Saved layout JSON includes its backend-assigned version, resolved normalized
-outer height, exact outer pixel boxes, and border/framing settings. Whole-photo
+outer height, exact outer pixel boxes, and border/framing/corner-radius settings. Whole-photo
 height is derived; cover-mode height is retained from the input. Cover-mode
 elements also store a derived `source_crop` with `left`, `top`, `right`, and
 `bottom` edges in oriented source-image pixels, potentially fractional.
@@ -331,7 +379,8 @@ Install the additional test dependency, then run:
 Tests generate temporary synthetic inputs, block network connections, and cover
 geometry on square/landscape/portrait canvases, whole-image retention,
 non-stretching crop-to-fill, pan endpoints, fractional sampling, 1x-4x zoom, EXIF,
-transparency, border pixels and bounds, stacking, strict validation,
+transparency, border pixels and bounds, concentric antialiased corner masks,
+stacking, strict validation,
 failure-safe publication, legacy snapshots, and reopening projects across
 separate CLI processes without Azure credentials.
 
