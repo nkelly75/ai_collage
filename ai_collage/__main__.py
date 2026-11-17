@@ -12,7 +12,7 @@ from .projects import ProjectStore
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Offline whole-photo collage engine.")
+    parser = argparse.ArgumentParser(description="Offline deterministic photo collage engine.")
     parser.add_argument("--data-dir", type=Path, default=Path(".collage-data"))
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("create", "inspect", "apply-layout", "render"):

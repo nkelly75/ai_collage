@@ -5,10 +5,11 @@ to describe a layout in natural language and refine it conversationally, while
 keeping geometry, validation, and rendering deterministic.
 
 **Available today:** a local Python CLI that imports JPEG/PNG photos, renders
-JSON layouts to PNG, and keeps accepted layout versions. It preserves whole
-photos without cropping or stretching, supports different canvas aspect ratios,
-solid backgrounds, optional outside photo borders, and overlapping images with
-explicit stacking.
+JSON layouts to PNG, and keeps accepted layout versions. Preserve whole photos,
+or opt into fixed rectangular frames with crop-to-fill, pan, and 1x-4x zoom.
+Both modes avoid stretching and support different canvas aspect ratios, solid
+backgrounds, optional outside photo borders, and overlapping images with
+explicit stacking. Rounded corners are not implemented yet.
 
 The collage application runs offline without credentials or model calls.
 Natural-language design, a graphical UI, and Azure hosting are planned, not
@@ -53,23 +54,50 @@ aspect-ratio flags.
 For an asymmetric **1200x1800 (2:3)** composition with borders and a larger
 foreground photo, see [Emma's layered example](docs/cli-guide.md#emmas-layered-23-example)
 and its editable recipe, `examples\emma_2x3.json`.
+The separate [framed variation](docs/cli-guide.md#emmas-framed-variation) uses
+`examples\emma_framed_2x3.json` to adjust the bookshop and breakfast crops without
+changing that whole-photo baseline.
 
 ## Editable recipes and saved results
 
 Files under `examples` are **input recipes**: edit their canvas, photo positions,
-widths, and stacking, then run `apply-layout` to try the design. Photo numbers
-refer to the project's import order, not image content or stacking order.
+widths, optional frames/framing, and stacking, then run `apply-layout` to try the
+design. Photo numbers refer to the project's import order, not image content or
+stacking order.
 
 Files such as `layouts\v0001.json` under a project's working directory are
-**saved snapshots**. The engine adds calculated heights, pixel boxes, and a
-revision number, and accepts a version only after validation and rendering
-succeed. Editing the input does not change an existing version; applying it
-again creates the next version. Later renders use the saved snapshot, not the
-input file.
+**saved snapshots**. The engine adds pixel boxes, derived whole-photo heights
+or source crops, and a revision number. It accepts a version only after
+validation and rendering succeed. Editing the input does not change an existing
+version; applying it again creates the next version. Later renders use the
+saved snapshot, not the input file.
 
 Keep editing the recipe, not the generated snapshot. See the
 [CLI guide](docs/cli-guide.md#input-layouts-and-saved-versions) for the full
 relationship, storage paths, and versioning behavior.
+
+## How the tests check images
+
+The rendering tests create tiny temporary images in code, drawing known colours
+and shapes on them. They pass these through the normal import, layout, and render
+workflow, then inspect the resulting pixels. For example:
+
+- Red, green, and blue bands reveal whether panning selects the left, middle,
+  or right part of an image.
+- A square drawn inside a wide image should remain square when rendered into a
+  tall frame, rather than becoming stretched.
+- Known border colours and transparent areas let tests check border thickness
+  and which overlapping layer shows through.
+
+Because the starting pictures are deliberately simple, the expected colours
+and positions are known in advance. Checks can be exact where appropriate,
+with small tolerances where resizing or JPEG compression blends pixels.
+No AI judges whether the result looks right, and the tests run offline without
+using your photos. Real-photo examples still help us judge the composition.
+
+Other tests cover invalid layouts, saved versions, and failures that must leave
+previous results intact. See the [CLI guide](docs/cli-guide.md#verification)
+for instructions to run the tests.
 
 ## Documentation
 

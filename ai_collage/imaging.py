@@ -1,4 +1,4 @@
-"""Whole-photo decoding, deterministic geometry, and rendering."""
+"""Photo decoding, deterministic frame/crop geometry, and rendering."""
 
 import warnings
 from fractions import Fraction
@@ -10,9 +10,11 @@ from .models import (
     MAX_FILE_BYTES,
     MAX_IMAGE_PIXELS,
     CollageError,
+    Framing,
     InputLayout,
     Photo,
     ResolvedLayout,
+    SourceCrop,
 )
 
 
@@ -51,6 +53,22 @@ def round_half_up(value: Fraction) -> int:
     return (2 * value.numerator + value.denominator) // (2 * value.denominator)
 
 
+def resolve_source_crop(
+    photo: Photo, width: int, height: int, framing: Framing
+) -> SourceCrop:
+    scale = max(Fraction(width, photo.width), Fraction(height, photo.height))
+    scale *= Fraction(str(framing.zoom))
+    crop_width, crop_height = Fraction(width) / scale, Fraction(height) / scale
+    left = (photo.width - crop_width) * Fraction(str(framing.pan_x))
+    top = (photo.height - crop_height) * Fraction(str(framing.pan_y))
+    return SourceCrop(
+        left=float(left),
+        top=float(top),
+        right=float(left + crop_width),
+        bottom=float(top + crop_height),
+    )
+
+
 def resolve_layout(
     layout: InputLayout, photos: list[Photo], version: int
 ) -> ResolvedLayout:
@@ -75,22 +93,32 @@ def resolve_layout(
         photo_width = width * canvas.width - 2 * border_width
         if photo_width <= 0:
             raise CollageError(f"Element {element.id} border leaves no positive photo area.")
-        height = (
-            photo_width * photo.height / photo.width + 2 * border_width
-        ) / canvas.height
+        if element.framing is None:
+            height = (
+                photo_width * photo.height / photo.width + 2 * border_width
+            ) / canvas.height
+        else:
+            if box.height is None:
+                raise CollageError(f"Element {element.id} cover mode requires an outer height.")
+            height = Fraction(str(box.height))
+            if height * canvas.height - 2 * border_width <= 0:
+                raise CollageError(f"Element {element.id} border leaves no positive photo area.")
         if x + width > 1 or y + height > 1:
             raise CollageError(f"Element {element.id} extends beyond the canvas.")
         pixel_width = round_half_up(width * canvas.width)
         photo_pixel_width = pixel_width - 2 * border_width
         if photo_pixel_width <= 0:
             raise CollageError(f"Element {element.id} rounds to zero photo pixels.")
-        photo_pixel_height = round_half_up(
-            Fraction(photo_pixel_width * photo.height, photo.width)
-        )
+        if element.framing is None:
+            photo_pixel_height = round_half_up(
+                Fraction(photo_pixel_width * photo.height, photo.width)
+            )
+        else:
+            photo_pixel_height = round_half_up(height * canvas.height) - 2 * border_width
         pixel_height = photo_pixel_height + 2 * border_width
         pixel_x = round_half_up(x * canvas.width)
         pixel_y = round_half_up(y * canvas.height)
-        if photo_pixel_height == 0:
+        if photo_pixel_height <= 0:
             raise CollageError(f"Element {element.id} rounds to zero photo pixels.")
         if (
             pixel_x + pixel_width > canvas.width
@@ -107,6 +135,13 @@ def resolve_layout(
                     "width": pixel_width,
                     "height": pixel_height,
                 },
+                "source_crop": (
+                    resolve_source_crop(
+                        photo, photo_pixel_width, photo_pixel_height, element.framing
+                    ).model_dump()
+                    if element.framing is not None
+                    else None
+                ),
             }
         )
     return ResolvedLayout.model_validate(
@@ -153,8 +188,13 @@ def render_layout(
                         width=element.border.width_px,
                     )
                 box = element.photo_box_pixels
+                crop = element.source_crop
+                source_box = (
+                    (crop.left, crop.top, crop.right, crop.bottom)
+                    if crop is not None else None
+                )
                 with image.resize(
-                    (box.width, box.height), Image.Resampling.LANCZOS
+                    (box.width, box.height), Image.Resampling.LANCZOS, box=source_box
                 ) as resized:
                     canvas.paste(resized, (box.x, box.y), resized)
         canvas.save(output, format="PNG")

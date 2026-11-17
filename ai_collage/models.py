@@ -59,6 +59,14 @@ class Box(Model):
     x: Coordinate
     y: Coordinate
     width: Width
+    height: Width | None = None
+
+
+class Framing(Model):
+    mode: Literal["cover"]
+    zoom: Annotated[float, Field(strict=True, ge=1, le=4)] = 1.0
+    pan_x: Coordinate = 0.5
+    pan_y: Coordinate = 0.5
 
 
 class Element(Model):
@@ -68,12 +76,26 @@ class Element(Model):
     box_normalized: Box
     z_index: Annotated[int, Field(strict=True)]
     border: Border | None = None
+    framing: Framing | None = None
 
 
 class InputLayout(Model):
     schema_version: SchemaVersion
     canvas: Canvas
     elements: Annotated[list[Element], Field(min_length=2, max_length=6)]
+
+    @model_validator(mode="after")
+    def check_frame_mode(self) -> Self:
+        for element in self.elements:
+            if element.framing is None and "height" in element.box_normalized.model_fields_set:
+                raise ValueError(
+                    f"Element {element.id}: supplied height requires framing.mode='cover'."
+                )
+            if element.framing is not None and element.box_normalized.height is None:
+                raise ValueError(
+                    f"Element {element.id}: framing.mode='cover' requires an outer height."
+                )
+        return self
 
 
 class ResolvedBox(Box):
@@ -87,9 +109,29 @@ class PixelBox(Model):
     height: PositiveInt
 
 
+class SourceCrop(Model):
+    left: Annotated[float, Field(strict=True, ge=0)]
+    top: Annotated[float, Field(strict=True, ge=0)]
+    right: Annotated[float, Field(strict=True, gt=0)]
+    bottom: Annotated[float, Field(strict=True, gt=0)]
+
+    @model_validator(mode="after")
+    def check_area(self) -> Self:
+        if self.right <= self.left or self.bottom <= self.top:
+            raise ValueError("Source crop must have positive width and height.")
+        return self
+
+
 class ResolvedElement(Element):
     box_normalized: ResolvedBox
     box_pixels: PixelBox
+    source_crop: SourceCrop | None = None
+
+    @model_validator(mode="after")
+    def check_source_crop_mode(self) -> Self:
+        if (self.framing is None) != (self.source_crop is None):
+            raise ValueError("Only cover-mode snapshots require a derived source_crop.")
+        return self
 
     @property
     def photo_box_pixels(self) -> PixelBox:
@@ -114,7 +156,9 @@ class ResolvedLayout(Model):
         del data["version"]
         for element in data["elements"]:
             del element["box_pixels"]
-            del element["box_normalized"]["height"]
+            del element["source_crop"]
+            if element["framing"] is None:
+                del element["box_normalized"]["height"]
         return InputLayout.model_validate(data)
 
 

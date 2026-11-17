@@ -79,6 +79,14 @@ def write_layout(tmp_path, data=None):
     return path
 
 
+def framed_layout_data(width=100, height=100):
+    data = layout_data(width, height)
+    for element in data["elements"]:
+        element["box_normalized"]["height"] = 0.2
+        element["framing"] = {"mode": "cover"}
+    return data
+
+
 @pytest.mark.parametrize("canvas", [(100, 100), (200, 100), (100, 200)])
 @pytest.mark.parametrize("border_width", [0, 2])
 def test_geometry_and_whole_photo_corners(
@@ -128,8 +136,9 @@ def test_geometry_and_whole_photo_corners(
 
 
 @pytest.mark.parametrize("border_width", [0, 2])
+@pytest.mark.parametrize("framed", [False, True])
 def test_exif_orientation_is_used_for_metadata_and_rendering(
-    store, tmp_path, border_width
+    store, tmp_path, border_width, framed
 ):
     path = tmp_path / "rotated.jpg"
     with Image.new("RGB", (40, 20), "red") as image:
@@ -140,7 +149,7 @@ def test_exif_orientation_is_used_for_metadata_and_rendering(
     original = path.read_bytes()
     project = store.create("exif", [path, photo_file(tmp_path / "other.png")])
     assert (project.photos[0].width, project.photos[0].height) == (20, 40)
-    data = layout_data()
+    data = framed_layout_data() if framed else layout_data()
     data["elements"][0]["border"] = {"width_px": border_width, "color": "#00FF00"}
     resolved, output = store.apply_layout("exif", write_layout(tmp_path, data))
     box = resolved.elements[0].photo_box_pixels
@@ -284,14 +293,15 @@ def test_border_rejects_photo_area_that_rounds_to_zero(
 
 
 @pytest.mark.parametrize("alpha, expected", [(0, (255, 255, 255)), (128, (255, 127, 127))])
+@pytest.mark.parametrize("framed", [False, True])
 def test_border_does_not_fill_transparent_photo_interior(
-    store, tmp_path, alpha, expected
+    store, tmp_path, alpha, expected, framed
 ):
     path = tmp_path / "alpha-border.png"
     with Image.new("RGBA", (40, 20), (255, 0, 0, alpha)) as image:
         image.save(path)
     store.create("alpha-border", [path, photo_file(tmp_path / "other.png")])
-    data = layout_data()
+    data = framed_layout_data() if framed else layout_data()
     data["elements"][0]["border"] = {"width_px": 2, "color": "#00FF00"}
     _, output = store.apply_layout("alpha-border", write_layout(tmp_path, data))
     with Image.open(output) as image:
@@ -336,6 +346,8 @@ def test_legacy_and_zero_border_snapshots_preserve_output(store, sources, tmp_pa
     legacy = json.loads(saved_layout.read_text())
     for element in legacy["elements"]:
         element.pop("border", None)
+        element.pop("framing", None)
+        element.pop("source_crop", None)
     saved_layout.write_text(json.dumps(legacy), encoding="utf-8")
     legacy_bytes = saved_layout.read_bytes()
     store.render("legacy-border", 1)
@@ -368,6 +380,225 @@ def test_inconsistent_saved_border_geometry_is_rejected(store, sources, tmp_path
     with pytest.raises(CollageError, match="inconsistent"):
         store.render("tampered-border")
     assert output.read_bytes() == before
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+@pytest.mark.parametrize("zoom", [1, 4])
+@pytest.mark.parametrize("pan, expected_color", [
+    (0, (255, 0, 0)), (0.5, (0, 255, 0)), (1, (0, 0, 255)),
+])
+def test_cover_pan_selects_source_regions_without_moving_frame(
+    store, tmp_path, axis, zoom, pan, expected_color
+):
+    source = tmp_path / "bands.png"
+    size = (60, 20) if axis == "x" else (20, 60)
+    with Image.new("RGB", size) as image:
+        draw = ImageDraw.Draw(image)
+        for index, color in enumerate(["red", "lime", "blue"]):
+            rectangle = (
+                (20 * index, 0, 20 * index + 19, 19)
+                if axis == "x" else (0, 20 * index, 19, 20 * index + 19)
+            )
+            draw.rectangle(rectangle, fill=color)
+        image.save(source)
+    store.create("pan", [source, photo_file(tmp_path / "other.png")])
+    data = framed_layout_data()
+    data["elements"][0]["border"] = {"width_px": 2, "color": "#123456"}
+    data["elements"][0]["framing"].update(
+        zoom=zoom,
+        pan_x=pan if axis == "x" else 1 - pan,
+        pan_y=pan if axis == "y" else 1 - pan,
+    )
+    resolved, output = store.apply_layout("pan", write_layout(tmp_path, data))
+    element = resolved.elements[0]
+    assert element.box_pixels.model_dump() == {
+        "x": 5, "y": 10, "width": 20, "height": 20
+    }
+    crop_size = 20 / zoom
+    offset = (60 - crop_size) * pan
+    other_offset = (20 - crop_size) * (1 - pan)
+    expected_crop = (
+        {
+            "left": offset, "top": other_offset,
+            "right": offset + crop_size, "bottom": other_offset + crop_size,
+        }
+        if axis == "x"
+        else {
+            "left": other_offset, "top": offset,
+            "right": other_offset + crop_size, "bottom": offset + crop_size,
+        }
+    )
+    assert element.source_crop.model_dump() == expected_crop
+    with Image.open(output) as image:
+        assert image.getpixel((15, 20)) == expected_color
+        assert image.getpixel((5, 10)) == (18, 52, 86)
+        inner = element.photo_box_pixels
+        for y in range(inner.y, inner.y + inner.height):
+            for x in range(inner.x, inner.x + inner.width):
+                assert image.getpixel((x, y)) != (255, 255, 255)
+
+
+@pytest.mark.parametrize("zoom, inset, color", [
+    (1, 0, (255, 0, 0)), (2, 10, (0, 255, 0)), (4, 15, (0, 0, 255)),
+])
+def test_cover_zoom_uses_centered_minimum_fill_scale(
+    store, tmp_path, zoom, inset, color
+):
+    source = tmp_path / "target.png"
+    with Image.new("RGB", (40, 40), "red") as image:
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((10, 10, 29, 29), fill="lime")
+        draw.rectangle((15, 15, 24, 24), fill="blue")
+        image.save(source)
+    store.create("zoom", [source, photo_file(tmp_path / "other.png")])
+    data = framed_layout_data()
+    data["elements"][0]["framing"]["zoom"] = zoom
+    resolved, output = store.apply_layout("zoom", write_layout(tmp_path, data))
+    element = resolved.elements[0]
+    assert element.source_crop.model_dump() == {
+        "left": inset, "top": inset, "right": 40 - inset, "bottom": 40 - inset,
+    }
+    assert element.box_pixels.width == element.box_pixels.height == 20
+    with Image.open(output) as image:
+        assert image.getpixel((7, 12)) == color
+
+
+def test_cover_preserves_shapes_in_an_independently_shaped_frame(store, tmp_path):
+    source = tmp_path / "square-marker.png"
+    with Image.new("RGB", (40, 20), "black") as image:
+        ImageDraw.Draw(image).rectangle((15, 5, 24, 14), fill="red")
+        image.save(source)
+    store.create("aspect", [source, photo_file(tmp_path / "other.png")])
+    data = framed_layout_data()
+    data["elements"][0]["box_normalized"]["height"] = 0.3
+    resolved, output = store.apply_layout("aspect", write_layout(tmp_path, data))
+    box = resolved.elements[0].photo_box_pixels
+    assert (box.width, box.height) == (20, 30)
+    with Image.open(output) as image:
+        points = [
+            (x, y) for y in range(box.y, box.y + box.height)
+            for x in range(box.x, box.x + box.width)
+            if image.getpixel((x, y))[0] >= 128
+        ]
+    marker_width = max(x for x, _ in points) - min(x for x, _ in points) + 1
+    marker_height = max(y for _, y in points) - min(y for _, y in points) + 1
+    assert 14 <= marker_width <= 16
+    assert 14 <= marker_height <= 16
+    assert abs(marker_width - marker_height) <= 1
+
+
+def test_cover_fractional_pan_and_zoom_use_subpixel_sampling(store, tmp_path):
+    source = tmp_path / "gradient.png"
+    with Image.new("RGB", (80, 80)) as image:
+        image.putdata([(x * 3, y * 3, 0) for y in range(80) for x in range(80)])
+        image.save(source)
+    store.create("fractional", [source, photo_file(tmp_path / "other.png")])
+    data = framed_layout_data()
+    data["elements"][0]["framing"].update(zoom=1.5, pan_x=0.25, pan_y=0.75)
+    resolved, output = store.apply_layout("fractional", write_layout(tmp_path, data))
+    crop = resolved.elements[0].source_crop
+    assert crop.left == pytest.approx(20 / 3)
+    assert crop.top == 20
+    assert crop.right == 60
+    assert crop.bottom == pytest.approx(220 / 3)
+    with Image.open(output) as image:
+        actual = image.getpixel((15, 20))
+    assert all(abs(a - b) <= 3 for a, b in zip(actual, (103, 143, 0), strict=True))
+
+
+@pytest.mark.parametrize("canvas", [(100, 100), (200, 100), (100, 200)])
+def test_cover_frames_resolve_on_each_canvas_shape(store, sources, tmp_path, canvas):
+    store.create("frame-canvas", sources)
+    data = framed_layout_data(*canvas)
+    data["elements"][0]["box_normalized"]["height"] = 0.3
+    data["elements"][0]["border"] = {"width_px": 2, "color": "#00FF00"}
+    resolved, output = store.apply_layout("frame-canvas", write_layout(tmp_path, data))
+    element = resolved.elements[0]
+    assert element.box_pixels.width == canvas[0] // 5
+    assert element.box_pixels.height == canvas[1] * 3 // 10
+    inner, crop = element.photo_box_pixels, element.source_crop
+    assert (crop.right - crop.left) / (crop.bottom - crop.top) == pytest.approx(
+        inner.width / inner.height
+    )
+    assert 0 <= crop.left < crop.right <= 40
+    assert 0 <= crop.top < crop.bottom <= 20
+    with Image.open(output) as image:
+        assert image.size == canvas
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda d: d["elements"][0]["box_normalized"].pop("height"),
+    lambda d: d["elements"][0].update(framing=None),
+    lambda d: d["elements"][0]["box_normalized"].update(height=None),
+    lambda d: d["elements"][0]["box_normalized"].update(height=0),
+    lambda d: d["elements"][0]["box_normalized"].update(height=True),
+    lambda d: d["elements"][0]["box_normalized"].update(height=0.00001),
+    lambda d: d["elements"][0]["box_normalized"].update(y=0.9),
+    lambda d: d["elements"][0]["box_normalized"].update(y=0.795, height=0.205),
+    lambda d: d["elements"][0].update(border={"width_px": 10, "color": "#FFFFFF"}),
+    lambda d: d["elements"][0].update(border={"width_px": 2, "color": "#FFFFFF"})
+    or d["elements"][0]["box_normalized"].update(height=0.04),
+    lambda d: d["elements"][0].update(border={"width_px": 2, "color": "#FFFFFF"})
+    or d["elements"][0]["box_normalized"].update(height=0.041),
+    lambda d: d["elements"][0]["framing"].update(mode="contain"),
+    lambda d: d["elements"][0]["framing"].update(zoom=0.99),
+    lambda d: d["elements"][0]["framing"].update(zoom=4.01),
+    lambda d: d["elements"][0]["framing"].update(zoom=True),
+    lambda d: d["elements"][0]["framing"].update(zoom="2"),
+    lambda d: d["elements"][0]["framing"].update(zoom=float("nan")),
+    lambda d: d["elements"][0]["framing"].update(zoom=float("inf")),
+    lambda d: d["elements"][0]["framing"].update(pan_x=-0.01),
+    lambda d: d["elements"][0]["framing"].update(pan_y=1.01),
+    lambda d: d["elements"][0]["framing"].update(pan_x=True),
+    lambda d: d["elements"][0]["framing"].update(pan_y="0.5"),
+    lambda d: d["elements"][0]["framing"].update(pan_y=float("nan")),
+    lambda d: d["elements"][0]["framing"].update(unknown=0),
+    lambda d: d["elements"][0].update(source_crop={"left": 0, "top": 0, "right": 1, "bottom": 1}),
+])
+def test_invalid_cover_settings_preserve_accepted_state(
+    store, sources, tmp_path, mutation
+):
+    store.create("invalid-cover", sources)
+    store.apply_layout("invalid-cover", write_layout(tmp_path))
+    directory = store.project_dir("invalid-cover")
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    data = framed_layout_data()
+    mutation(data)
+    with pytest.raises((CollageError, ValidationError)):
+        store.apply_layout("invalid-cover", write_layout(tmp_path, data))
+    assert {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda d: d["elements"][0]["source_crop"].update(left=11),
+    lambda d: d["elements"][0]["source_crop"].update(right=999),
+    lambda d: d["elements"][0].pop("source_crop"),
+    lambda d: d["elements"][0]["framing"].update(pan_x=0),
+    lambda d: d["elements"][0]["box_normalized"].update(height=0.25),
+])
+def test_inconsistent_saved_cover_geometry_is_rejected(
+    store, sources, tmp_path, mutation
+):
+    store.create("tampered-cover", sources)
+    _, output = store.apply_layout(
+        "tampered-cover", write_layout(tmp_path, framed_layout_data())
+    )
+    original_output = output.read_bytes()
+    saved_layout = store.version_paths("tampered-cover", 1)[0]
+    saved = json.loads(saved_layout.read_text())
+    mutation(saved)
+    saved_layout.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises((CollageError, ValidationError)):
+        store.render("tampered-cover")
+    assert output.read_bytes() == original_output
+
+
+def test_whole_photo_mode_rejects_even_null_input_height(store, sources, tmp_path):
+    store.create("null-height", sources)
+    data = layout_data()
+    data["elements"][0]["box_normalized"]["height"] = None
+    with pytest.raises(ValidationError, match="supplied height requires"):
+        store.apply_layout("null-height", write_layout(tmp_path, data))
 
 
 def test_half_up_rounding_and_continuous_bounds(store, tmp_path):
@@ -476,14 +707,17 @@ def test_unusable_imported_photo_preserves_state(store, sources, tmp_path, probl
 
 
 @pytest.mark.parametrize("failure", ["render", "pointer"])
+@pytest.mark.parametrize("framed", [False, True])
 def test_failed_publication_rolls_back_new_files(
-    store, sources, tmp_path, monkeypatch, failure
+    store, sources, tmp_path, monkeypatch, failure, framed
 ):
     store.create("rollback", sources)
     path = write_layout(tmp_path)
     store.apply_layout("rollback", path)
     directory = store.project_dir("rollback")
     before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    if framed:
+        path = write_layout(tmp_path, framed_layout_data())
 
     def fail_render(layout, photos, paths, output):
         output.write_bytes(b"partial image")
@@ -642,14 +876,18 @@ def run_cli(data_dir, *arguments):
 
 
 @pytest.mark.parametrize("border_width", [0, 2])
+@pytest.mark.parametrize("framed", [False, True])
 def test_cli_persists_across_processes_without_credentials_or_network(
-    tmp_path, sources, border_width
+    tmp_path, sources, border_width, framed
 ):
     data_dir = tmp_path / "cli-data"
     created = run_cli(data_dir, "create", "--project", "cli", "--images", *sources)
     assert created.returncode == 0, created.stderr
     assert json.loads(created.stdout)["current_version"] is None
-    data = layout_data()
+    data = framed_layout_data() if framed else layout_data()
+    if framed:
+        for element in data["elements"]:
+            element["framing"].update(zoom=2, pan_x=0.25, pan_y=0.75)
     if border_width:
         for element in data["elements"]:
             element["border"] = {"width_px": border_width, "color": "#00FF00"}
@@ -657,6 +895,10 @@ def test_cli_persists_across_processes_without_credentials_or_network(
     applied = run_cli(data_dir, "apply-layout", "--project", "cli", "--layout", path)
     assert applied.returncode == 0, applied.stderr
     assert json.loads(applied.stdout)["version"] == 1
+    if framed:
+        saved = json.loads(Path(json.loads(applied.stdout)["layout_path"]).read_text())
+        assert all(element["source_crop"] is not None for element in saved["elements"])
+        assert all(element["framing"]["zoom"] == 2 for element in saved["elements"])
     for source in sources:
         source.unlink()
     inspected = run_cli(data_dir, "inspect", "--project", "cli")
