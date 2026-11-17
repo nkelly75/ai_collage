@@ -10,7 +10,8 @@ or opt into fixed rectangular frames with crop-to-fill, pan, and 1x-4x zoom.
 Both modes avoid stretching and support different canvas aspect ratios, solid
 backgrounds, optional outside photo borders, and overlapping images with
 explicit stacking. Optional rounded corners work with or without borders.
-Tilt and captions are not implemented yet.
+Centre-based tilt supports -10 to +10 degrees, with the entire rotated frame
+required to fit on the canvas. Captions are not implemented yet.
 
 The collage application runs offline without credentials or model calls.
 Natural-language design, a graphical UI, and Azure hosting are planned, not
@@ -61,17 +62,22 @@ changing that whole-photo baseline.
 `examples\emma_rounded_2x3.json` adds subtle rounded corners to the refined
 framed composition; see [rounded corners](docs/cli-guide.md#rounded-corners)
 for the single-radius setting.
+The [evolved tilted demo](docs/cli-guide.md#emmas-evolved-tilted-demo),
+`examples\emma_tilted_2x3.json`, uses a charcoal background, thinner white
+borders, rounded corners, and gentle tilts. It develops the composition rather
+than trying to match the manual reference more closely.
 
 ## Editable recipes and saved results
 
 Files under `examples` are **input recipes**: edit their canvas, photo positions,
-widths, optional frames/framing, and stacking, then run `apply-layout` to try the
-design. Photo numbers refer to the project's import order, not image content or
-stacking order.
+widths, optional frames/framing, corners, tilt, and stacking, then run
+`apply-layout` to try the design. Photo numbers refer to the project's import
+order, not image content or stacking order.
 
 Files such as `layouts\v0001.json` under a project's working directory are
 **saved snapshots**. The engine adds pixel boxes, derived whole-photo heights
-or source crops, and a revision number. It accepts a version only after
+or source crops, rotated footprints for tilted photos, and a revision number.
+It accepts a version only after
 validation and rendering succeed. Editing the input does not change an existing
 version; applying it again creates the next version. Later renders use the
 saved snapshot, not the input file.
@@ -92,6 +98,8 @@ workflow, then inspect the resulting pixels. For example:
   tall frame, rather than becoming stretched.
 - Known border colours and transparent areas let tests check border thickness
   and which overlapping layer shows through, including at rounded corners.
+- Coloured corner markers let tests check a tilted photo's angle, size, centre,
+  and retention of all four corners.
 
 Because the starting pictures are deliberately simple, the expected colours
 and positions are known in advance. Checks can be exact where appropriate,

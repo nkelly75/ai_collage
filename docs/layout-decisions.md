@@ -164,7 +164,95 @@ See the [CLI guide](cli-guide.md#rounded-corners) for syntax and examples.
 framed composition without changing its crops, borders, or placement. The
 square-corner recipes and accepted versions remain unchanged.
 
-Tilt and text/captions remain deferred and unimplemented. Tilt still needs an
-explicit policy for rotated frames at canvas edges; this increment does not
-authorize either feature. Each increment gets its own approval, focused tests,
-and visual review.
+The separately approved tilt implementation follows. Text/captions, including
+polaroid-style captions, remain postponed. Each implementation increment needs
+its own approval, focused tests, and visual review.
+
+## Tilt
+
+**Status: implemented following explicit approval for implementation and
+testing.** An image element accepts `rotation_degrees`, defaulting to zero.
+Tilted snapshots additionally store a derived `rotated_box_pixels`; untilted
+snapshots default that field to `null`. See the [CLI guide](cli-guide.md#tilt)
+for syntax. Earlier examples remain unchanged; the separately approved evolved
+Emma demonstration below uses a new recipe.
+
+### Angle and finished frame
+
+- Accept finite angles from **-10 to +10 degrees**, inclusive. Fractional degrees,
+  such as 2.5, are allowed.
+- Positive angles rotate clockwise; negative angles rotate counterclockwise.
+- Zero or an omitted angle means no tilt and must preserve existing output
+  pixels and saved-version behavior exactly.
+- Rotate the finished photo, border, and rounded corners together as one
+  transparent layer. Resolve whole-photo sizing or cover framing first, then
+  apply borders and rounding before rotation. Tilt does not change the selected
+  source crop or pan/zoom settings, stretch the photo, or modify source files.
+
+### Untilted frame versus rotated footprint
+
+`box_normalized` continues to describe the **untilted outer frame**, including
+its border. Its x/y coordinates locate that frame's top-left corner, not the
+top-left corner of the rotated footprint. Whole-photo mode still derives height;
+cover mode still supplies an independent height.
+
+Rotate around the frame's centre without changing its size or moving that
+centre. Perform rotation in output-pixel space, not directly on the independently
+normalized axes, so the angle is physically correct on portrait and landscape
+canvases alike.
+
+The renderer derives the rotated footprint separately. That footprint generally
+needs more space than the untilted box, so an otherwise valid layout may need
+extra clearance before tilt can be added. Do not squeeze the rotated photo back
+inside its original box.
+
+Use the rotated outer rectangle, including its border, for conservative
+canvas-boundary checks. Rounded or transparent corners do not provide an
+exception to the containment rule. Account for pixel rounding and rotation
+sampling as well as ideal geometry so no visible edge pixels are lost.
+The implementation adds two transparent pixels around the finished frame for
+bicubic sampling, rotates that padded layer, and rounds its footprint outward.
+This intentionally reserves slightly more clearance than ideal geometry alone.
+An explicit inverse affine transform keeps the original centre fixed even
+when source or output dimensions have different odd/even pixel counts.
+
+### Canvas containment and layout responsibility
+
+- Initially, every rotated frame must fit entirely inside the canvas. Losing a
+  corner at a canvas edge is not an acceptable default.
+- Reject an overflowing layout with a clear error. Do not silently move,
+  shrink, crop, clip, or clamp the frame to make it fit. The layout author or
+  future LLM must explicitly adjust its position or size.
+- Preserve the existing acceptance rule: an invalid layout must not replace the
+  current accepted snapshot or preview.
+- Intentional off-canvas placement is deferred entirely, rather than exposed
+  through a clipping opt-in in the first tilt feature.
+- Canvas containment is separate from inter-photo overlap. Existing intentional
+  overlaps and `z_index` behavior remain valid; each complete rotated layer
+  participates in stacking as one element. This is not a guarantee that every
+  photo is unobscured by other photos.
+
+Focused tests cover angle limits and direction, centre-based
+rotation on nonsquare canvases, expanded-footprint rejection at canvas edges,
+border/rounding/alpha composition, overlap, and zero-angle compatibility in
+addition to saved-state consistency, reproducible rendering, and failure-safe
+publication. The separate evolved visual example follows below.
+
+### Evolved Emma demonstration
+
+**Status: example created following separate approval.**
+`examples\emma_tilted_2x3.json` starts from the latest rounded layout,
+`examples\emma_rounded_2x3.json`, and evolves it to showcase new features rather
+than keep reproducing Emma's manual collage exactly. Earlier example recipes
+and accepted versions remain unchanged as reference points.
+
+The visual direction is:
+
+- A charcoal background (`#282A2E`).
+- Subtle 10-pixel white borders and 12-pixel photo-edge corner radii.
+- Restrained tilts: Bridge -2.5 degrees, breakfast +2, Eye -1.5, bookshop +1.25.
+
+Frame positions and sizes are explicitly inset and reduced to leave room for
+rotation, keeping every complete frame on the canvas. The photo mapping,
+stacking, and cover pan/zoom settings are retained. These visual values are
+example-specific choices, not renderer defaults or new limits.

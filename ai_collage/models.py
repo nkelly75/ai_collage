@@ -78,6 +78,7 @@ class Element(Model):
     border: Border | None = None
     framing: Framing | None = None
     corner_radius_px: Annotated[int, Field(strict=True, ge=0)] = 0
+    rotation_degrees: Annotated[float, Field(strict=True, ge=-10, le=10)] = 0.0
 
 
 class InputLayout(Model):
@@ -127,11 +128,18 @@ class ResolvedElement(Element):
     box_normalized: ResolvedBox
     box_pixels: PixelBox
     source_crop: SourceCrop | None = None
+    rotated_box_pixels: PixelBox | None = None
 
     @model_validator(mode="after")
     def check_source_crop_mode(self) -> Self:
         if (self.framing is None) != (self.source_crop is None):
             raise ValueError("Only cover-mode snapshots require a derived source_crop.")
+        return self
+
+    @model_validator(mode="after")
+    def check_rotation_box(self) -> Self:
+        if (self.rotation_degrees == 0) != (self.rotated_box_pixels is None):
+            raise ValueError("Only tilted snapshots require a derived rotated_box_pixels.")
         return self
 
     @property
@@ -158,6 +166,7 @@ class ResolvedLayout(Model):
         for element in data["elements"]:
             del element["box_pixels"]
             del element["source_crop"]
+            del element["rotated_box_pixels"]
             if element["framing"] is None:
                 del element["box_normalized"]["height"]
         return InputLayout.model_validate(data)

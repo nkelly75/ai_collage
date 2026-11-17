@@ -2,6 +2,7 @@
 
 import warnings
 from fractions import Fraction
+from math import ceil, cos, floor, radians, sin
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps, UnidentifiedImageError
@@ -14,9 +15,12 @@ from .models import (
     Framing,
     InputLayout,
     Photo,
+    PixelBox,
     ResolvedLayout,
     SourceCrop,
 )
+
+_ROTATION_PADDING = 2
 
 
 def load_photo(path: Path) -> tuple[Image.Image, str]:
@@ -67,6 +71,20 @@ def resolve_source_crop(
         top=float(top),
         right=float(left + crop_width),
         bottom=float(top + crop_height),
+    )
+
+
+def _rotated_bounds(
+    x: float, y: float, width: float, height: float, degrees: float, padding: int = 0
+) -> tuple[float, float, float, float]:
+    angle = radians(degrees)
+    c, s = abs(cos(angle)), abs(sin(angle))
+    half_width = ((width + 2 * padding) * c + (height + 2 * padding) * s) / 2
+    half_height = ((width + 2 * padding) * s + (height + 2 * padding) * c) / 2
+    center_x, center_y = x + width / 2, y + height / 2
+    return (
+        center_x - half_width, center_y - half_height,
+        center_x + half_width, center_y + half_height,
     )
 
 
@@ -132,6 +150,39 @@ def resolve_layout(
                 f"Element {element.id} corner_radius_px exceeds half the smaller "
                 f"photo dimension (maximum {max_radius}px)."
             )
+        rotated_box = None
+        if element.rotation_degrees != 0:
+            left, top, right, bottom = _rotated_bounds(
+                float(x * canvas.width), float(y * canvas.height),
+                float(width * canvas.width), float(height * canvas.height),
+                element.rotation_degrees,
+            )
+            if left < 0 or top < 0 or right > canvas.width or bottom > canvas.height:
+                raise CollageError(
+                    f"Element {element.id} rotated frame extends beyond the canvas. "
+                    "Explicitly move or resize its untilted box."
+                )
+            left, top, right, bottom = _rotated_bounds(
+                pixel_x, pixel_y, pixel_width, pixel_height,
+                element.rotation_degrees, padding=_ROTATION_PADDING,
+            )
+            rotated_x, rotated_y = floor(left), floor(top)
+            rotated_right, rotated_bottom = ceil(right), ceil(bottom)
+            if (
+                rotated_x < 0 or rotated_y < 0
+                or rotated_right > canvas.width or rotated_bottom > canvas.height
+            ):
+                raise CollageError(
+                    f"Element {element.id} rotated pixel footprint, including its "
+                    "sampling margin, exceeds the canvas bounds. "
+                    "Explicitly move or resize its untilted box."
+                )
+            rotated_box = {
+                "x": rotated_x,
+                "y": rotated_y,
+                "width": rotated_right - rotated_x,
+                "height": rotated_bottom - rotated_y,
+            }
         resolved.append(
             {
                 **element.model_dump(),
@@ -149,6 +200,7 @@ def resolve_layout(
                     if element.framing is not None
                     else None
                 ),
+                "rotated_box_pixels": rotated_box,
             }
         )
     return ResolvedLayout.model_validate(
@@ -214,6 +266,42 @@ def _rounded_frame(
             return frame.convert("RGBA")
 
 
+def _framed_photo(
+    photo: Image.Image, radius: int, border: Border | None
+) -> Image.Image:
+    if radius > 0:
+        return _rounded_frame(photo, radius, border)
+    inset = border.width_px if border is not None else 0
+    frame = Image.new("RGBA", (photo.width + 2 * inset, photo.height + 2 * inset))
+    if inset > 0 and border is not None:
+        ImageDraw.Draw(frame).rectangle(
+            (0, 0, frame.width - 1, frame.height - 1),
+            outline=border.color, width=inset,
+        )
+    frame.paste(photo, (inset, inset))
+    return frame
+
+
+def _rotate_frame(
+    frame: Image.Image, box: PixelBox, footprint: PixelBox, degrees: float
+) -> Image.Image:
+    angle = radians(degrees)
+    c, s = cos(angle), sin(angle)
+    dx = footprint.x - box.x - box.width / 2
+    dy = footprint.y - box.y - box.height / 2
+    # Map output pixel centers back around the unchanged, possibly half-pixel center.
+    transform = (
+        c, s, frame.width / 2 + _ROTATION_PADDING + c * dx + s * dy,
+        -s, c, frame.height / 2 + _ROTATION_PADDING - s * dx + c * dy,
+    )
+    # Transparent padding lets bicubic sampling blend edges instead of clamping them.
+    with ImageOps.expand(frame, border=_ROTATION_PADDING, fill=(0, 0, 0, 0)) as padded:
+        return padded.transform(
+            (footprint.width, footprint.height), Image.Transform.AFFINE,
+            transform, Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0),
+        )
+
+
 def render_layout(
     layout: ResolvedLayout,
     photos: list[Photo],
@@ -236,7 +324,8 @@ def render_layout(
                         f"Photo {photo.source_image_id} dimensions differ from project metadata."
                     )
                 if (
-                    element.corner_radius_px == 0
+                    element.rotation_degrees == 0
+                    and element.corner_radius_px == 0
                     and element.border is not None
                     and element.border.width_px > 0
                 ):
@@ -260,7 +349,20 @@ def render_layout(
                 with image.resize(
                     (box.width, box.height), Image.Resampling.LANCZOS, box=source_box
                 ) as resized:
-                    if element.corner_radius_px > 0:
+                    if element.rotation_degrees != 0:
+                        footprint = element.rotated_box_pixels
+                        if footprint is None:
+                            raise CollageError(
+                                f"Element {element.id} lacks its rotated pixel footprint."
+                            )
+                        with _framed_photo(
+                            resized, element.corner_radius_px, element.border
+                        ) as frame:
+                            with _rotate_frame(
+                                frame, element.box_pixels, footprint, element.rotation_degrees
+                            ) as tilted:
+                                canvas.paste(tilted, (footprint.x, footprint.y), tilted)
+                    elif element.corner_radius_px > 0:
                         with _rounded_frame(
                             resized, element.corner_radius_px, element.border
                         ) as rounded:

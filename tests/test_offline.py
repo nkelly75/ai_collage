@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import os
 import socket
 import subprocess
@@ -10,6 +11,7 @@ import pytest
 from PIL import Image, ImageDraw
 from pydantic import ValidationError
 
+from ai_collage import imaging as imaging_module
 from ai_collage import projects as project_module
 from ai_collage.imaging import load_photo, resolve_layout
 from ai_collage.models import MAX_FILE_BYTES, CollageError, InputLayout
@@ -793,6 +795,310 @@ def test_invalid_saved_radius_cannot_replace_accepted_preview(store, sources, tm
     assert output.read_bytes() == previous_output
 
 
+@pytest.mark.parametrize("canvas, size, framed", [
+    ((240, 160), (80, 40), False),
+    ((160, 240), (81, 41), True),
+    ((240, 160), (81, 40), True),
+    ((160, 240), (80, 41), False),
+])
+@pytest.mark.parametrize("angle", [-10, 2.5, 10])
+def test_tilt_preserves_corners_size_center_and_physical_angle(
+    store, tmp_path, canvas, size, framed, angle
+):
+    width, height = size
+    markers = [(4, 4), (width - 5, 4), (4, height - 5), (width - 5, height - 5)]
+    source = tmp_path / "tilt-markers.png"
+    with Image.new("RGB", size, "black") as image:
+        draw = ImageDraw.Draw(image)
+        for (x, y), color in zip(markers, ["red", "lime", "blue", "yellow"], strict=True):
+            draw.rectangle((x - 4, y - 4, x + 4, y + 4), fill=color)
+        image.save(source)
+    original = source.read_bytes()
+    store.create("tilt-markers", [source, photo_file(tmp_path / "other.png", color="black")])
+    data = framed_layout_data(*canvas) if framed else layout_data(*canvas)
+    data["canvas"]["background"]["value"] = "#000000"
+    element, other = data["elements"]
+    x, y = (canvas[0] - width) // 2, (canvas[1] - height) // 2
+    element["box_normalized"] = {
+        "x": x / canvas[0], "y": y / canvas[1], "width": width / canvas[0],
+    }
+    if framed:
+        element["box_normalized"]["height"] = height / canvas[1]
+    other["box_normalized"] = {"x": 0.02, "y": 0.02, "width": 0.05}
+    if framed:
+        other["box_normalized"]["height"] = 0.05
+    element["rotation_degrees"] = angle
+    resolved, output = store.apply_layout("tilt-markers", write_layout(tmp_path, data))
+    front = resolved.elements[0]
+    assert front.box_pixels.model_dump() == {
+        "x": x, "y": y, "width": width, "height": height,
+    }
+    footprint = front.rotated_box_pixels
+    assert footprint.x < x and footprint.y < y
+    assert footprint.width > width and footprint.height > height
+    with Image.open(output) as image:
+        pixels = [
+            (px + 0.5, py + 0.5, image.getpixel((px, py)))
+            for py in range(footprint.y, footprint.y + footprint.height)
+            for px in range(footprint.x, footprint.x + footprint.width)
+        ]
+    weights = [
+        lambda r, g, b: max(0, r - max(g, b)),
+        lambda r, g, b: max(0, g - max(r, b)),
+        lambda r, g, b: max(0, b - max(r, g)),
+        lambda r, g, b: max(0, min(r, g) - b),
+    ]
+    c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+    for (marker_x, marker_y), weight in zip(markers, weights, strict=True):
+        samples = [(px, py, weight(*color)) for px, py, color in pixels]
+        mass = sum(value for _, _, value in samples)
+        assert mass / 255 == pytest.approx(81, abs=3)
+        dx, dy = marker_x + 0.5 - width / 2, marker_y + 0.5 - height / 2
+        expected = (x + width / 2 + c * dx - s * dy,
+                    y + height / 2 + s * dx + c * dy)
+        actual = (sum(px * value for px, _, value in samples) / mass,
+                  sum(py * value for _, py, value in samples) / mass)
+        assert actual == pytest.approx(expected, abs=0.2)
+    assert source.read_bytes() == original
+
+
+@pytest.mark.parametrize("framed", [False, True])
+@pytest.mark.parametrize("side", ["left", "top", "right", "bottom"])
+def test_tilt_rejects_all_canvas_edges_without_changing_accepted_state(
+    store, sources, tmp_path, framed, side
+):
+    store.create("tilt-bounds", sources)
+    data = framed_layout_data() if framed else layout_data()
+    front = data["elements"][0]
+    front.update(border={"width_px": 2, "color": "#FFFFFF"}, corner_radius_px=4)
+    front["box_normalized"].update(x=0.3, y=0.3)
+    if side in {"left", "right"}:
+        front["box_normalized"]["x"] = 0 if side == "left" else 0.8
+    else:
+        front["box_normalized"]["y"] = (
+            0 if side == "top" else (0.8 if framed else 0.88)
+        )
+    store.apply_layout("tilt-bounds", write_layout(tmp_path, data))
+    directory = store.project_dir("tilt-bounds")
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    front["rotation_degrees"] = 10
+    with pytest.raises(CollageError, match="rotated frame.*beyond the canvas"):
+        store.apply_layout("tilt-bounds", write_layout(tmp_path, data))
+    assert {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()} == before
+
+
+def test_tilt_checks_pixel_rounding_and_sampling_margin_after_continuous_bounds(
+    store, sources, tmp_path
+):
+    store.create("tilt-pixels", sources)
+    data = framed_layout_data()
+    front = data["elements"][0]
+    front["box_normalized"] = {"x": 0.0149, "y": 0.2, "width": 0.4, "height": 0.2}
+    front["rotation_degrees"] = 10
+    # Ideal left edge is just positive; rounding x down puts the tilted corner outside.
+    with pytest.raises(CollageError, match="rotated pixel footprint.*sampling margin"):
+        store.apply_layout("tilt-pixels", write_layout(tmp_path, data))
+    assert store.load("tilt-pixels").current_version is None
+    front["box_normalized"]["x"] = 0.04
+    resolved, _ = store.apply_layout("tilt-pixels", write_layout(tmp_path, data))
+    assert resolved.elements[0].rotated_box_pixels.x == 0
+
+
+@pytest.mark.parametrize("alpha, expected", [
+    (0, (0, 0, 255)), (128, (128, 0, 127)), (255, (255, 0, 0)),
+])
+@pytest.mark.parametrize("border_width", [0, 5])
+@pytest.mark.parametrize("radius", [0, 10])
+def test_tilt_rotates_complete_frame_and_preserves_alpha_and_stacking(
+    store, tmp_path, alpha, expected, border_width, radius
+):
+    source = tmp_path / "tilted-alpha.png"
+    with Image.new("RGBA", (40, 40), (255, 0, 0, alpha)) as image:
+        image.save(source)
+    store.create("tilt-alpha", [
+        source, photo_file(tmp_path / "back.png", (40, 40), "blue"),
+    ])
+    data = rounded_layout_data(framed=True, border_width=border_width)
+    front = data["elements"][0]
+    front.update(rotation_degrees=10, corner_radius_px=radius)
+    _, output = store.apply_layout("tilt-alpha", write_layout(tmp_path, data))
+    with Image.open(output) as image:
+        assert image.getpixel((50, 50)) == expected
+        assert image.getpixel((27, 17)) == (
+            (0, 0, 255) if radius else ((255, 255, 255) if border_width else expected)
+        )
+        if border_width:
+            assert image.getpixel((56, 23)) == (255, 255, 255)
+        assert image.getpixel((12, 50)) == (0, 0, 255)
+    front["z_index"] = 0
+    _, output = store.apply_layout("tilt-alpha", write_layout(tmp_path, data))
+    with Image.open(output) as image:
+        assert all(
+            image.getpixel(point) == (0, 0, 255)
+            for point in [(50, 50), (27, 17), (56, 23)]
+        )
+
+
+@pytest.mark.parametrize("background", ["#000000", "#FFFFFF"])
+def test_tilt_antialiases_edges_without_dark_fringes(store, tmp_path, background):
+    store.create("tilt-smooth", [
+        photo_file(tmp_path / "white.png", (40, 40), "white"),
+        photo_file(tmp_path / "black.png", (40, 40), "black"),
+    ])
+    data = framed_layout_data(200, 150)
+    data["canvas"]["background"]["value"] = background
+    front, other = data["elements"]
+    front["box_normalized"] = {"x": 0.2, "y": 0.2, "width": 0.4, "height": 0.4}
+    front["rotation_degrees"] = -3.5
+    other["box_normalized"] = {"x": 0.01, "y": 0.01, "width": 0.05, "height": 0.05}
+    resolved, output = store.apply_layout("tilt-smooth", write_layout(tmp_path, data))
+    box = resolved.elements[0].rotated_box_pixels
+    with Image.open(output) as image:
+        pixels = [
+            image.getpixel((x, y))
+            for y in range(box.y, box.y + box.height)
+            for x in range(box.x, box.x + box.width)
+        ]
+        assert all(r == g == b for r, g, b in pixels)
+        if background == "#FFFFFF":
+            assert set(pixels) == {(255, 255, 255)}
+        else:
+            assert (0, 0, 0) in pixels and (255, 255, 255) in pixels
+            assert any(0 < r < 255 for r, _, _ in pixels)
+
+
+@pytest.mark.parametrize("framed, border_width, radius", [
+    (False, 0, 0), (False, 2, 2), (True, 0, 3), (True, 2, 3),
+])
+def test_zero_tilt_and_legacy_snapshots_preserve_exact_output(
+    store, sources, tmp_path, framed, border_width, radius
+):
+    store.create("legacy-tilt", sources)
+    data = framed_layout_data() if framed else layout_data()
+    for element in data["elements"]:
+        element.update(
+            border={"width_px": border_width, "color": "#00FF00"},
+            corner_radius_px=radius,
+        )
+    first, output = store.apply_layout("legacy-tilt", write_layout(tmp_path, data))
+    expected = output.read_bytes()
+    saved_layout = store.version_paths("legacy-tilt", 1)[0]
+    legacy = json.loads(saved_layout.read_text())
+    for element in legacy["elements"]:
+        del element["rotation_degrees"]
+        del element["rotated_box_pixels"]
+    saved_layout.write_text(json.dumps(legacy), encoding="utf-8")
+    legacy_bytes = saved_layout.read_bytes()
+    store.render("legacy-tilt", 1)
+    assert output.read_bytes() == expected
+    assert saved_layout.read_bytes() == legacy_bytes
+    for element in data["elements"]:
+        element["rotation_degrees"] = 0
+    second, output = store.apply_layout("legacy-tilt", write_layout(tmp_path, data))
+    assert output.read_bytes() == expected
+    assert first.elements == second.elements
+
+
+@pytest.mark.parametrize("framed", [False, True])
+def test_tilt_keeps_framing_and_reopens_reproducibly(store, sources, tmp_path, framed):
+    store.create("tilt-persist", sources)
+    data = framed_layout_data() if framed else layout_data()
+    for element in data["elements"]:
+        element.update(
+            border={"width_px": 2, "color": "#00FF00"}, corner_radius_px=2,
+        )
+        if framed:
+            element["framing"].update(zoom=2, pan_x=0.25, pan_y=0.75)
+    first, first_output = store.apply_layout("tilt-persist", write_layout(tmp_path, data))
+    first_layout = store.version_paths("tilt-persist", 1)[0]
+    original = (first_layout.read_bytes(), first_output.read_bytes())
+    for element, angle in zip(data["elements"], [5.5, -3.25], strict=True):
+        element["rotation_degrees"] = angle
+    second, output = store.apply_layout("tilt-persist", write_layout(tmp_path, data))
+    for old, new in zip(first.elements, second.elements, strict=True):
+        assert old.box_pixels == new.box_pixels
+        assert old.box_normalized == new.box_normalized
+        assert old.photo_box_pixels == new.photo_box_pixels
+        assert old.source_crop == new.source_crop
+        assert new.rotated_box_pixels is not None
+    assert second.as_input() == InputLayout.model_validate(data)
+    reopened = ProjectStore(store.data_dir)
+    assert reopened.load_layout(reopened.load("tilt-persist"), 2) == second
+    expected = output.read_bytes()
+    reopened.render("tilt-persist", 2)
+    assert output.read_bytes() == expected
+    assert (first_layout.read_bytes(), first_output.read_bytes()) == original
+
+
+@pytest.mark.parametrize("angle, error", [
+    (-10.001, ValidationError), (10.001, ValidationError),
+    ("5", ValidationError), (True, ValidationError), (None, ValidationError),
+    (float("nan"), CollageError), (float("inf"), CollageError),
+    (float("-inf"), CollageError),
+])
+def test_invalid_tilt_preserves_accepted_state(store, sources, tmp_path, angle, error):
+    store.create("invalid-tilt", sources)
+    store.apply_layout("invalid-tilt", write_layout(tmp_path))
+    directory = store.project_dir("invalid-tilt")
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    data = layout_data()
+    data["elements"][0]["rotation_degrees"] = angle
+    with pytest.raises(error):
+        store.apply_layout("invalid-tilt", write_layout(tmp_path, data))
+    assert {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda e: e["rotated_box_pixels"].update(x=99),
+    lambda e: e.pop("rotated_box_pixels"),
+    lambda e: e.update(rotation_degrees=0),
+])
+def test_inconsistent_saved_tilt_geometry_preserves_preview(
+    store, sources, tmp_path, mutation
+):
+    store.create("tampered-tilt", sources)
+    data = framed_layout_data()
+    data["elements"][0].update(
+        rotation_degrees=5.5, corner_radius_px=2,
+        border={"width_px": 2, "color": "#FFFFFF"},
+        framing={"mode": "cover", "zoom": 1.5, "pan_x": 0.25, "pan_y": 0.75},
+    )
+    resolved, output = store.apply_layout("tampered-tilt", write_layout(tmp_path, data))
+    assert resolved.as_input() == InputLayout.model_validate(data)
+    original_output = output.read_bytes()
+    saved_layout = store.version_paths("tampered-tilt", 1)[0]
+    saved = json.loads(saved_layout.read_text())
+    mutation(saved["elements"][0])
+    saved_layout.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises((CollageError, ValidationError)):
+        store.render("tampered-tilt")
+    assert output.read_bytes() == original_output
+
+
+def test_rotation_failure_preserves_accepted_state_and_preview(
+    store, sources, tmp_path, monkeypatch
+):
+    store.create("tilt-failure", sources)
+    data = framed_layout_data()
+    data["elements"][0]["rotation_degrees"] = 5.5
+    path = write_layout(tmp_path, data)
+    store.apply_layout("tilt-failure", path)
+    directory = store.project_dir("tilt-failure")
+    before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+    def fail_rotation(*args):
+        raise OSError("simulated rotation failure")
+
+    monkeypatch.setattr(imaging_module, "_rotate_frame", fail_rotation)
+    with pytest.raises(OSError, match="simulated rotation failure"):
+        store.apply_layout("tilt-failure", path)
+    with pytest.raises(OSError, match="simulated rotation failure"):
+        store.render("tilt-failure")
+    assert {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()} == before
+    assert not list(directory.glob(".apply-*"))
+    assert not list(directory.glob(".render-*"))
+
+
 def test_half_up_rounding_and_continuous_bounds(store, tmp_path):
     paths = [photo_file(tmp_path / f"{number}.png", (4, 3)) for number in (1, 2)]
     project = store.create("rounding", paths)
@@ -829,6 +1135,9 @@ def test_rounded_pixel_bounds_are_checked_separately(store, tmp_path):
         lambda d: d["canvas"]["background"].update(type="image", value="file.png"),
         lambda d: d["elements"][0].update(src="secret.jpg"),
         lambda d: d["elements"][0].update(rotation=0),
+        lambda d: d["elements"][0].update(
+            rotated_box_pixels={"x": 0, "y": 0, "width": 20, "height": 10}
+        ),
         lambda d: d["elements"][0].update(shadow=False),
         lambda d: d["elements"][0].update(crop={}),
         lambda d: d["elements"][0].update(type="text"),
@@ -1072,14 +1381,17 @@ def run_cli(data_dir, *arguments):
 
 @pytest.mark.parametrize("border_width", [0, 2])
 @pytest.mark.parametrize("framed", [False, True])
+@pytest.mark.parametrize("angle", [0, 5.5])
 def test_cli_persists_across_processes_without_credentials_or_network(
-    tmp_path, sources, border_width, framed
+    tmp_path, sources, border_width, framed, angle
 ):
     data_dir = tmp_path / "cli-data"
     created = run_cli(data_dir, "create", "--project", "cli", "--images", *sources)
     assert created.returncode == 0, created.stderr
     assert json.loads(created.stdout)["current_version"] is None
     data = framed_layout_data() if framed else layout_data()
+    for element in data["elements"]:
+        element["rotation_degrees"] = angle
     if framed:
         for element in data["elements"]:
             element["framing"].update(zoom=2, pan_x=0.25, pan_y=0.75)
@@ -1091,8 +1403,13 @@ def test_cli_persists_across_processes_without_credentials_or_network(
     applied = run_cli(data_dir, "apply-layout", "--project", "cli", "--layout", path)
     assert applied.returncode == 0, applied.stderr
     assert json.loads(applied.stdout)["version"] == 1
+    saved = json.loads(Path(json.loads(applied.stdout)["layout_path"]).read_text())
+    assert all(element["rotation_degrees"] == angle for element in saved["elements"])
+    assert all(
+        (element["rotated_box_pixels"] is not None) == (angle != 0)
+        for element in saved["elements"]
+    )
     if framed:
-        saved = json.loads(Path(json.loads(applied.stdout)["layout_path"]).read_text())
         assert all(element["source_crop"] is not None for element in saved["elements"])
         assert all(element["framing"]["zoom"] == 2 for element in saved["elements"])
         assert all(element["corner_radius_px"] == 2 for element in saved["elements"])
