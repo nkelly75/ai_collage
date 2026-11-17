@@ -1,5 +1,11 @@
 # Offline Engine and Layout Refactoring Spec
 
+> **Historical snapshot:** Completed format 2 refactoring brief and execution
+> record. Instructions, retry budgets, and commit-status statements below
+> describe that phase's close-out, not current Git state or permission for
+> another phase. See the [planning index](README.md) and
+> [current layout field guide](../docs/layout-format.md).
+
 **Status: implemented and verified following user approval of this brief.
 Independent final review complete; changes remain for the user to commit.**
 

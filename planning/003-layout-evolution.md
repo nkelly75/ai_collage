@@ -1,13 +1,19 @@
 # Layout Design Decisions
 
+> **Historical decision record:** Layout feature increments and their subsequent
+> format 2 reconciliation, retained at the close of the offline refactoring.
+> Approvals and retry budgets below belong to those completed increments, not
+> future work. See the [planning index](README.md) for current direction and the
+> [layout field guide](../docs/layout-format.md) for the current contract.
+
 Short records of layout capability decisions and their implementation status.
 This is not a new phase plan or permission to implement future extensions.
 
 ## Format 2 refactoring
 
-The approved [refactoring brief](engine-refactoring-spec.md) preserves these
+The approved [refactoring brief](004-engine-refactoring.md) preserves these
 capabilities with a cleaner contract; see the current
-[field guide](layout-format.md). Recipes now use `layers` back to front,
+[field guide](../docs/layout-format.md). Recipes now use `layers` back to front,
 `photo_id` for identity, `box` for placement, and explicit `mode: "whole"` or
 `mode: "cover"` with cover-only `crop` controls. There is no separate element ID,
 constant image type, or z-value. The solid canvas background is a hex string.
@@ -23,7 +29,7 @@ feature increments; current guarantees apply to new-format versions.
 
 **Status: implemented following explicit user approval for the feature and
 tests.** An image element accepts an optional `border` object with required
-`width_px` and `color` fields. See the [CLI guide](cli-guide.md#outside-photo-borders)
+`width_px` and `color` fields. See the [CLI guide](../docs/cli-guide.md#outside-photo-borders)
 for the input syntax and current behavior. No dependencies or schema-version
 migration were needed.
 
@@ -86,7 +92,7 @@ Following separate user approval, `examples\emma_2x3.json` now approximates that
 composition with the existing border feature, whole photos, and stacking. The
 separate `emma-demo` project holds its generated snapshot and preview, leaving
 the earlier demo projects unchanged. See the
-[CLI guide](cli-guide.md#emmas-layered-23-example) for reproduction commands.
+[CLI guide](../docs/cli-guide.md#emmas-layered-23-example) for reproduction commands.
 
 The first render captures the main composition, including the bookshop over the
 London Eye and the larger foreground bridge. It is not a pixel match: its
@@ -110,7 +116,7 @@ shared six-cycle ceiling; it supersedes the earlier two-cycle phase budget.
 fixed frames, crop-to-fill, pan/zoom, tests, and a separate framed Emma example.
 Rounded corners were a separately approved follow-up, described below;
 model-generated layouts remain deferred. See the
-[CLI guide](cli-guide.md#fixed-frames-pan-and-zoom) for syntax.
+[CLI guide](../docs/cli-guide.md#fixed-frames-pan-and-zoom) for syntax.
 
 - Preserve the existing whole-photo mode and its derived height. Existing input
   recipes, saved versions, and examples must keep their current behavior.
@@ -153,7 +159,7 @@ reconstruct the reference's original settings or change the whole-photo baseline
 
 **Status: implemented following explicit approval.** An image element accepts
 `corner_radius_px`, a nonnegative integer in output pixels, defaulting to zero.
-See the [CLI guide](cli-guide.md#rounded-corners) for syntax and examples.
+See the [CLI guide](../docs/cli-guide.md#rounded-corners) for syntax and examples.
 
 - Specify one corner radius in pixels at the **photo's edge**, not two
   independently adjustable radii.
@@ -189,7 +195,7 @@ its own approval, focused tests, and visual review.
 **Status: implemented following explicit approval for implementation and
 testing.** A photo layer accepts `rotation_degrees`, defaulting to zero.
 Snapshot geometry stores a derived `rotated_box_pixels` for tilted layers;
-untilted layers store explicit `null`. See the [CLI guide](cli-guide.md#tilt)
+untilted layers store explicit `null`. See the [CLI guide](../docs/cli-guide.md#tilt)
 for syntax. Earlier examples remain unchanged; the separately approved evolved
 Emma demonstration below uses a new recipe.
 

@@ -1,5 +1,11 @@
 # AI Collage Builder — Project Blueprint & Architecture
 
+> **Historical snapshot:** Original product and architecture proposal, subsequently
+> refined by implementation. The status, schema, roadmap, and estimates below
+> describe that planning record, not the current engine contract. See the
+> [planning index](README.md) for reconciliation and the
+> [layout field guide](../docs/layout-format.md) for current syntax.
+
 > **Status:** Working blueprint. Confirmed directions include Azure Functions and Azure Blob Storage, React + TypeScript + Vite, Microsoft Agent Framework for Python to organize LLM interactions, an early local proof of concept using a deployed Microsoft Foundry model, and backend-mediated image transfers. GPT-5.4 mini is the tentative starting model. Initial development is local and single-user; authentication and per-user isolation are required before sharing a cloud deployment. Final model selection, rendering-library choice, hosting-plan details, and cost estimates remain provisional.
 
 ## 1. Executive Summary & Vision

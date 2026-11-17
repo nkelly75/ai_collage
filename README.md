@@ -162,12 +162,9 @@ for instructions to run the tests.
 | [Local CLI guide](docs/cli-guide.md) | Setup, commands, examples, layout rules, limits, storage, and tests |
 | [Layout field guide](docs/layout-format.md) | Concise format 2 contract and adjustment examples for people and future LLMs |
 | [Input JSON Schema](docs/layout.schema.json) | Generated structural schema, synchronized with the models by a test |
-| [Layout design decisions](docs/layout-decisions.md) | Discussed extensions, including outside borders and their layout-box semantics; implementation status is explicit |
-| [Engine refactoring spec](docs/engine-refactoring-spec.md) | Approved offline refactoring brief, example equivalence, execution guardrails, and verification record |
-| [Project blueprint](ai_collage_builder_project_blueprint.md) | Product direction, proposed architecture, and roadmap |
-| [Phase 1 implementation plan](phase_1_implementation_plan.md) | Agreed scope, guardrails, and implementation records |
+| [Planning and implementation history](planning/README.md) | Current direction, blueprint reconciliation, and numbered historical planning records |
 | [Foundry experiments](temp-foundry-test/README.md) | Separate keyless model-connectivity examples; running them makes paid service calls |
 
-This README is the evolving project entry point. User-facing instructions live
-in the CLI guide; phase-specific decisions and execution records stay in the
-implementation plans.
+This README is the evolving project entry point. Current usage and layout
+contracts live under `docs`; the living planning index and historical phase
+briefs, decisions, and execution records live under `planning`.

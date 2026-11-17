@@ -211,8 +211,9 @@ lower layers rather than painting rectangular white corners.
 The untilted box retains its meaning; the engine checks the expanded sampled
 footprint against the canvas. It never silently crops a tilted corner.
 
-See the [layout field guide](layout-format.md) and
-[design decisions](layout-decisions.md) for precise units, limits, and geometry.
+See the [layout field guide](layout-format.md) for current units, limits, and
+geometry, and the [historical design decisions](../planning/003-layout-evolution.md)
+for the rationale behind the feature increments.
 
 ## Verification
 

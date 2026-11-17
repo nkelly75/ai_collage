@@ -1,8 +1,15 @@
 # Phase 1 Implementation Plan: Local Collage Engine
 
+> **Historical snapshot:** Completed offline Step 1 brief and implementation
+> record; Step 2 remains unapproved. Format 1 examples, feature deferrals, and
+> retry allowances below belong to that increment, not the current engine or a
+> new authorization. See the [planning index](README.md),
+> [current CLI guide](../docs/cli-guide.md), and
+> [layout field guide](../docs/layout-format.md).
+
 **Status: Step 1 approved and implemented; Step 2 remains unapproved.**
 
-This repository plan refines `ai_collage_builder_project_blueprint.md`.
+This repository plan refines the [project blueprint](001-project-blueprint.md).
 The user explicitly approved **Step 1 only** after confirming the contracts
 below. Step 2 is context for later planning, not part of that implementation
 brief. The original proposals below are the accepted Step 1 contract.
