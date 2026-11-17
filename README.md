@@ -19,6 +19,12 @@ Natural-language design, a graphical UI, and Azure hosting are planned, not
 implemented. Separate Foundry connectivity experiments are not part of the
 collage workflow.
 
+**Layout format 2** uses explicit whole/cover modes, stable `photo_id` values,
+and a back-to-front `layers` array. See the [layout field guide](docs/layout-format.md)
+and generated [JSON Schema](docs/layout.schema.json). Format 1 projects remain
+untouched archives: their PNGs are viewable, but the new CLI does not load or
+migrate their histories. Use a fresh data root for the converted examples.
+
 ## Where the idea came from
 
 The project began with a conversation between the author and their daughter,
@@ -34,25 +40,58 @@ reference for exploring which layout capabilities the project needs.
 
 ## Quick start
 
-Use Python 3.12+ and PowerShell from the repository root:
+Use Python 3.12+ and PowerShell from the repository root. Rendering runs offline
+without credentials. These commands use `.collage-data-v2`, separate from any
+old `.collage-data` archive; original photos stay unchanged.
+
+### Setup (once)
+
+Skip this if the project's `.venv` and dependencies are already installed.
+Activation is not required. Dependency installation downloads packages;
+rendering itself is offline.
 
 ```powershell
 python -m venv .\.venv
 .\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
-.\.venv\Scripts\python.exe -m ai_collage create --project my-collage --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
-.\.venv\Scripts\python.exe -m ai_collage apply-layout --project my-collage --layout .\examples\portrait_3x4.json
-Invoke-Item .\.collage-data\users\local-dev\projects\my-collage\renders\v0001.png
 ```
 
-Activation is not required. The commands create a new project and a **900x1200
-(3:4)** collage using the supplied photos. If `my-collage` already exists,
-choose another project name consistently. The original photos stay unchanged;
-working copies and outputs live in the ignored `.collage-data` directory.
-Dependency installation downloads packages; rendering itself is offline.
+### Tilted charcoal collage (four photos)
 
-Use `examples\portrait_9x16.json` instead for a **900x1600 (9:16)** canvas.
-Canvas dimensions and positions are defined in the JSON, not separate CLI
-aspect-ratio flags.
+Create a project, apply `emma_tilted_2x3.json`, and open the resulting
+**1200x1800 (2:3)** PNG. Import order must be Bridge 1, breakfast 2, Eye 3,
+bookshop 4.
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 create --project emma-tilted-demo --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+$tilted = .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-tilted-demo --layout .\examples\emma_tilted_2x3.json | ConvertFrom-Json
+Invoke-Item $tilted.render_path
+```
+
+### London Eye photo background (three photos)
+
+Use a separate project for `emma_london_eye_3x4.json`: its import order is
+Bridge 1, Eye 2, bookshop 3, with **no breakfast**. The resulting PNG is
+**1200x1600 (3:4)**.
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 create --project emma-london-eye-demo --images .\photos\01_tower_bridge.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+$londonEye = .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-london-eye-demo --layout .\examples\emma_london_eye_3x4.json | ConvertFrom-Json
+Invoke-Item $londonEye.render_path
+```
+
+Run each `create` command only once. If a project name already exists, choose
+a fresh name consistently in its commands. To try recipe edits afterward,
+rerun just that example's `apply-layout` assignment and `Invoke-Item` command.
+Each successful application creates a new accepted version; the variable
+captures its actual output path, so you open the latest result rather than
+always opening `v0001.png`.
+
+### Other layouts
+
+For simpler whole-photo arrangements with the same four-photo import order,
+use `examples\portrait_3x4.json` (**900x1200**) or
+`examples\portrait_9x16.json` (**900x1600**). Canvas dimensions and positions
+come from the recipe, not separate CLI aspect-ratio flags.
 
 For an asymmetric **1200x1800 (2:3)** composition with borders and a larger
 foreground photo, see [Emma's layered example](docs/cli-guide.md#emmas-layered-23-example)
@@ -74,13 +113,14 @@ night-time photo, without breakfast. It uses a separate three-photo project.
 ## Editable recipes and saved results
 
 Files under `examples` are **input recipes**: edit their canvas, photo positions,
-widths, optional frames/framing, corners, tilt, and stacking, then run
+widths, whole/cover modes, crop controls, corners, tilt, and layer order, then run
 `apply-layout` to try the design. Photo numbers refer to the project's import
 order, not image content or stacking order.
 
 Files such as `layouts\v0001.json` under a project's working directory are
-**saved snapshots**. The engine adds pixel boxes, derived whole-photo heights
-or source crops, rotated footprints for tilted photos, and a revision number.
+**saved snapshots**. Each contains the validated input under `recipe`, a separate
+`geometry` array with pixel boxes, resolved heights, source crops and rotated
+footprints, and an accepted revision number.
 It accepts a version only after
 validation and rendering succeed. Editing the input does not change an existing
 version; applying it again creates the next version. Later renders use the
@@ -120,7 +160,10 @@ for instructions to run the tests.
 | Document | Purpose |
 |---|---|
 | [Local CLI guide](docs/cli-guide.md) | Setup, commands, examples, layout rules, limits, storage, and tests |
+| [Layout field guide](docs/layout-format.md) | Concise format 2 contract and adjustment examples for people and future LLMs |
+| [Input JSON Schema](docs/layout.schema.json) | Generated structural schema, synchronized with the models by a test |
 | [Layout design decisions](docs/layout-decisions.md) | Discussed extensions, including outside borders and their layout-box semantics; implementation status is explicit |
+| [Engine refactoring spec](docs/engine-refactoring-spec.md) | Approved offline refactoring brief, example equivalence, execution guardrails, and verification record |
 | [Project blueprint](ai_collage_builder_project_blueprint.md) | Product direction, proposed architecture, and roadmap |
 | [Phase 1 implementation plan](phase_1_implementation_plan.md) | Agreed scope, guardrails, and implementation records |
 | [Foundry experiments](temp-foundry-test/README.md) | Separate keyless model-connectivity examples; running them makes paid service calls |

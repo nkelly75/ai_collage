@@ -1,38 +1,55 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "canvas": {
     "width": 1200,
     "height": 1600,
-    "background": { "type": "color", "value": "#282A2E" }
+    "background": "#282A2E"
   },
-  "elements": [
+  "layers": [
     {
-      "id": 1,
-      "type": "image",
-      "source_image_id": 1,
-      "box_normalized": { "x": 0.513333, "y": 0.523125, "width": 0.4425 },
-      "z_index": 2,
-      "border": { "width_px": 10, "color": "#FFFFFF" },
-      "corner_radius_px": 12,
-      "rotation_degrees": 2.0
+      "photo_id": 2,
+      "mode": "whole",
+      "box": {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1.0
+      }
     },
     {
-      "id": 2,
-      "type": "image",
-      "source_image_id": 2,
-      "box_normalized": { "x": 0.0, "y": 0.0, "width": 1.0 },
-      "z_index": 0
-    },
-    {
-      "id": 3,
-      "type": "image",
-      "source_image_id": 3,
-      "box_normalized": { "x": 0.049167, "y": 0.044375, "width": 0.361667, "height": 0.38375 },
-      "framing": { "mode": "cover", "zoom": 1.05, "pan_x": 0.0, "pan_y": 0.9 },
-      "z_index": 1,
-      "border": { "width_px": 10, "color": "#FFFFFF" },
+      "photo_id": 3,
+      "mode": "cover",
+      "box": {
+        "x": 0.049167,
+        "y": 0.044375,
+        "width": 0.361667,
+        "height": 0.38375
+      },
+      "crop": {
+        "zoom": 1.05,
+        "pan_x": 0.0,
+        "pan_y": 0.9
+      },
+      "border": {
+        "width_px": 10,
+        "color": "#FFFFFF"
+      },
       "corner_radius_px": 12,
       "rotation_degrees": -2.0
+    },
+    {
+      "photo_id": 1,
+      "mode": "whole",
+      "box": {
+        "x": 0.513333,
+        "y": 0.523125,
+        "width": 0.4425
+      },
+      "border": {
+        "width_px": 10,
+        "color": "#FFFFFF"
+      },
+      "corner_radius_px": 12,
+      "rotation_degrees": 2.0
     }
   ]
 }

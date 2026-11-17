@@ -3,6 +3,22 @@
 Short records of layout capability decisions and their implementation status.
 This is not a new phase plan or permission to implement future extensions.
 
+## Format 2 refactoring
+
+The approved [refactoring brief](engine-refactoring-spec.md) preserves these
+capabilities with a cleaner contract; see the current
+[field guide](layout-format.md). Recipes now use `layers` back to front,
+`photo_id` for identity, `box` for placement, and explicit `mode: "whole"` or
+`mode: "cover"` with cover-only `crop` controls. There is no separate element ID,
+constant image type, or z-value. The solid canvas background is a hex string.
+
+Snapshots separate the canonical `recipe` from typed derived `geometry`.
+Project metadata and snapshots use `schema_version: 2`; old saved projects
+remain untouched archives, not loadable through a compatibility layer.
+All seven example recipes were converted while retaining their compositions.
+References below to preserving earlier saved versions describe the historical
+feature increments; current guarantees apply to new-format versions.
+
 ## Photo borders
 
 **Status: implemented following explicit user approval for the feature and
@@ -55,7 +71,7 @@ box outside the canvas. Do not silently crop or clip an out-of-bounds border.
 A photo whose border touches the canvas edge therefore sits inward by the
 border thickness.
 
-The border and photo form one element at one `z_index`. Foreground elements may
+The border and photo form one layer in the back-to-front array. Foreground layers may
 obscure a background element's photo and border together. This intentional
 occlusion is separate from cropping the source photo.
 
@@ -84,8 +100,9 @@ No engine changes were needed for that first example. Cropping, panning,
 zooming, independently shaped frames, and model-generated layouts were outside
 its scope; the separately approved framing increment follows below.
 
-The existing no-Git-write, zero-service-call, and two-corrective-retry guardrails
-still apply to any subsequent approved implementation.
+The no-Git-write and zero-application-service-call guardrails still apply.
+The refactoring brief defines the current local/macro retry allowances and
+shared six-cycle ceiling; it supersedes the earlier two-cycle phase budget.
 
 ## Fixed frames and photo framing
 
@@ -115,14 +132,13 @@ model-generated layouts remain deferred. See the
 - Default: geometric centering at 1x. This does not automatically identify or
   center a subject such as the breakfast plate.
 
-The explicit input contract uses an optional per-image `framing` object with
-required `mode: "cover"` and optional `zoom`, `pan_x`, and `pan_y`. Defaults are
-1, 0.5, and 0.5 respectively. Cover mode requires `box_normalized.height` for the
-outer frame; supplying height without cover mode remains invalid. Omitting
-`framing` or setting it to `null` retains whole-photo mode and its derived height.
-Resolved snapshots additionally store a derived `source_crop` rectangle in
-oriented source pixels; fractional edges allow proportional sampling without
-allocating a full enlarged photo.
+The current input contract requires each layer's `mode: "whole"` or `"cover"`.
+Cover mode requires `box.height` and permits a `crop` object with `zoom`,
+`pan_x`, and `pan_y`. Defaults are 1, 0.5, and 0.5 respectively; omitting `crop`
+uses defaults, but explicit null is invalid. Whole mode forbids both input
+height and crop controls. Snapshot geometry stores a derived `source_crop`
+rectangle in oriented source pixels; fractional edges allow proportional
+sampling without allocating a full enlarged photo.
 
 The original files remain unchanged. Cropping here means selecting a source
 region during deterministic rendering, not modifying or regenerating photos.
@@ -171,9 +187,9 @@ its own approval, focused tests, and visual review.
 ## Tilt
 
 **Status: implemented following explicit approval for implementation and
-testing.** An image element accepts `rotation_degrees`, defaulting to zero.
-Tilted snapshots additionally store a derived `rotated_box_pixels`; untilted
-snapshots default that field to `null`. See the [CLI guide](cli-guide.md#tilt)
+testing.** A photo layer accepts `rotation_degrees`, defaulting to zero.
+Snapshot geometry stores a derived `rotated_box_pixels` for tilted layers;
+untilted layers store explicit `null`. See the [CLI guide](cli-guide.md#tilt)
 for syntax. Earlier examples remain unchanged; the separately approved evolved
 Emma demonstration below uses a new recipe.
 
@@ -182,8 +198,8 @@ Emma demonstration below uses a new recipe.
 - Accept finite angles from **-10 to +10 degrees**, inclusive. Fractional degrees,
   such as 2.5, are allowed.
 - Positive angles rotate clockwise; negative angles rotate counterclockwise.
-- Zero or an omitted angle means no tilt and must preserve existing output
-  pixels and saved-version behavior exactly.
+- Zero or an omitted angle means no tilt. Explicit zero and omission retain
+  the same new-format output; old snapshots remain unsupported archives.
 - Rotate the finished photo, border, and rounded corners together as one
   transparent layer. Resolve whole-photo sizing or cover framing first, then
   apply borders and rounding before rotation. Tilt does not change the selected
@@ -191,7 +207,7 @@ Emma demonstration below uses a new recipe.
 
 ### Untilted frame versus rotated footprint
 
-`box_normalized` continues to describe the **untilted outer frame**, including
+The recipe's `box` describes the **untilted outer frame**, including
 its border. Its x/y coordinates locate that frame's top-left corner, not the
 top-left corner of the rotated footprint. Whole-photo mode still derives height;
 cover mode still supplies an independent height.
@@ -228,7 +244,7 @@ when source or output dimensions have different odd/even pixel counts.
 - Intentional off-canvas placement is deferred entirely, rather than exposed
   through a clipping opt-in in the first tilt feature.
 - Canvas containment is separate from inter-photo overlap. Existing intentional
-  overlaps and `z_index` behavior remain valid; each complete rotated layer
+  overlaps and layer-order behavior remain valid; each complete rotated layer
   participates in stacking as one element. This is not a guarantee that every
   photo is unobscured by other photos.
 

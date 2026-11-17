@@ -1,26 +1,21 @@
-"""Photo decoding, deterministic frame/crop geometry, and rendering."""
+"""Bounded photo decoding and alpha-aware frame rendering."""
 
 import warnings
-from fractions import Fraction
-from math import ceil, cos, floor, radians, sin
+from math import cos, radians, sin
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps, UnidentifiedImageError
 
+from .geometry import ROTATION_PADDING
 from .models import (
     MAX_FILE_BYTES,
     MAX_IMAGE_PIXELS,
     Border,
     CollageError,
-    Framing,
-    InputLayout,
     Photo,
     PixelBox,
     ResolvedLayout,
-    SourceCrop,
 )
-
-_ROTATION_PADDING = 2
 
 
 def load_photo(path: Path) -> tuple[Image.Image, str]:
@@ -52,165 +47,6 @@ def load_photo(path: Path) -> tuple[Image.Image, str]:
         Image.DecompressionBombWarning,
     ) as exc:
         raise CollageError(f"{path}: cannot decode photo: {exc}") from exc
-
-
-def round_half_up(value: Fraction) -> int:
-    return (2 * value.numerator + value.denominator) // (2 * value.denominator)
-
-
-def resolve_source_crop(
-    photo: Photo, width: int, height: int, framing: Framing
-) -> SourceCrop:
-    scale = max(Fraction(width, photo.width), Fraction(height, photo.height))
-    scale *= Fraction(str(framing.zoom))
-    crop_width, crop_height = Fraction(width) / scale, Fraction(height) / scale
-    left = (photo.width - crop_width) * Fraction(str(framing.pan_x))
-    top = (photo.height - crop_height) * Fraction(str(framing.pan_y))
-    return SourceCrop(
-        left=float(left),
-        top=float(top),
-        right=float(left + crop_width),
-        bottom=float(top + crop_height),
-    )
-
-
-def _rotated_bounds(
-    x: float, y: float, width: float, height: float, degrees: float, padding: int = 0
-) -> tuple[float, float, float, float]:
-    angle = radians(degrees)
-    c, s = abs(cos(angle)), abs(sin(angle))
-    half_width = ((width + 2 * padding) * c + (height + 2 * padding) * s) / 2
-    half_height = ((width + 2 * padding) * s + (height + 2 * padding) * c) / 2
-    center_x, center_y = x + width / 2, y + height / 2
-    return (
-        center_x - half_width, center_y - half_height,
-        center_x + half_width, center_y + half_height,
-    )
-
-
-def resolve_layout(
-    layout: InputLayout, photos: list[Photo], version: int
-) -> ResolvedLayout:
-    by_id = {photo.source_image_id: photo for photo in photos}
-    elements = layout.elements
-    if {element.source_image_id for element in elements} != set(by_id) or len(
-        elements
-    ) != len(photos):
-        raise CollageError("Each imported photo must appear exactly once in the layout.")
-    if len({element.id for element in elements}) != len(elements):
-        raise CollageError("Element IDs must be unique.")
-    if len({element.z_index for element in elements}) != len(elements):
-        raise CollageError("z_index values must be unique.")
-
-    resolved = []
-    canvas = layout.canvas
-    for element in elements:
-        photo = by_id[element.source_image_id]
-        box = element.box_normalized
-        x, y, width = (Fraction(str(value)) for value in (box.x, box.y, box.width))
-        border_width = element.border.width_px if element.border is not None else 0
-        photo_width = width * canvas.width - 2 * border_width
-        if photo_width <= 0:
-            raise CollageError(f"Element {element.id} border leaves no positive photo area.")
-        if element.framing is None:
-            height = (
-                photo_width * photo.height / photo.width + 2 * border_width
-            ) / canvas.height
-        else:
-            if box.height is None:
-                raise CollageError(f"Element {element.id} cover mode requires an outer height.")
-            height = Fraction(str(box.height))
-            if height * canvas.height - 2 * border_width <= 0:
-                raise CollageError(f"Element {element.id} border leaves no positive photo area.")
-        if x + width > 1 or y + height > 1:
-            raise CollageError(f"Element {element.id} extends beyond the canvas.")
-        pixel_width = round_half_up(width * canvas.width)
-        photo_pixel_width = pixel_width - 2 * border_width
-        if photo_pixel_width <= 0:
-            raise CollageError(f"Element {element.id} rounds to zero photo pixels.")
-        if element.framing is None:
-            photo_pixel_height = round_half_up(
-                Fraction(photo_pixel_width * photo.height, photo.width)
-            )
-        else:
-            photo_pixel_height = round_half_up(height * canvas.height) - 2 * border_width
-        pixel_height = photo_pixel_height + 2 * border_width
-        pixel_x = round_half_up(x * canvas.width)
-        pixel_y = round_half_up(y * canvas.height)
-        if photo_pixel_height <= 0:
-            raise CollageError(f"Element {element.id} rounds to zero photo pixels.")
-        if (
-            pixel_x + pixel_width > canvas.width
-            or pixel_y + pixel_height > canvas.height
-        ):
-            raise CollageError(f"Element {element.id} exceeds the pixel canvas bounds.")
-        max_radius = min(photo_pixel_width, photo_pixel_height) // 2
-        if element.corner_radius_px > max_radius:
-            raise CollageError(
-                f"Element {element.id} corner_radius_px exceeds half the smaller "
-                f"photo dimension (maximum {max_radius}px)."
-            )
-        rotated_box = None
-        if element.rotation_degrees != 0:
-            left, top, right, bottom = _rotated_bounds(
-                float(x * canvas.width), float(y * canvas.height),
-                float(width * canvas.width), float(height * canvas.height),
-                element.rotation_degrees,
-            )
-            if left < 0 or top < 0 or right > canvas.width or bottom > canvas.height:
-                raise CollageError(
-                    f"Element {element.id} rotated frame extends beyond the canvas. "
-                    "Explicitly move or resize its untilted box."
-                )
-            left, top, right, bottom = _rotated_bounds(
-                pixel_x, pixel_y, pixel_width, pixel_height,
-                element.rotation_degrees, padding=_ROTATION_PADDING,
-            )
-            rotated_x, rotated_y = floor(left), floor(top)
-            rotated_right, rotated_bottom = ceil(right), ceil(bottom)
-            if (
-                rotated_x < 0 or rotated_y < 0
-                or rotated_right > canvas.width or rotated_bottom > canvas.height
-            ):
-                raise CollageError(
-                    f"Element {element.id} rotated pixel footprint, including its "
-                    "sampling margin, exceeds the canvas bounds. "
-                    "Explicitly move or resize its untilted box."
-                )
-            rotated_box = {
-                "x": rotated_x,
-                "y": rotated_y,
-                "width": rotated_right - rotated_x,
-                "height": rotated_bottom - rotated_y,
-            }
-        resolved.append(
-            {
-                **element.model_dump(),
-                "box_normalized": {**box.model_dump(), "height": float(height)},
-                "box_pixels": {
-                    "x": pixel_x,
-                    "y": pixel_y,
-                    "width": pixel_width,
-                    "height": pixel_height,
-                },
-                "source_crop": (
-                    resolve_source_crop(
-                        photo, photo_pixel_width, photo_pixel_height, element.framing
-                    ).model_dump()
-                    if element.framing is not None
-                    else None
-                ),
-                "rotated_box_pixels": rotated_box,
-            }
-        )
-    return ResolvedLayout.model_validate(
-        {
-            "schema_version": layout.schema_version,
-            "version": version,
-            "canvas": canvas.model_dump(),
-            "elements": resolved,
-        }
-    )
 
 
 def _rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
@@ -291,11 +127,11 @@ def _rotate_frame(
     dy = footprint.y - box.y - box.height / 2
     # Map output pixel centers back around the unchanged, possibly half-pixel center.
     transform = (
-        c, s, frame.width / 2 + _ROTATION_PADDING + c * dx + s * dy,
-        -s, c, frame.height / 2 + _ROTATION_PADDING - s * dx + c * dy,
+        c, s, frame.width / 2 + ROTATION_PADDING + c * dx + s * dy,
+        -s, c, frame.height / 2 + ROTATION_PADDING - s * dx + c * dy,
     )
     # Transparent padding lets bicubic sampling blend edges instead of clamping them.
-    with ImageOps.expand(frame, border=_ROTATION_PADDING, fill=(0, 0, 0, 0)) as padded:
+    with ImageOps.expand(frame, border=ROTATION_PADDING, fill=(0, 0, 0, 0)) as padded:
         return padded.transform(
             (footprint.width, footprint.height), Image.Transform.AFFINE,
             transform, Image.Resampling.BICUBIC, fillcolor=(0, 0, 0, 0),
@@ -308,40 +144,22 @@ def render_layout(
     paths: dict[int, Path],
     output: Path,
 ) -> None:
-    by_id = {photo.source_image_id: photo for photo in photos}
+    by_id = {photo.photo_id: photo for photo in photos}
     with Image.new(
         "RGB",
-        (layout.canvas.width, layout.canvas.height),
-        layout.canvas.background.value,
+        (layout.recipe.canvas.width, layout.recipe.canvas.height),
+        layout.recipe.canvas.background,
     ) as canvas:
-        draw = ImageDraw.Draw(canvas)
-        for element in sorted(layout.elements, key=lambda item: item.z_index):
-            photo = by_id[element.source_image_id]
-            image, _ = load_photo(paths[photo.source_image_id])
+        for layer, geometry in zip(layout.recipe.layers, layout.geometry, strict=True):
+            photo = by_id[layer.photo_id]
+            image, _ = load_photo(paths[photo.photo_id])
             with image:
                 if image.size != (photo.width, photo.height):
                     raise CollageError(
-                        f"Photo {photo.source_image_id} dimensions differ from project metadata."
+                        f"Photo {photo.photo_id} dimensions differ from project metadata."
                     )
-                if (
-                    element.rotation_degrees == 0
-                    and element.corner_radius_px == 0
-                    and element.border is not None
-                    and element.border.width_px > 0
-                ):
-                    outer = element.box_pixels
-                    draw.rectangle(
-                        (
-                            outer.x,
-                            outer.y,
-                            outer.x + outer.width - 1,
-                            outer.y + outer.height - 1,
-                        ),
-                        outline=element.border.color,
-                        width=element.border.width_px,
-                    )
-                box = element.photo_box_pixels
-                crop = element.source_crop
+                box = geometry.photo_box_pixels
+                crop = geometry.source_crop
                 source_box = (
                     (crop.left, crop.top, crop.right, crop.bottom)
                     if crop is not None else None
@@ -349,25 +167,18 @@ def render_layout(
                 with image.resize(
                     (box.width, box.height), Image.Resampling.LANCZOS, box=source_box
                 ) as resized:
-                    if element.rotation_degrees != 0:
-                        footprint = element.rotated_box_pixels
-                        if footprint is None:
-                            raise CollageError(
-                                f"Element {element.id} lacks its rotated pixel footprint."
-                            )
-                        with _framed_photo(
-                            resized, element.corner_radius_px, element.border
-                        ) as frame:
+                    with _framed_photo(resized, layer.corner_radius_px, layer.border) as frame:
+                        if layer.rotation_degrees != 0:
+                            footprint = geometry.rotated_box_pixels
+                            if footprint is None:
+                                raise CollageError(
+                                    f"Photo {layer.photo_id} lacks its rotated pixel footprint."
+                                )
                             with _rotate_frame(
-                                frame, element.box_pixels, footprint, element.rotation_degrees
+                                frame, geometry.box_pixels, footprint, layer.rotation_degrees
                             ) as tilted:
                                 canvas.paste(tilted, (footprint.x, footprint.y), tilted)
-                    elif element.corner_radius_px > 0:
-                        with _rounded_frame(
-                            resized, element.corner_radius_px, element.border
-                        ) as rounded:
-                            outer = element.box_pixels
-                            canvas.paste(rounded, (outer.x, outer.y), rounded)
-                    else:
-                        canvas.paste(resized, (box.x, box.y), resized)
+                        else:
+                            outer = geometry.box_pixels
+                            canvas.paste(frame, (outer.x, outer.y), frame)
         canvas.save(output, format="PNG")

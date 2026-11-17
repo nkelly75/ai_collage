@@ -7,9 +7,11 @@ import tempfile
 from pathlib import Path
 from uuid import uuid4
 
-from .imaging import load_photo, render_layout, resolve_layout
+from .geometry import resolve_layout
+from .imaging import load_photo, render_layout
 from .models import (
     MAX_FILE_BYTES,
+    MAX_JSON_BYTES,
     OWNER_ID,
     CollageError,
     InputLayout,
@@ -34,18 +36,25 @@ def _invalid_constant(value: str) -> None:
 
 
 def read_json(path: Path) -> object:
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_JSON_BYTES + 1)
+    if len(raw) > MAX_JSON_BYTES:
+        raise CollageError(f"{path}: JSON exceeds the 1 MiB document limit.")
     try:
         return json.loads(
-            path.read_text(encoding="utf-8-sig"),
+            raw.decode("utf-8-sig"),
             object_pairs_hook=_unique_pairs,
             parse_constant=_invalid_constant,
         )
-    except (ValueError, UnicodeError) as exc:
+    except (ValueError, UnicodeError, RecursionError) as exc:
         raise CollageError(f"{path}: invalid JSON: {exc}") from exc
 
 
 def _write_json(path: Path, value: Project | ResolvedLayout) -> None:
-    path.write_text(value.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    raw = (value.model_dump_json(indent=2) + "\n").encode("utf-8")
+    if len(raw) > MAX_JSON_BYTES:
+        raise CollageError(f"{path}: JSON exceeds the 1 MiB document limit.")
+    path.write_bytes(raw)
 
 
 def _contained(root: Path, path: Path) -> Path:
@@ -87,8 +96,8 @@ class ProjectStore:
                 or relative.stem != photo.asset_id
                 or relative.suffix not in {".jpg", ".png"}
             ):
-                raise CollageError(f"Invalid imported path for photo {photo.source_image_id}.")
-            paths[photo.source_image_id] = _contained(
+                raise CollageError(f"Invalid imported path for photo {photo.photo_id}.")
+            paths[photo.photo_id] = _contained(
                 self.uploads_dir, self.owner_dir / relative
             )
         return paths
@@ -121,7 +130,7 @@ class ProjectStore:
                     image, extension = load_photo(staged_asset)
                     with image:
                         photo = Photo(
-                            source_image_id=number,
+                            photo_id=number,
                             asset_id=asset_id,
                             imported_path=str(Path("uploads") / f"{asset_id}{extension}"),
                             original_filename=source.name,
@@ -131,7 +140,7 @@ class ProjectStore:
                     photos.append(photo)
                     staged_assets.append(staged_asset)
                 project = Project(
-                    schema_version=1,
+                    schema_version=2,
                     owner_id=OWNER_ID,
                     project_id=project_id,
                     photos=photos,
@@ -140,7 +149,7 @@ class ProjectStore:
                 _write_json(staged_project / "project.json", project)
                 paths = self.photo_paths(project)
                 for photo, source in zip(photos, staged_assets, strict=True):
-                    destination = paths[photo.source_image_id]
+                    destination = paths[photo.photo_id]
                     if destination.exists():
                         raise CollageError(f"Imported asset already exists: {destination}")
                     source.rename(destination)
@@ -162,6 +171,8 @@ class ProjectStore:
 
     def apply_layout(self, project_id: str, layout_path: Path) -> tuple[ResolvedLayout, Path]:
         project = self.load(project_id)
+        if project.current_version is not None:
+            self.load_layout(project, project.current_version)
         layout = InputLayout.model_validate(read_json(layout_path))
         version = (project.current_version or 0) + 1
         resolved = resolve_layout(layout, project.photos, version)
@@ -205,7 +216,7 @@ class ProjectStore:
         resolved = ResolvedLayout.model_validate(read_json(saved_layout))
         if resolved.version != version:
             raise CollageError("Saved layout revision does not match its filename.")
-        expected = resolve_layout(resolved.as_input(), project.photos, version)
+        expected = resolve_layout(resolved.recipe, project.photos, version)
         if resolved != expected:
             raise CollageError("Saved layout derived geometry is inconsistent.")
         return resolved
@@ -245,7 +256,7 @@ class ProjectStore:
                 {
                     **photo.model_dump(),
                     "aspect_ratio": photo.width / photo.height,
-                    "path": str(paths[photo.source_image_id]),
+                    "path": str(paths[photo.photo_id]),
                 }
                 for photo in project.photos
             ],

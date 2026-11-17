@@ -1,0 +1,316 @@
+{
+  "$defs": {
+    "Border": {
+      "additionalProperties": false,
+      "properties": {
+        "width_px": {
+          "description": "Uniform outside border thickness in output pixels; zero means none.",
+          "minimum": 0,
+          "title": "Width Px",
+          "type": "integer"
+        },
+        "color": {
+          "description": "Outside border colour as #RRGGBB.",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Color",
+          "type": "string"
+        }
+      },
+      "required": [
+        "width_px",
+        "color"
+      ],
+      "title": "Border",
+      "type": "object"
+    },
+    "Canvas": {
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "description": "Output canvas width in pixels.",
+          "maximum": 4096,
+          "minimum": 1,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "description": "Output canvas height in pixels.",
+          "maximum": 4096,
+          "minimum": 1,
+          "title": "Height",
+          "type": "integer"
+        },
+        "background": {
+          "description": "Solid canvas colour as #RRGGBB.",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Background",
+          "type": "string"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "background"
+      ],
+      "title": "Canvas",
+      "type": "object"
+    },
+    "CoverLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "photo_id": {
+          "description": "Stable project photo number assigned at import; independent of layer order.",
+          "exclusiveMinimum": 0,
+          "title": "Photo Id",
+          "type": "integer"
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Border"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corner_radius_px": {
+          "default": 0,
+          "description": "Photo-edge radius in output pixels; positive outer radius adds the border width.",
+          "minimum": 0,
+          "title": "Corner Radius Px",
+          "type": "integer"
+        },
+        "rotation_degrees": {
+          "default": 0.0,
+          "description": "Clockwise degrees about the outer frame centre; negative is counterclockwise.",
+          "maximum": 10,
+          "minimum": -10,
+          "title": "Rotation Degrees",
+          "type": "number"
+        },
+        "mode": {
+          "const": "cover",
+          "title": "Mode",
+          "type": "string"
+        },
+        "box": {
+          "$ref": "#/$defs/FrameBox"
+        },
+        "crop": {
+          "$ref": "#/$defs/Crop",
+          "description": "Optional cover crop controls; omission means centred at 1x. Null is invalid."
+        }
+      },
+      "required": [
+        "photo_id",
+        "mode",
+        "box"
+      ],
+      "title": "CoverLayer",
+      "type": "object"
+    },
+    "Crop": {
+      "additionalProperties": false,
+      "properties": {
+        "zoom": {
+          "default": 1.0,
+          "description": "Multiplier of the minimum uniform cover scale, from 1 to 4.",
+          "maximum": 4,
+          "minimum": 1,
+          "title": "Zoom",
+          "type": "number"
+        },
+        "pan_x": {
+          "default": 0.5,
+          "description": "Source crop position over available travel: 0 left, 1 right.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Pan X",
+          "type": "number"
+        },
+        "pan_y": {
+          "default": 0.5,
+          "description": "Source crop position over available travel: 0 top, 1 bottom.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Pan Y",
+          "type": "number"
+        }
+      },
+      "title": "Crop",
+      "type": "object"
+    },
+    "FrameBox": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "Untilted outer left edge, as a fraction of canvas width.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "description": "Untilted outer top edge, as a fraction of canvas height.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "width": {
+          "description": "Border-inclusive outer width / canvas width.",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "description": "Border-inclusive outer height / canvas height.",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "FrameBox",
+      "type": "object"
+    },
+    "WholeBox": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "Untilted outer left edge, as a fraction of canvas width.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "description": "Untilted outer top edge, as a fraction of canvas height.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "width": {
+          "description": "Border-inclusive outer width / canvas width.",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Width",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width"
+      ],
+      "title": "WholeBox",
+      "type": "object"
+    },
+    "WholeLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "photo_id": {
+          "description": "Stable project photo number assigned at import; independent of layer order.",
+          "exclusiveMinimum": 0,
+          "title": "Photo Id",
+          "type": "integer"
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Border"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corner_radius_px": {
+          "default": 0,
+          "description": "Photo-edge radius in output pixels; positive outer radius adds the border width.",
+          "minimum": 0,
+          "title": "Corner Radius Px",
+          "type": "integer"
+        },
+        "rotation_degrees": {
+          "default": 0.0,
+          "description": "Clockwise degrees about the outer frame centre; negative is counterclockwise.",
+          "maximum": 10,
+          "minimum": -10,
+          "title": "Rotation Degrees",
+          "type": "number"
+        },
+        "mode": {
+          "const": "whole",
+          "title": "Mode",
+          "type": "string"
+        },
+        "box": {
+          "$ref": "#/$defs/WholeBox",
+          "description": "Width-only frame; derive height from the oriented photo without cropping."
+        }
+      },
+      "required": [
+        "photo_id",
+        "mode",
+        "box"
+      ],
+      "title": "WholeLayer",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "maximum": 2,
+      "minimum": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "canvas": {
+      "$ref": "#/$defs/Canvas"
+    },
+    "layers": {
+      "description": "Photo layers ordered back to front; each imported photo appears exactly once.",
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "cover": "#/$defs/CoverLayer",
+            "whole": "#/$defs/WholeLayer"
+          },
+          "propertyName": "mode"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/WholeLayer"
+          },
+          {
+            "$ref": "#/$defs/CoverLayer"
+          }
+        ]
+      },
+      "maxItems": 6,
+      "minItems": 2,
+      "title": "Layers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "canvas",
+    "layers"
+  ],
+  "title": "InputLayout",
+  "type": "object"
+}
