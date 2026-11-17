@@ -171,6 +171,39 @@ Open the new render path printed by the command. Other example recipes and
 earlier saved versions remain unchanged. A fresh project can also use this
 recipe with the same four-photo import order.
 
+### Emma's London Eye background demo
+
+`examples\emma_london_eye_3x4.json` uses the full London Eye night-time photo
+behind a tilted bookshop at the upper-left and a larger Tower Bridge at the
+lower-right, leaving the blue wheel visible between them. The 1200x1600 (3:4)
+canvas matches the background photo's aspect ratio, so that photo is uncropped.
+Foreground frames retain 10-pixel white borders and 12-pixel photo-edge radii.
+The current recipe makes both foreground photos about 10% smaller while
+preserving their corner clearances, tilts, and framing, revealing more of the
+background.
+
+No engine or schema changes are needed: the background is an ordinary,
+borderless, untilted image element at `(0, 0)` with width `1.0` and the lowest
+`z_index`. Its derived height fills the canvas. The solid canvas background
+remains underneath; this is not a new `canvas.background` type.
+
+Use a **new three-photo project**, importing **Bridge = 1, London Eye = 2,
+bookshop = 3**. Breakfast is not imported. This differs from the four-photo
+examples' numbering, so do not apply this recipe to those projects.
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage create --project emma-london-eye-demo --images .\photos\01_tower_bridge.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+.\.venv\Scripts\python.exe -m ai_collage apply-layout --project emma-london-eye-demo --layout .\examples\emma_london_eye_3x4.json
+Invoke-Item .\.collage-data\users\local-dev\projects\emma-london-eye-demo\renders\v0001.png
+```
+
+Choose another fresh name consistently if that project exists. Every imported
+photo appears once, including the full-canvas background. Earlier Emma projects,
+recipes, and accepted versions remain unchanged.
+To update an existing project, run only `apply-layout` and use its printed render
+path. In `emma-london-eye-demo`, version 1 keeps the original foreground sizes;
+version 2 uses the smaller photos.
+
 ## Input layouts and saved versions
 
 The input layout is an editable **design recipe**. A file such as
@@ -207,9 +240,10 @@ See `examples\portrait_9x16.json` for the whole-photo baseline. Its shown fields
 are required; optional `border`, `framing`, `corner_radius_px`, and
 `rotation_degrees` settings are described below.
 Unknown fields are rejected, including `rotation`, shadow, path, caption, a
-standalone `crop` object, or image background. Pan/zoom belong inside
+standalone `crop` object, or a native image-valued canvas background. Pan/zoom belong inside
 `framing`, not at element level. Backgrounds use `type: "color"` and a six-digit
-`#RRGGBB` value. PNG alpha shows the background or lower layers.
+`#RRGGBB` value; photographic backgrounds use a full-canvas image layer as
+demonstrated above. PNG alpha shows the background or lower layers.
 Animated/multiframe images are unsupported.
 
 Both axes use 0-1 coordinates regardless of canvas shape. An image supplies

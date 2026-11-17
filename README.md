@@ -11,7 +11,8 @@ Both modes avoid stretching and support different canvas aspect ratios, solid
 backgrounds, optional outside photo borders, and overlapping images with
 explicit stacking. Optional rounded corners work with or without borders.
 Centre-based tilt supports -10 to +10 degrees, with the entire rotated frame
-required to fit on the canvas. Captions are not implemented yet.
+required to fit on the canvas. A full-canvas image layer can serve as a photo
+background. Captions are not implemented yet.
 
 The collage application runs offline without credentials or model calls.
 Natural-language design, a graphical UI, and Azure hosting are planned, not
@@ -66,6 +67,9 @@ The [evolved tilted demo](docs/cli-guide.md#emmas-evolved-tilted-demo),
 `examples\emma_tilted_2x3.json`, uses a charcoal background, thinner white
 borders, rounded corners, and gentle tilts. It develops the composition rather
 than trying to match the manual reference more closely.
+The [London Eye background demo](docs/cli-guide.md#emmas-london-eye-background-demo),
+`examples\emma_london_eye_3x4.json`, puts the bookshop and Bridge over the full
+night-time photo, without breakfast. It uses a separate three-photo project.
 
 ## Editable recipes and saved results
 
