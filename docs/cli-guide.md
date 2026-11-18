@@ -89,6 +89,32 @@ Positions in authored recipes are `box.center_x` and `box.center_y`,
 normalized independently on the canvas axes. Resizing keeps that centre fixed.
 Derived render boxes still use top-left integer pixel coordinates.
 
+### Saved snapshots and schema maintenance
+
+An accepted snapshot has its own `schema_version: 3` and positive `version`,
+one canonical validated input under `recipe`, and separate `geometry` ordered
+like the recipe's layers. Geometry contains the `photo_id`, normalized
+resolved frame, outer/inner pixel boxes, optional source window, and optional
+rotated footprint. Derived fields are required even when their value is null.
+The derived `geometry.box_normalized.x`/`y` are the continuous top-left
+calculated from the authored centre and continuous size. Derived pixel boxes
+also use top-left coordinates for rendering. Neither is an alternative authored
+position or a value to feed back as `center_x`/`center_y`.
+
+The engine recomputes geometry when reopening a snapshot and rejects
+inconsistencies before rendering or accepting a later version. Edit the
+original recipe and apply it again instead of changing a saved snapshot.
+Format 1 and 2 recipes, projects, and snapshots are unsupported. Existing project
+data remains an untouched archive; previously rendered PNGs remain viewable. No
+migration or legacy loader is provided.
+
+The generated schema is checked against the models in the tests. To regenerate
+it after intentionally changing a contract, run from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import json; from pathlib import Path; from ai_collage.models import InputLayout; Path(r'docs\layout.schema.json').write_text(json.dumps(InputLayout.model_json_schema(), indent=2) + '\n', encoding='utf-8')"
+```
+
 ## Conversational proposals (optional)
 
 **Format 3 prompt/context adaptation is covered offline.** The agent now edits
@@ -274,6 +300,21 @@ shared-run usage summaries; those are not combined with new project-local counts
 No photos or local paths are added to the
 model context by the runner. Existing executions and proposal files are
 preserved when resuming.
+
+### Optional Autopilot call cap
+
+For an explicitly authorized batch, append
+`--call-budget PATH --max-calls 200` to each replay command. A new path creates
+a small pass-local limit/used record automatically; using that same path across
+projects and invocations retains consumption and rejects limit changes.
+Run the batch sequentially (single writer). Reservations are durable before
+HTTP dispatch; corrections, failed HTTP requests and timeouts consume calls.
+Exhaustion blocks dispatch. Token/time limits and replay stop rules still apply.
+
+Use a fresh path only for a newly authorized pass, not to renew an exhausted
+or stopped one. Ordinary replay/chat needs no call-budget file. This opt-in
+guard does not add fields to model context or bind a replay to a budget path.
+`--call-budget` enables the guard; `--max-calls` alone does not.
 
 ### Assess saved replay evidence offline
 

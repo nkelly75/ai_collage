@@ -1,9 +1,9 @@
 # Layout Format 3
 
-This is the authored recipe contract for people and future layout-generating
-LLMs. The engine is deterministic; it does not understand photo contents or
-currently call an LLM. The generated [JSON Schema](layout.schema.json) describes
-the structural alternatives. Project-specific checks still happen at runtime.
+This is the authored recipe contract shared by people and layout-generating
+LLMs. The deterministic engine validates and renders original photos without
+understanding their contents. The generated [JSON Schema](layout.schema.json)
+describes the structural alternatives; project-specific checks happen at runtime.
 
 ## The mental model
 
@@ -136,26 +136,8 @@ mappings differ; see the [CLI guide](cli-guide.md).
 
 ## Saved snapshots are not recipes
 
-An accepted snapshot has its own `schema_version: 3` and positive `version`,
-one canonical validated input under `recipe`, and separate `geometry` ordered
-like the recipe's layers. Geometry contains the `photo_id`, normalized
-resolved frame, outer/inner pixel boxes, optional source window, and optional
-rotated footprint. Derived fields are required even when their value is null.
-The derived `geometry.box_normalized.x`/`y` are the continuous top-left
-calculated from the authored centre and continuous size. Derived pixel boxes
-also use top-left coordinates for rendering. Neither is an alternative authored
-position or a value to feed back as `center_x`/`center_y`.
-
-The engine recomputes geometry when reopening a snapshot and rejects
-inconsistencies before rendering or accepting a later version. Edit the
-original recipe and apply it again instead of changing a saved snapshot.
-Format 1 and 2 recipes, projects, and snapshots are unsupported. Existing project
-data remains an untouched archive; previously rendered PNGs remain viewable. No
-migration or legacy loader is provided.
-
-The generated schema is checked against the models in the tests. To regenerate
-it after intentionally changing a contract, run from the repository root:
-
-```powershell
-.\.venv\Scripts\python.exe -c "import json; from pathlib import Path; from ai_collage.models import InputLayout; Path(r'docs\layout.schema.json').write_text(json.dumps(InputLayout.model_json_schema(), indent=2) + '\n', encoding='utf-8')"
-```
+Author the recipe, not its saved snapshot wrapper or derived `geometry`.
+The derived `geometry.box_normalized.x`/`y` and pixel-box origins are top-left
+positions, not values to copy into `box.center_x`/`box.center_y`.
+See the [CLI guide](cli-guide.md#saved-snapshots-and-schema-maintenance)
+for snapshot storage, archive compatibility and schema-maintenance commands.

@@ -552,6 +552,54 @@ def test_response_union_strictness_and_size():
         REPLY.validate_python({"kind": "question", "question": "a" * 1001})
 
 
+def test_optional_outer_cap_survives_new_projects_and_context_restarts(store, tmp_path):
+    import httpx
+    from ai_collage.agent_provider import DEPLOYMENT, ENDPOINT, guarded_transport
+    from ai_collage.agent_requests import call_budget
+
+    path = tmp_path / "pass.json"
+    payload = {
+        "model": DEPLOYMENT, "store": False, "max_output_tokens": 25_000,
+        "reasoning": {"effort": "high"}, "input": [],
+    }
+    dispatched = []
+
+    async def handler(request):
+        dispatched.append(json.loads(request.content))
+        return httpx.Response(429, json={"error": {"message": "offline"}})
+
+    async def send(project):
+        gate = guarded_transport(RequestLog(store, project), "offline", httpx.MockTransport(handler))
+        async with httpx.AsyncClient(transport=gate) as client:
+            return await client.post(ENDPOINT + "responses", json=payload)
+
+    with call_budget(path, 1):
+        assert asyncio.run(send("first")).status_code == 429
+    with call_budget(path, 1):
+        with pytest.raises(CollageError, match="Outer call budget exhausted"):
+            asyncio.run(send("second"))
+    assert dispatched == [payload]
+    assert read_json(path)["used"] == 1
+    assert RequestLog(store, "first").attempts()[0].status == "error"
+    assert RequestLog(store, "second").attempts() == []
+    with pytest.raises(CollageError, match="limit changed"):
+        with call_budget(path, 2):
+            pass
+
+
+def test_outer_cap_does_not_count_oversized_preflight_or_leak_after_exit(store, tmp_path):
+    from ai_collage.agent_requests import call_budget
+
+    path = tmp_path / "pass.json"
+    with call_budget(path, 1):
+        with pytest.raises(CollageError, match="token bound"):
+            RequestLog(store, "first").reserve("offline", 50_001)
+        assert read_json(path)["used"] == 0
+        RequestLog(store, "first").reserve("offline", 100)
+    RequestLog(store, "second").reserve("ordinary unguarded use", 100)
+    assert read_json(path)["used"] == 1
+
+
 @pytest.mark.parametrize("old_version", [1, 2])
 def test_proposal_response_rejects_old_recipe_versions(old_version):
     data = layout_data()

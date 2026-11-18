@@ -18,7 +18,7 @@ Formats 1 and 2 are unsupported untouched archives, not migrated or loaded.
 The agent prompt and context now use authored centres directly, with offline
 coverage. A single format 3 four-message replay completed without corrections
 or acceptance. Interactive landscape exploration and a JSON-driven replay
-runner follow; these are not a successor 006 phase or a reliability assessment.
+runner followed; these preceded 006 and are not a reliability assessment.
 The runner records evidence without evaluating or accepting results. A separate
 offline assessment command checks saved evidence and the named dark portrait
 mechanical profile; the duplicate fixed live evaluator has been removed.
@@ -44,9 +44,21 @@ authorization. See the [latest handoff](005-model-connected-layouts.md#authorize
 The earlier 6/6-cycle result, three-attempt allowance, excluded diagnostics, and
 all failed evaluation reports remain preserved; no old counts were refunded.
 Record 005 is now closed as a historical implementation/evaluation record,
-not an active work plan. This does not signify user acceptance, stabilized
-code, or commit readiness: staging captures progress pending further work.
-No successor plan has been created; checkpoint B remains unstarted.
+not an active work plan. Committed progress does not signify user acceptance
+or stabilized code.
+[006: Simplification and repeatability](006-simplification-and-repeatability.md)
+started with an optional 200-call outer guard, then stopped on a fresh landscape
+baseline's incorrect position swap. It used 8 calls and no development recoveries;
+no prompt simplification or frozen assessment followed in that first attempt.
+The revised pass is now complete: targeted swap fix, 8.84% shorter assembled
+instructions, two development replay pairs and four frozen assessment replays.
+All 32 successful messages needed no validation corrections; one service timeout
+was preserved and explicitly retried after user authorization. It used 33/200
+calls and no development recoveries. Requested edits passed, but frozen portrait
+composition/overlap varied. The frozen candidate and old counter/evidence remain
+unchanged. This is a closed bounded experiment, not design-quality sign-off.
+See the separate [results record](006_results.md). Checkpoint B remains excluded
+and unstarted.
 Completing the offline foundation does not complete the blueprint's broader Phase 1.
 Separate [Foundry experiments](../temp-foundry-test/README.md) are reference
 work, not application integration; running them makes paid service calls.
@@ -64,6 +76,7 @@ and record 003 spans several feature increments.
 | [003: Layout evolution](003-layout-evolution.md) | Implemented borders, cover framing, rounded corners, and tilt, plus format 2 reconciliation and visual-demo decisions. | `docs\layout-decisions.md` |
 | [004: Engine refactoring](004-engine-refactoring.md) | Completed format 2 brief, verification, example-equivalence evidence, reviewer outcomes, and retry accounting. | `docs\engine-refactoring-spec.md` |
 | [005: Model-connected layouts](005-model-connected-layouts.md) | Closed historical implementation/evaluation record. Checkpoint A scripted checks and exact acceptance passed: 4/6 follow-up rounds, 17/50 fresh requests. Not user sign-off or commit readiness; checkpoint B unstarted and unapproved. | New planning record. |
+| [006: Simplification and repeatability](006-simplification-and-repeatability.md) | Completed revised pass: swap fix, 8.84% shorter instructions, eight completed replays, 33/200 calls including one explicitly retried timeout, 0/2 recoveries. Targeted edits pass; visual overlap varies. Original failed baseline preserved. See [006_results.md](006_results.md). | New planning record. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
@@ -112,8 +125,10 @@ state its status, scope and exclusions, prerequisites and decisions, acceptance
 criteria, guardrails, retry/service budgets, and links to relevant earlier
 records and current documentation. Approval boundaries must be explicit.
 
-Close an implemented brief with its execution record, results, limitations,
-and budget accounting, then retain it as a snapshot. Later phases update the
+Close an implemented brief with its final status and a link to a separate
+results record for evidence, outputs, limitations and budget accounting, then
+retain it as a snapshot. Older records may contain their execution history inline.
+Later phases update the
 current guides and this index rather than rewriting earlier plans to match
 new behavior. Neither an unapproved outline nor a previous phase's unused
 allowance grants permission to start the next phase.

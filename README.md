@@ -23,7 +23,7 @@ feedback and high reasoning effort resolved the earlier failures. This is
 trial-ready under the bounded checks, not user sign-off or a reliability claim.
 The user-led checkpoint B still needs separate approval. See the
 [conversation guide](docs/cli-guide.md#conversational-proposals-optional)
-and [latest results](planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff).
+and [checkpoint A results](planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff).
 A graphical UI and Azure hosting remain future work. Separate Foundry
 experiments are not part of the application workflow.
 
@@ -39,7 +39,14 @@ four-message format 3 replay completed without corrections or acceptance;
 this is exploratory evidence, not a repeated reliability assessment.
 A [JSON-driven replay runner](docs/cli-guide.md#repeatable-prompt-sequences)
 captures individual steps or explicitly requested batches. Live requests still
-require bounded authorization; no successor 006 phase has started.
+require bounded authorization. [006](planning/006-simplification-and-repeatability.md)
+added an optional batch-wide call cap, then stopped at a fresh baseline's
+incorrect position swap, before prompt simplification. The revised bounded pass
+completed the swap fix, 8.84% shorter assembled instructions and eight replays
+using 33 calls, including one explicitly retried timeout. Targeted edits passed;
+visual composition/overlap still varies. This is not a general reliability or
+design-quality claim.
+See the [006 results](planning/006_results.md).
 
 ## Where the idea came from
 

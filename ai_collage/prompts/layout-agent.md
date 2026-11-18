@@ -116,50 +116,37 @@ Do not reapply styling defaults or improve canvas coverage during an unrelated
 edit. Return the complete updated recipe.
 
 - Moving a photo changes its position, not its size or stacking order.
+- Swapping two photos' positions exchanges their original `box.center_x` and
+  `box.center_y` pairs from `editing_baseline`. Read both original pairs before
+  assigning either one. Do not use the derived top-left coordinates in
+  `baseline_geometry`, calculate size offsets, or swap sizes, styles, photo
+  identities, or layer order.
 - Making a photo smaller or larger in the same spot preserves its untilted
   frame centre: copy `box.center_x` and `box.center_y` exactly. For a whole
   photo, change only `box.width`; the engine derives its height and top-left.
   If the user explicitly names a different anchor, adjust the centre to
   preserve that anchor instead.
+- Resizing a cover frame in place preserves both centres. Change width and
+  height proportionally unless the user asks to change the frame shape;
+  keep crop controls unchanged unless requested.
 - Removing borders changes only the border fields. Whole-photo heights can
   change around the unchanged centre as a consequence; do not compensate by
   changing other authored fields unless the user also asks for that.
 - Making photos straight changes only `rotation_degrees` to zero.
 - Changing stacking order moves existing layers; it never renumbers photos.
 
-## Place and size centre-anchored frames
-
-Coordinates use independent axes: divide horizontal pixel values by canvas
-width and vertical pixel values by canvas height. A normalized width is not a
-normalized height. `box.center_x` and `box.center_y` locate the outer frame's
-centre, not its top-left. Do not output `box.x` or `box.y`.
-
-For a whole-photo resize in the same spot, choose a new border-inclusive
-`box.width` and leave both centre values unchanged. There are no position
-offsets or height calculations to perform for that edit. If choosing a target
-width in pixels, divide it by canvas width. The engine derives height from the
-source ratio and border and places the resized frame about the authored centre.
-
-For example, shrinking
-`{"center_x": 0.65, "center_y": 0.7, "width": 0.325}` to width `0.3`
-leaves `center_x: 0.65` and `center_y: 0.7` exactly as they were.
-This illustrates an edit, not a layout template.
-
-For cover frames, width and height are explicit. Preserve both centre values
-when resizing in place; change the dimensions proportionally unless the user
-asks to change the frame shape. Keep crop controls unchanged unless requested.
+## Use authored centres, not derived origins
 
 Use the authored centre from `editing_baseline`, not a centre reconstructed
-from rounded pixel boxes. Raster rounding can put the rendered centre up to
-half a pixel away on either axis; do not move the authored centre to compensate.
+from `baseline_geometry` or rounded pixel boxes; the field guide explains
+independent-axis units, height derivation and pixel rounding. Do not compensate
+for differences between authored and raster centres.
 Preserve enough decimal precision for new coordinates, normally at least nine
 decimal places where needed; copy unchanged authored values exactly.
 
-For new placements and size changes, still check the full frame height,
-outside borders, and rotated sampling footprint against the canvas. A centre
-inside the canvas does not mean the whole frame fits. The field guide defines
-height derivation and pixel rounding; the engine checks them without repairing
-an invalid proposal.
+For new placements and size changes, check the full frame and rotated sampling
+footprint against the canvas. A centre inside the canvas does not mean the
+whole frame fits; the engine rejects rather than repairs invalid geometry.
 
 ## Respond to validation feedback
 

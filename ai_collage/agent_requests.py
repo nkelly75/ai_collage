@@ -1,11 +1,58 @@
 """Project-local request accounting, without cumulative usage allowances."""
 
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from pathlib import Path
+from typing import Iterator
+
+from pydantic import Field
 
 from .agent_files import child, save
-from .agent_models import Attempt, Limits
+from .agent_models import Attempt, Limits, Record
 from .models import CollageError
 from .projects import ProjectStore, read_json
+
+
+class CallBudget(Record):
+    limit: int = Field(gt=0)
+    used: int = Field(default=0, ge=0)
+
+
+_active_budget: ContextVar[tuple[Path, int] | None] = ContextVar("call_budget", default=None)
+
+
+@contextmanager
+def call_budget(path: Path | None, limit: int = 200) -> Iterator[None]:
+    """Optional single-writer pass guard; reopening never renews its allowance."""
+    if path is None:
+        yield
+        return
+    path = path.resolve()
+    if path.exists():
+        state = CallBudget.model_validate(read_json(path))
+        if state.limit != limit or state.used > state.limit:
+            raise CollageError("Outer call budget limit changed or its counter is inconsistent.")
+    else:
+        save(path, CallBudget(limit=limit))
+    token = _active_budget.set((path, limit))
+    try:
+        yield
+    finally:
+        _active_budget.reset(token)
+
+
+def _reserve_budget() -> None:
+    active = _active_budget.get()
+    if active is None:
+        return
+    path, limit = active
+    state = CallBudget.model_validate(read_json(path))
+    if state.limit != limit:
+        raise CollageError("Outer call budget limit changed; no request dispatched.")
+    if state.used >= limit:
+        raise CollageError("Outer call budget exhausted; no request dispatched.")
+    save(path, state.model_copy(update={"used": state.used + 1}))
 
 
 class RequestLog:
@@ -33,6 +80,7 @@ class RequestLog:
             number=len(records) + 1, purpose=purpose, input_bound=input_bound,
             started=time.time(),
         )
+        _reserve_budget()
         save(child(self.root, f"attempt-{attempt.number:04d}.json"), attempt)
         return attempt
 

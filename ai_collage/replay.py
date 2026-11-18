@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, RootModel, ValidationError, model_validator
 
-from .agent_requests import RequestLog
+from .agent_requests import RequestLog, call_budget
 from .agent_files import canonical, child, digest, save
 from .agent_models import Controls, Digest, Exchange, Record
 from .agent_provider import FoundryModel, instructions
@@ -262,6 +262,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sequence", required=True, type=Path)
     parser.add_argument("--data-dir", type=Path, default=Path(".collage-data-v3"))
     parser.add_argument("--project")
+    parser.add_argument("--call-budget", type=Path, help="Optional durable cap shared by this pass.")
+    parser.add_argument("--max-calls", type=int, default=200, help="Immutable cap for --call-budget (default 200).")
     parser.add_argument("--check", action="store_true", help="Validate inputs offline; create nothing.")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--retry", action="store_true")
@@ -278,10 +280,11 @@ def main(argv: list[str] | None = None) -> int:
             }).model_dump_json(indent=2))
             return 0
         store = ProjectStore(args.data_dir)
-        report = asyncio.run(replay(
-            store, args.project, args.sequence,
-            resume=args.resume, remaining=args.remaining, retry=args.retry,
-        ))
+        with call_budget(args.call_budget, args.max_calls):
+            report = asyncio.run(replay(
+                store, args.project, args.sequence,
+                resume=args.resume, remaining=args.remaining, retry=args.retry,
+            ))
         print(report.model_dump_json(indent=2))
         return 0 if report.executions[-1].status == "proposal" else 1
     except (CollageError, ValidationError, OSError) as exc:
