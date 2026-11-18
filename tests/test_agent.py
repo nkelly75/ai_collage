@@ -7,7 +7,7 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-from ai_collage.agent_budget import RunLedger
+from ai_collage.agent_requests import RequestLog
 from ai_collage.agent_files import child, digest, save
 from ai_collage.agent_models import Controls, Exchange, Preferences, REPLY
 from ai_collage.conversation import Conversation
@@ -47,11 +47,11 @@ class FakeModel:
         self.responses = iter(responses)
         self.contexts = []
 
-    async def complete(self, context, ledger, purpose):
+    async def complete(self, context, requests, purpose):
         self.contexts.append(context)
-        attempt = ledger.reserve(purpose, 100)
+        attempt = requests.reserve(purpose, 100)
         response = next(self.responses)
-        ledger.finish(attempt.model_copy(update={
+        requests.finish(attempt.model_copy(update={
             "status": "error" if isinstance(response, Exception) else "complete",
             "input_tokens": 10, "output_tokens": 20,
         }))
@@ -64,61 +64,62 @@ def reply(data=None):
     return json.dumps({"kind": "proposal", "recipe": data or layout_data()})
 
 
-def ask(conversation, ledger, *responses, prompt="Make a collage"):
+def ask(conversation, requests, *responses, prompt="Make a collage"):
     model = FakeModel(*responses)
-    return asyncio.run(conversation.request(prompt, model, ledger)), model
+    return asyncio.run(conversation.request(prompt, model, requests)), model
 
 
 @pytest.fixture
 def agent_project(store, sources):
     store.create("demo", sources)
-    ledger = RunLedger.provision(store, "offline-test")
-    return Conversation(store, "demo", canvas=(100, 100)), ledger
+    requests = RequestLog(store, "demo")
+    return Conversation(store, "demo", canvas=(100, 100)), requests
 
 
 def test_proposals_resume_accept_older_and_idempotence(agent_project):
-    conversation, ledger = agent_project
+    conversation, requests = agent_project
     store = conversation.store
-    p1, _ = ask(conversation, ledger, reply())
+    p1, _ = ask(conversation, requests, reply())
     png = conversation.preview_path(p1).read_bytes()
     assert store.load("demo").current_version is None
     altered = layout_data()
     altered["canvas"]["background"] = "#202020"
-    p2, _ = ask(conversation, ledger, reply(altered))
+    p2, _ = ask(conversation, requests, reply(altered))
     resumed = Conversation(store, "demo")
     assert resumed.state.baseline == p2
     assert resumed.accept(p1) == 1
+    assert store.load_layout(store.load("demo"), 1).recipe == resumed.proposal(p1).recipe
     assert resumed.state.baseline == p1
     assert resumed.accept(p1) == 1
     assert resumed.accept(p2) == 2
     assert resumed.accept(p1) == 3
     assert store.version_paths("demo", 1)[1].read_bytes() == png
     assert store.version_paths("demo", 3)[1].read_bytes() == png
-    assert len(ledger.attempts()) == 2
+    assert len(requests.attempts()) == 2
 
 
 def test_question_and_answer_use_real_history(agent_project):
-    conversation, ledger = agent_project
+    conversation, requests = agent_project
     question = '{"kind":"question","question":"Which photo number?"}'
-    result, _ = ask(conversation, ledger, question, prompt="Make breakfast smaller")
+    result, _ = ask(conversation, requests, question, prompt="Make breakfast smaller")
     assert result == "Which photo number?"
     assert conversation.state.baseline is None
-    _, model = ask(Conversation(conversation.store, "demo"), ledger, reply(), prompt="Photo 2")
+    _, model = ask(Conversation(conversation.store, "demo"), requests, reply(), prompt="Photo 2")
     assert model.contexts[0]["history"][0]["prompt"] == "Make breakfast smaller"
     assert model.contexts[0]["history"][0]["response"] == question
-    assert len(ledger.attempts()) == 2
+    assert len(requests.attempts()) == 2
 
 
 def test_resize_context_keeps_authored_center_instead_of_rounded_pixel_center(agent_project):
-    conversation, ledger = agent_project
+    conversation, requests = agent_project
     data = layout_data()
     data["layers"][0]["box"] = {"center_x": 0.3, "center_y": 0.3, "width": 0.19}
-    p1, _ = ask(conversation, ledger, reply(data))
+    p1, _ = ask(conversation, requests, reply(data))
     baseline = conversation.proposal(p1)
     resumed = Conversation(conversation.store, "demo")
     smaller = copy.deepcopy(data)
     smaller["layers"][0]["box"]["width"] = 0.17
-    p2, model = ask(resumed, ledger, reply(smaller), prompt="Make photo 1 smaller in the same spot")
+    p2, model = ask(resumed, requests, reply(smaller), prompt="Make photo 1 smaller in the same spot")
     context = model.contexts[0]
     assert context["editing_baseline"] == baseline.recipe.model_dump(mode="json")
     assert context["editing_baseline"]["schema_version"] == 3
@@ -142,36 +143,36 @@ def test_resize_context_keeps_authored_center_instead_of_rounded_pixel_center(ag
     '{"kind":"proposal","recipe":{"x":NaN}}',
 ])
 def test_invalid_response_one_correction(agent_project, bad):
-    conversation, ledger = agent_project
-    result, model = ask(conversation, ledger, bad, reply())
+    conversation, requests = agent_project
+    result, model = ask(conversation, requests, bad, reply())
     assert result == "P001"
     assert len(model.contexts) == 2
     assert model.contexts[1]["validation_feedback"]
-    assert len(ledger.attempts()) == 2
+    assert len(requests.attempts()) == 2
 
 
 def test_four_invalid_responses_preserve_good_baseline_and_block_fifth(agent_project):
-    conversation, ledger = agent_project
-    p1, _ = ask(conversation, ledger, reply())
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply())
     model = FakeModel("{}", "{}", "{}", "{}", reply())
     with pytest.raises(CollageError, match="correction failed"):
-        asyncio.run(conversation.request("Make it nicer", model, ledger))
+        asyncio.run(conversation.request("Make it nicer", model, requests))
     assert conversation.state.baseline == p1
-    assert len(ledger.attempts()) == 5
+    assert len(requests.attempts()) == 5
     assert len(model.contexts) == 4
     assert all(context["editing_baseline"] == conversation.proposal(p1).recipe.model_dump(mode="json")
                for context in model.contexts)
 
 
 def test_fourth_attempt_succeeds_with_latest_candidate_feedback(agent_project):
-    conversation, ledger = agent_project
+    conversation, requests = agent_project
     bad = layout_data()
     bad["layers"][1]["box"]["center_y"] = 0.95
     newer = copy.deepcopy(bad)
     newer["layers"][1]["box"]["center_y"] = 0.9
-    result, model = ask(conversation, ledger, "{}", reply(bad), reply(newer), reply())
+    result, model = ask(conversation, requests, "{}", reply(bad), reply(newer), reply())
     assert result == "P001"
-    assert len(ledger.attempts()) == len(model.contexts) == 4
+    assert len(requests.attempts()) == len(model.contexts) == 4
     assert [event.outcome for event in conversation.history()] == [
         "invalid", "invalid", "invalid", "proposal",
     ]
@@ -195,22 +196,29 @@ def test_fourth_attempt_succeeds_with_latest_candidate_feedback(agent_project):
 
 
 def test_service_error_no_correction_and_recorded_prompt(agent_project):
-    conversation, ledger = agent_project
+    conversation, requests = agent_project
     model = FakeModel(CollageError("service stopped"), reply())
     with pytest.raises(CollageError, match="service stopped"):
-        asyncio.run(conversation.request("Make it nicer", model, ledger))
-    assert len(ledger.attempts()) == 1
+        asyncio.run(conversation.request("Make it nicer", model, requests))
+    assert len(requests.attempts()) == 1
     assert len(model.contexts) == 1
     assert conversation.history()[-1].outcome == "error"
     assert conversation.history()[-1].prompt == "Make it nicer"
 
 
+def test_conversation_records_requests_without_explicit_accounting_setup(agent_project):
+    conversation, requests = agent_project
+    result = asyncio.run(conversation.request("Make a collage", FakeModel(reply())))
+    assert result == "P001" and len(requests.attempts()) == 1
+    assert conversation.history()[-1].run_id is None
+
+
 def test_controls_crop_and_canvas_are_hard_constraints(agent_project):
-    conversation, ledger = agent_project
+    conversation, requests = agent_project
     with pytest.raises(CollageError, match="correction failed"):
-        ask(conversation, ledger, *[reply(framed_layout_data())] * 4)
+        ask(conversation, requests, *[reply(framed_layout_data())] * 4)
     conversation.controls(Controls(width=100, height=100, cropping=True))
-    p1, _ = ask(conversation, ledger, reply(framed_layout_data()))
+    p1, _ = ask(conversation, requests, reply(framed_layout_data()))
     conversation.controls(Controls(width=100, height=100))
     with pytest.raises(CollageError, match="Cropping"):
         conversation.accept(p1)
@@ -221,8 +229,8 @@ def test_controls_crop_and_canvas_are_hard_constraints(agent_project):
 
 
 def test_defaults_snapshot_and_ratings_stay_local(agent_project):
-    conversation, ledger = agent_project
-    p1, _ = ask(conversation, ledger, reply())
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply())
     conversation.rate(p1, "partly", "Position is good")
     save(child(conversation.store.owner_dir, "preferences.json"), Preferences(
         preferences_version=1, borders="avoid", rounding="avoid", tilt="avoid"
@@ -233,7 +241,7 @@ def test_defaults_snapshot_and_ratings_stay_local(agent_project):
     assert not any(event["kind"] == "rating" for event in context["history"])
     assert "original_filename" not in json.dumps(context)
     assert "uploads" not in json.dumps(context)
-    assert len(ledger.attempts()) == 1
+    assert len(requests.attempts()) == 1
     with pytest.raises(CollageError, match="captured"):
         Conversation(conversation.store, "demo", preferences=conversation.state_path)
 
@@ -246,8 +254,8 @@ def test_proposal_ids_do_not_escape_or_select_unpublished(agent_project, proposa
 
 
 def test_preview_tampering_is_not_silently_rendered(agent_project):
-    conversation, ledger = agent_project
-    proposal_id, _ = ask(conversation, ledger, reply())
+    conversation, requests = agent_project
+    proposal_id, _ = ask(conversation, requests, reply())
     conversation.preview_path(proposal_id).write_bytes(b"tampered")
     with pytest.raises(CollageError, match="identity"):
         conversation.accept(proposal_id)
@@ -255,27 +263,27 @@ def test_preview_tampering_is_not_silently_rendered(agent_project):
 
 
 def test_external_acceptance_conflict_is_explicit(agent_project, tmp_path):
-    conversation, ledger = agent_project
+    conversation, requests = agent_project
     from .helpers import write_layout
 
     conversation.store.apply_layout("demo", write_layout(tmp_path))
     with pytest.raises(CollageError, match="outside"):
-        ask(conversation, ledger, reply())
-    assert len(ledger.attempts()) == 0
+        ask(conversation, requests, reply())
+    assert len(requests.attempts()) == 0
 
 
 def test_proposal_render_failure_does_not_replace_baseline(agent_project, monkeypatch):
-    conversation, ledger = agent_project
-    p1, _ = ask(conversation, ledger, reply())
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply())
 
     def fail(*args):
         raise OSError("simulated render failure")
 
     monkeypatch.setattr("ai_collage.conversation.render_layout", fail)
     with pytest.raises(OSError, match="simulated"):
-        ask(conversation, ledger, reply())
+        ask(conversation, requests, reply())
     assert Conversation(conversation.store, "demo").state.baseline == p1
-    assert len(ledger.attempts()) == 2
+    assert len(requests.attempts()) == 2
     failed = Conversation(conversation.store, "demo").history()[-1]
     assert failed.outcome == "error"
     assert failed.prompt == "Make a collage"
@@ -284,8 +292,8 @@ def test_proposal_render_failure_does_not_replace_baseline(agent_project, monkey
 
 
 def test_acceptance_reconciles_exact_commit_after_index_failure(agent_project, monkeypatch):
-    conversation, ledger = agent_project
-    p1, _ = ask(conversation, ledger, reply())
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply())
 
     def fail(*args, **kwargs):
         raise OSError("simulated index failure")
@@ -302,8 +310,8 @@ def test_acceptance_reconciles_exact_commit_after_index_failure(agent_project, m
 
 
 def test_acceptance_precommit_failure_is_not_replayed(agent_project, monkeypatch):
-    conversation, ledger = agent_project
-    p1, _ = ask(conversation, ledger, reply())
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply())
 
     def fail(*args, **kwargs):
         raise OSError("simulated publish failure")
@@ -316,33 +324,34 @@ def test_acceptance_precommit_failure_is_not_replayed(agent_project, monkeypatch
     assert not resumed.intent_path.exists()
 
 
-def test_shared_ledger_49_50_51_and_no_reset(store):
-    ledger = RunLedger.provision(store, "shared")
-    for number in range(1, 51):
-        current = RunLedger(store, "shared")
+def test_project_request_log_keeps_history_without_a_cumulative_cap(store):
+    requests = RequestLog(store, "demo")
+    assert not requests.root.exists()
+    for number in range(1, 52):
+        current = RequestLog(store, "demo")
         reservation = current.reserve("offline", 100)
         assert reservation.number == number
-    with pytest.raises(CollageError, match="exhausted"):
-        RunLedger(store, "shared").reserve("must not dispatch", 100)
-    assert len(ledger.summary()["unknown_usage_attempts"]) == 50
-    with pytest.raises(FileExistsError):
-        RunLedger.provision(store, "shared")
+    assert len(requests.summary()["unknown_usage_attempts"]) == 51
+    assert requests.root == store.project_dir("demo") / "conversation" / "requests"
+    assert RequestLog(store, "another-project").attempts() == []
+    assert not (store.owner_dir / "agent-runs").exists()
 
 
 def test_oversized_input_does_not_reserve_attempt(store):
-    ledger = RunLedger.provision(store, "bounded")
+    requests = RequestLog(store, "bounded")
     with pytest.raises(CollageError, match="token bound"):
-        ledger.reserve("too large", 50_001)
-    assert ledger.attempts() == []
+        requests.reserve("too large", 50_001)
+    assert requests.attempts() == []
 
 
-def test_actual_usage_violation_halts_followup(store):
-    ledger = RunLedger.provision(store, "bounded")
-    attempt = ledger.reserve("offline", 100)
-    with pytest.raises(CollageError, match="halted"):
-        ledger.finish(attempt.model_copy(update={"status": "complete", "input_tokens": 50_001}))
-    with pytest.raises(CollageError, match="halted"):
-        RunLedger(store, "bounded").reserve("blocked", 100)
+@pytest.mark.parametrize("usage", [{"input_tokens": 50_001}, {"output_tokens": 25_001}])
+def test_actual_usage_violation_is_recorded_and_stops_the_request(store, usage):
+    requests = RequestLog(store, "bounded")
+    attempt = requests.reserve("offline", 100)
+    with pytest.raises(CollageError, match="per-request limit"):
+        requests.finish(attempt.model_copy(update={"status": "complete", **usage}))
+    assert all(getattr(requests.attempts()[0], key) == value for key, value in usage.items())
+    assert RequestLog(store, "bounded").reserve("next explicit request", 100).number == 2
 
 
 def test_chat_local_commands_without_agent_dependencies(agent_project, monkeypatch, capsys):
@@ -351,7 +360,7 @@ def test_chat_local_commands_without_agent_dependencies(agent_project, monkeypat
 
     for module in ("agent_framework", "azure.identity", "openai", "tiktoken"):
         monkeypatch.setitem(sys.modules, module, None)
-    lines = iter(["/status", "/not-a-command", "/canvas 120 100", "/quit"])
+    lines = iter(["/status", "/not-a-command", "/canvas 120 100", "Make a collage", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
     assert main([
         "--data-dir", str(conversation.store.data_dir),
@@ -360,6 +369,27 @@ def test_chat_local_commands_without_agent_dependencies(agent_project, monkeypat
     output = capsys.readouterr()
     assert "Local-only" in output.out
     assert "Unknown command" in output.err
+    assert "restart chat with --live" in output.err
+    assert not RequestLog(conversation.store, "demo").root.exists()
+
+
+def test_chat_live_opt_in_needs_no_allowance(agent_project, monkeypatch, capsys):
+    conversation, requests = agent_project
+    from ai_collage.__main__ import main
+
+    model = FakeModel(reply())
+    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: model)
+    lines = iter(["Make a collage", "/status", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(lines))
+    assert main([
+        "--data-dir", str(conversation.store.data_dir),
+        "chat", "--project", "demo", "--live", "--no-open",
+    ]) == 0
+    output = capsys.readouterr()
+    assert not output.err and '"requests"' in output.out
+    assert len(model.contexts) == len(requests.attempts()) == 1
+    assert not (conversation.store.owner_dir / "agent-runs").exists()
+    assert conversation.store.load("demo").current_version is None
 
 
 def response_envelope(text, *, status="completed"):
@@ -417,7 +447,7 @@ def test_real_framework_mocked_http_gate(store, status):
     from agent_framework.exceptions import AgentFrameworkException
     from ai_collage.agent_provider import ENDPOINT, guarded_transport, instructions, run_agent
 
-    ledger = RunLedger.provision(store, "mocked")
+    requests = RequestLog(store, "mocked")
     captured = []
     text = reply()
 
@@ -451,14 +481,14 @@ def test_real_framework_mocked_http_gate(store, status):
             text, status="incomplete" if status == "incomplete" else "completed"
         ))
 
-    gate = guarded_transport(ledger, "mock", httpx.MockTransport(handler))
+    gate = guarded_transport(requests, "mock", httpx.MockTransport(handler))
 
     async def execute():
         async with AsyncOpenAI(
             base_url=ENDPOINT, api_key="offline-not-a-real-credential", max_retries=0,
             http_client=httpx.AsyncClient(transport=gate),
         ) as sdk:
-            return await run_agent({"user_request": "x" * (60_000 if status == "oversize" else 1)}, sdk, ledger)
+            return await run_agent({"user_request": "x" * (60_000 if status == "oversize" else 1)}, sdk, requests)
 
     if status == "completed":
         assert asyncio.run(execute()) == text
@@ -468,7 +498,7 @@ def test_real_framework_mocked_http_gate(store, status):
             asyncio.run(execute())
     if status == "oversize":
         assert captured == []
-        assert ledger.attempts() == []
+        assert requests.attempts() == []
         return
     assert len(captured) == 1
     assert captured[0]["store"] is False
@@ -476,15 +506,15 @@ def test_real_framework_mocked_http_gate(store, status):
     assert captured[0]["reasoning"] == {"effort": "high"}
     assert not captured[0].get("tools")
     assert captured[0]["text"]["format"]["type"] == "json_schema"
-    assert len(ledger.attempts()) == 1
+    assert len(requests.attempts()) == 1
     if status not in {"429", "401", "timeout"}:
-        assert ledger.summary()["input_tokens"] == 100
-        assert ledger.summary()["output_tokens"] == 20
-        assert ledger.summary()["unknown_usage_attempts"] == []
+        assert requests.summary()["input_tokens"] == 100
+        assert requests.summary()["output_tokens"] == 20
+        assert requests.summary()["unknown_usage_attempts"] == []
     else:
-        assert ledger.attempts()[0].status == "error"
-        assert ledger.attempts()[0].duration is not None
-        assert ledger.summary()["unknown_usage_attempts"] == [1]
+        assert requests.attempts()[0].status == "error"
+        assert requests.attempts()[0].duration is not None
+        assert requests.summary()["unknown_usage_attempts"] == [1]
 
 
 def test_gate_rejects_an_extra_dispatch(store):
@@ -492,14 +522,14 @@ def test_gate_rejects_an_extra_dispatch(store):
     import httpx
     from ai_collage.agent_provider import DEPLOYMENT, ENDPOINT, guarded_transport
 
-    ledger = RunLedger.provision(store, "mocked")
+    requests = RequestLog(store, "mocked")
     dispatched = []
 
     async def handler(request):
         dispatched.append(request)
         return httpx.Response(200, json=response_envelope('{"kind":"question","question":"Which photo?"}'))
 
-    gate = guarded_transport(ledger, "mock", httpx.MockTransport(handler))
+    gate = guarded_transport(requests, "mock", httpx.MockTransport(handler))
 
     async def execute():
         async with httpx.AsyncClient(transport=gate) as client:
@@ -512,48 +542,7 @@ def test_gate_rejects_an_extra_dispatch(store):
                 await client.post(ENDPOINT + "responses", json=payload)
 
     asyncio.run(execute())
-    assert len(dispatched) == len(ledger.attempts()) == 1
-
-
-def test_scripted_comparisons_preserve_exact_unrelated_fields(agent_project):
-    from ai_collage.evaluate import compare
-    from ai_collage.geometry import resolve_layout
-    from ai_collage.models import InputLayout
-
-    conversation, _ = agent_project
-    photos = conversation.store.load("demo").photos
-
-    def resolve(value):
-        return resolve_layout(InputLayout.model_validate(value), photos, 1)
-
-    data = layout_data()
-    data["canvas"]["background"] = "#282828"
-    data["layers"][0]["box"]["width"] = 0.4
-    data["layers"][0]["box"].update(center_x=0.3, center_y=0.3)
-    for layer in data["layers"]:
-        layer.update(border={"width_px": 1, "color": "#FFFFFF"}, corner_radius_px=1, rotation_degrees=1)
-    initial = resolve(data)
-    assert compare(0, initial, None) == []
-    smaller = copy.deepcopy(data)
-    smaller["layers"][1]["box"]["width"] = 0.18
-    resized = resolve(smaller)
-    assert compare(1, resized, initial) == []
-    shifted = copy.deepcopy(smaller)
-    shifted["layers"][1]["box"]["center_x"] += 0.0001
-    assert "Unrelated" in " ".join(compare(1, resolve(shifted), initial))
-    changed = copy.deepcopy(smaller)
-    changed["layers"][0]["corner_radius_px"] = 2
-    assert "Unrelated" in " ".join(compare(1, resolve(changed), initial))
-    for layer in smaller["layers"]:
-        layer["border"] = None
-    borderless = resolve(smaller)
-    assert compare(2, borderless, resized) == []
-    for layer in smaller["layers"]:
-        layer["rotation_degrees"] = 0
-    straight = resolve(smaller)
-    assert compare(3, straight, borderless) == []
-    smaller["layers"].reverse()
-    assert "stacking" in " ".join(compare(3, resolve(smaller), borderless))
+    assert len(dispatched) == len(requests.attempts()) == 1
 
 
 def test_response_union_strictness_and_size():

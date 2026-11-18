@@ -34,9 +34,12 @@ explicit whole/cover modes, stable `photo_id` values, and a back-to-front
 [JSON Schema](docs/layout.schema.json). Format 1 and 2 projects remain
 untouched archives: their PNGs are viewable, but the new CLI does not load or
 migrate their histories. Use a fresh data root for the updated examples.
-The agent prompt and context now use format 3, with offline coverage. Live
-requests remain paused for user review of the revised prompt; there is no
-format 3 live evaluation result yet.
+The agent prompt and context now use format 3, with offline coverage. One
+four-message format 3 replay completed without corrections or acceptance;
+this is exploratory evidence, not a repeated reliability assessment.
+A [JSON-driven replay runner](docs/cli-guide.md#repeatable-prompt-sequences)
+captures individual steps or explicitly requested batches. Live requests still
+require bounded authorization; no successor 006 phase has started.
 
 ## Where the idea came from
 
@@ -142,6 +145,50 @@ saved snapshot, not the input file.
 Keep editing the recipe, not the generated snapshot. See the
 [CLI guide](docs/cli-guide.md#input-layouts-and-saved-versions) for the full
 relationship, storage paths, and versioning behavior.
+
+## Replay a prompt sequence
+
+Replay conversations from `examples\sequences\01_dark_portrait_adjustments.json`
+or `02_landscape_staggered_adjustments.json`. **One message runs per invocation
+by default; nothing is automatically accepted.**
+
+```powershell
+$sequence = '.\examples\sequences\02_landscape_staggered_adjustments.json'
+
+# Offline: validate the sequence and source-file availability/hashes.
+.\.venv\Scripts\python.exe -m ai_collage.replay --sequence $sequence --check
+
+# Live, when authorized: choose a fresh project ID.
+.\.venv\Scripts\python.exe -m ai_collage.replay --sequence $sequence `
+  --data-dir .\.collage-data-v3 --project YOUR-NEW-PROJECT
+```
+
+Repeat the live command with `--resume` to advance that project by one message.
+Add `--remaining` only to run all remaining messages without pausing. If the
+sequence has four messages, that means at most **16 model calls**, including
+validation corrections (at most four per message). There is no shared allowance
+to provision or replenish. A failed step needs an explicit `--resume --retry`;
+questions and interrupted steps stop for inspection. Live execution still needs
+authorization; this tooling change does not authorize service calls.
+
+Find the cursor and execution summaries in the project's `replay\report.json`,
+sequence snapshots/contexts/results in `replay\steps`, and immutable JSON/PNG
+proposals in `conversation\proposals`. Unattempted messages may be edited before
+resuming. See the [full syntax and safeguards](docs/cli-guide.md#repeatable-prompt-sequences).
+Request usage is recorded automatically in the project's `conversation\requests`.
+Interactive chat remains local-only unless started with `--live`.
+
+Assess a saved replay **offline**, without generating or accepting anything:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage.assess --data-dir .\.collage-data-v3 `
+  --project YOUR-REPLAY-PROJECT --profile dark-portrait-adjustments
+```
+
+Omit `--profile` for evidence-integrity checks only, applicable to either
+sequence. The dark portrait profile additionally checks its specific requested
+edits and historical style rules. Numbered reports go in `replay\assessments`;
+subjective composition review stays separate. This replaces the old evaluator.
 
 ## How the tests check images
 

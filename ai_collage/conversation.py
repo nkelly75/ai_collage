@@ -8,7 +8,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from .agent_budget import RunLedger
+from .agent_requests import RequestLog
 from .agent_files import canonical, child, digest, save
 from .agent_models import (
     HISTORY, REPLY, AcceptanceIntent, Controls, ConversationState, Exchange,
@@ -21,7 +21,7 @@ from .projects import ProjectStore, parse_json, read_json
 
 
 class ModelClient(Protocol):
-    async def complete(self, context: dict[str, object], ledger: RunLedger, purpose: str) -> str: ...
+    async def complete(self, context: dict[str, object], requests: RequestLog, purpose: str) -> str: ...
 
 
 class Conversation:
@@ -175,19 +175,23 @@ class Conversation:
             "history": history, "user_request": prompt, "validation_feedback": feedback,
         }
 
-    async def request(self, prompt: str, client: ModelClient, ledger: RunLedger) -> str:
+    async def request(
+        self, prompt: str, client: ModelClient, requests: RequestLog | None = None,
+    ) -> str:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_JSON_BYTES // 4:
             raise CollageError("Prompt must be nonempty and at most 256 KiB UTF-8.")
+        requests = requests if requests is not None else RequestLog(self.store, self.project_id)
+        if requests.root != child(self.root, "requests"):
+            raise CollageError("Request accounting belongs to a different project.")
         feedback = None
         for correction in range(4):
             context = self.context(prompt, feedback)
-            ledger.check_available()
             try:
-                raw = await client.complete(context, ledger, f"{self.project_id}: turn")
+                raw = await client.complete(context, requests, f"{self.project_id}: turn")
             except (CollageError, OSError) as exc:
                 self._append(Exchange(
                     prompt=prompt, outcome="error", parent=self.state.baseline,
-                    run_id=ledger.config.run_id, attempt=len(ledger.attempts()) or None,
+                    run_id=None, attempt=len(requests.attempts()) or None,
                     error=f"Request stopped: {type(exc).__name__}.",
                 ))
                 raise
@@ -213,7 +217,7 @@ class Conversation:
                 self._append(Exchange(
                     prompt=prompt, response=(raw if len(raw.encode("utf-8")) <= MAX_JSON_BYTES // 2 else None),
                     outcome="invalid", parent=self.state.baseline,
-                    run_id=ledger.config.run_id, attempt=len(ledger.attempts()), error=feedback,
+                    run_id=None, attempt=len(requests.attempts()), error=feedback,
                 ))
                 if correction == 3:
                     raise CollageError(f"Model correction failed: {feedback}") from exc
@@ -221,25 +225,25 @@ class Conversation:
             if not isinstance(reply, ProposalReply):
                 self._append(Exchange(
                     prompt=prompt, response=raw, outcome="question", parent=self.state.baseline,
-                    run_id=ledger.config.run_id, attempt=len(ledger.attempts()),
+                    run_id=None, attempt=len(requests.attempts()),
                 ))
                 return reply.question
             assert resolved is not None
             try:
-                return self._publish(prompt, raw, resolved, ledger)
+                return self._publish(prompt, raw, resolved, requests)
             except (CollageError, OSError) as exc:
                 self._append(Exchange(
                     prompt=prompt,
                     response=raw if len(raw.encode("utf-8")) <= MAX_JSON_BYTES // 2 else None,
                     outcome="error", parent=self.state.baseline,
-                    run_id=ledger.config.run_id, attempt=len(ledger.attempts()),
+                    run_id=None, attempt=len(requests.attempts()),
                     error=f"Proposal publication stopped: {type(exc).__name__}.",
                 ))
                 raise
         raise AssertionError("Unreachable correction loop.")
 
     def _publish(
-        self, prompt: str, raw: str, resolved: ResolvedLayout, ledger: RunLedger,
+        self, prompt: str, raw: str, resolved: ResolvedLayout, requests: RequestLog,
     ) -> str:
         self._fresh()
         proposals = child(self.root, "proposals")
@@ -265,7 +269,7 @@ class Conversation:
             staging.rename(child(proposals, proposal_id))
         self._append(Exchange(
             prompt=prompt, response=raw, outcome="proposal", parent=self.state.baseline,
-            run_id=ledger.config.run_id, attempt=len(ledger.attempts()), proposal_id=proposal_id,
+            run_id=None, attempt=len(requests.attempts()), proposal_id=proposal_id,
         ), baseline=proposal_id)
         return proposal_id
 

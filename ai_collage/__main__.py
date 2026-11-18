@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--project", required=True)
     chat.add_argument("--canvas", nargs=2, type=int)
     chat.add_argument("--preferences", type=Path)
-    chat.add_argument("--run")
+    chat.add_argument("--live", action="store_true", help="Enable model requests; otherwise stay local-only.")
     chat.add_argument("--no-open", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
 
             return run_chat(
                 store, args.project, canvas=tuple(args.canvas) if args.canvas else None,
-                preferences=args.preferences, run_id=args.run, no_open=args.no_open,
+                preferences=args.preferences, live=args.live, no_open=args.no_open,
             )
         elif args.command == "create":
             store.create(args.project, args.images)

@@ -1,0 +1,30 @@
+{
+  "record_version": 1,
+  "name": "checkpoint-a",
+  "images": [
+    "..\\..\\photos\\01_tower_bridge.jpg",
+    "..\\..\\photos\\02_breakfast.jpg",
+    "..\\..\\photos\\03_london_eye.jpg",
+    "..\\..\\photos\\04_daunt_books.jpg"
+  ],
+  "canvas": {"width": 1200, "height": 1800},
+  "messages": [
+    {
+      "name": "initial",
+      "prompt": "Make a collage with a dark grey background. Make photo 2 smaller than the others."
+    },
+    {
+      "name": "resize",
+      "prompt": "Make photo 2 a bit smaller. Keep it in the same spot and leave the rest alone."
+    },
+    {
+      "name": "remove-borders",
+      "prompt": "Remove the borders. Leave everything else alone."
+    },
+    {
+      "name": "straighten",
+      "prompt": "Make all the photos straight. Keep everything else as it is.",
+      "reopen_before": true
+    }
+  ]
+}

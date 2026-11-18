@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .agent_budget import RunLedger
+from .agent_requests import RequestLog
 from .agent_models import Controls
 from .conversation import Conversation
 from .models import CollageError
@@ -24,7 +24,7 @@ HELP = """/show P001
 /help
 /quit
 These commands are local and free of model calls. Other text goes to Foundry
-only with a selected authorized run. Canvas/cropping changes affect future
+only with --live. Canvas/cropping changes affect future
 proposals, not existing previews. Acceptance is separate from rating an edit."""
 
 
@@ -38,7 +38,7 @@ def open_preview(path: Path) -> None:
 
 
 def local_command(
-    conversation: Conversation, text: str, ledger: RunLedger | None, *, no_open: bool,
+    conversation: Conversation, text: str, requests: RequestLog, *, no_open: bool,
 ) -> bool:
     parts = shlex.split(text)
     if not parts:
@@ -81,7 +81,7 @@ def local_command(
             "accepted_version": conversation.store.load(conversation.project_id).current_version,
             "controls": conversation.state.controls.model_dump(),
             "preferences": conversation.state.preferences.model_dump(),
-            "run": ledger.summary() if ledger else None,
+            "requests": requests.summary(),
         }, indent=2))
     else:
         raise CollageError("Unknown command or invalid arguments. Use /help.")
@@ -90,14 +90,14 @@ def local_command(
 
 def run_chat(
     store: ProjectStore, project_id: str, *, canvas: tuple[int, int] | None,
-    preferences: Path | None, run_id: str | None, no_open: bool,
+    preferences: Path | None, live: bool, no_open: bool,
 ) -> int:
-    ledger = RunLedger(store, run_id) if run_id else None
     conversation = Conversation(store, project_id, canvas=canvas, preferences=preferences)
+    requests = RequestLog(store, project_id)
     print("Conversation resumed. Use /help. Generated previews are not accepted automatically.")
     print(f"Editing baseline: {conversation.state.baseline or conversation.state.initial_version or 'none'}")
-    if ledger is None:
-        print("Local-only mode: no authorized run selected.")
+    if not live:
+        print("Local-only mode: omit model requests, or restart with --live.")
 
     async def loop() -> None:
         while True:
@@ -109,19 +109,19 @@ def run_chat(
                 continue
             try:
                 if text.startswith("/"):
-                    if not local_command(conversation, text, ledger, no_open=no_open):
+                    if not local_command(conversation, text, requests, no_open=no_open):
                         return
                 else:
-                    if ledger is None:
-                        raise CollageError("No authorized run selected; model requests are disabled.")
+                    if not live:
+                        raise CollageError("Model requests are disabled; restart chat with --live.")
                     from .agent_provider import FoundryModel
 
-                    result = await conversation.request(text, FoundryModel(), ledger)
+                    result = await conversation.request(text, FoundryModel(), requests)
                     print(result)
                     if result.startswith("P") and conversation.state.baseline == result:
                         path = conversation.preview_path(result)
                         print(path)
-                        print(json.dumps(ledger.summary()))
+                        print(json.dumps(requests.summary()))
                         if not no_open:
                             open_preview(path)
             except (CollageError, ValidationError, OSError, ValueError) as exc:
@@ -130,5 +130,5 @@ def run_chat(
     try:
         asyncio.run(loop())
     except KeyboardInterrupt:
-        print("\nStopped; reserved attempts remain counted.")
+        print("\nStopped; dispatched requests remain recorded.")
     return 0

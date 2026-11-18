@@ -98,16 +98,9 @@ class AcceptanceIntent(Record):
 
 
 class Limits(Record):
-    max_attempts: Annotated[int, Field(ge=1, le=50)] = 50
     input_tokens: Annotated[int, Field(ge=1, le=50_000)] = 50_000
     output_tokens: Annotated[int, Field(ge=1, le=25_000)] = 25_000
     timeout_seconds: Annotated[int, Field(ge=1, le=120)] = 120
-
-
-class RunConfig(Record):
-    run_id: str
-    limits: Limits = Field(default_factory=Limits)
-    halted: bool = False
 
 
 class Attempt(Record):

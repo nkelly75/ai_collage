@@ -93,10 +93,11 @@ Derived render boxes still use top-left integer pixel coordinates.
 
 **Format 3 prompt/context adaptation is covered offline.** The agent now edits
 authored centres directly instead of calculating resize position offsets.
-Live requests remain paused pending user review of the revised prompt.
+A single authorized four-message format 3 replay completed without corrections
+or acceptance. This is exploratory evidence, not a repeated reliability assessment.
 Use fresh format 3 projects; do not resume archived format 2 projects.
 
-Live model requests require an explicitly authorized allowance. See
+Live model requests require explicit authorization, not a provisioned allowance. See
 [record 005's handoff](../planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff)
 for checkpoint status, evaluation evidence, and approval boundaries.
 
@@ -135,7 +136,7 @@ To resume an existing conversation locally:
 .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 chat --project YOUR-EXISTING-PROJECT --no-open
 ```
 
-With **no `--run`**, chat is local-only: it does not initialize credentials or
+Without **`--live`**, chat is local-only: it does not initialize credentials or
 send model requests. `/status`, `/help`, and `/quit` are available without
 proposals; `/show`, `/rate`, and `/accept` act on existing successful proposals.
 A resume uses the captured preferences and effective controls. Omit
@@ -146,15 +147,15 @@ A resume uses the captured preferences and effective controls. Omit
 | `/show P001` | Print/open the immutable preview; never regenerate it. |
 | `/rate P001 worked "Looks right"` | Store optional `worked`, `partly`, or `failed` feedback; no inference or acceptance. |
 | `/accept P001` | Publish the selected recipe and byte-identical preview as an accepted version; no model call or replacement render. |
-| `/status` | Show controls, baseline, accepted version, captured defaults, and selected run usage. |
+| `/status` | Show controls, baseline, accepted version, captured defaults, and project request usage. |
 | `/canvas 1600 900` | Change future proposal dimensions, leaving existing previews unchanged. |
 | `/cropping allow` or `/cropping forbid` | Change future cropping permission; whole photos are the default. |
 | `/help` or `/quit` | Explain commands or exit without losing the conversation. |
 
 Unknown commands and invalid arguments fail locally. Without `--no-open`,
 Windows opens successful PNGs in the OS viewer; viewer errors retain the path.
-EOF/Ctrl+C exit cleanly. Ordinary text is a model request only when an explicitly
-authorized run is selected. Proposal IDs are distinct from accepted versions.
+EOF/Ctrl+C exit cleanly. Ordinary text is a model request only with `--live`;
+no separately provisioned run or allowance is needed. Proposal IDs are distinct from accepted versions.
 An older proposal can be accepted as the next version and becomes the editing
 baseline; an already-current acceptance is idempotent. Current canvas/cropping
 controls must permit the chosen proposal. External accepted-version changes,
@@ -181,9 +182,141 @@ conversations, or select `--preferences FILE` when creating one. Existing
 conversations retain their snapshot; requests never rewrite the defaults file.
 
 Conversation state, bounded event files, and immutable `proposals\P001`
-artifacts live under the project's `conversation` directory. Run allowances
-live outside projects under `users\local-dev\agent-runs\<run-id>`.
+artifacts live under the project's `conversation` directory. Per-request usage
+records are saved automatically in `conversation\requests\attempt-0001.json`,
+etc. They are accounting, not an allowance or a cumulative usage limit.
 All experiment runtime files remain ignored by Git.
+
+### Repeatable prompt sequences
+
+`python -m ai_collage.replay` runs repository-owned JSON sequences through the
+same conversation/provider operations as chat. It captures results, not
+subjective quality or benchmark passes, and **never accepts a proposal**.
+It is the single sequence-execution path; the old fixed evaluator and its live
+entry point have been removed. Mechanical assessment now reads saved replays
+offline, separately from execution and acceptance.
+
+The supplied sequences are:
+
+- `examples\sequences\01_dark_portrait_adjustments.json`: the original four messages, with
+  reopening before straightening; its mechanical checks are an explicit assessment profile.
+- `examples\sequences\02_landscape_staggered_adjustments.json`: an exploratory landscape
+  composition and three provisional follow-ups, editable before they are attempted.
+
+A sequence contains `record_version: 1`, a `name`, ordered `images` paths
+relative to the sequence file, `canvas` width/height, and `messages`.
+Each message has a unique `name`, `prompt`, and optional
+`reopen_before: true`. Photo numbers follow image order. Canvas dimensions
+are fixed for a replay; `canvas.cropping` defaults to false. Styling uses the
+conversation's captured defaults.
+The JSON `name` is a stable replay identity, not its filename. Renaming a
+sequence file in the same directory does not reset or invalidate an existing replay.
+
+Validate sequence structure and source-file availability/hashes **offline**,
+without creating a project, opening credentials, or sending requests:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --check
+```
+
+After separate live authorization, run **only the next message**:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-FRESH-PROJECT
+```
+
+Repeat the same command with `--resume` to run the next message in that
+project. Add `--remaining` only when authorized to run all remaining messages
+without pausing after each proposal. A completed replay sends no further calls.
+No `--run`, `--ledger-data-dir`, or allowance provisioning is needed. There are
+at most four model calls per message, including validation corrections: a
+four-message batch makes at most 16 calls, usually four. Every explicit retry
+is a new bounded attempt at that message; accounting persists across invocations
+without imposing a lifetime cap.
+
+Resume verifies the source photos, canvas, instructions and
+conversation state. Previously attempted messages cannot change. Unattempted
+messages may be edited, appended or removed; each execution preserves its
+own complete sequence snapshot. Manual chat/control/acceptance changes cause
+resume to stop rather than silently adopt a different baseline.
+
+A question stops without advancing the sequence or answering on your behalf;
+continue manually with chat if needed. That manual conversation change prevents
+subsequent automatic replay resume. A service failure stops immediately;
+an explicitly authorized retry requires `--resume --retry`. The existing
+bounded validation-correction loop still applies within a message. An
+interrupted, pending execution requires evidence inspection, not blind retry.
+Old replay reports remain readable/resumable without their former allowance
+files. Their historical ledger references and completed execution artifacts
+are preserved; new requests are recorded locally within the project.
+
+Under the project's normal data directory, inspect:
+
+```text
+replay\report.json
+replay\instructions.md
+replay\steps\0001\sequence.json
+replay\steps\0001\context-0001.json
+replay\steps\0001\result.json
+conversation\proposals\P001\proposal.json
+conversation\proposals\P001\preview.png
+conversation\requests\attempt-0001.json
+```
+
+The report records the next-message cursor and every execution, including
+failures/retries/questions. Per-execution results contain proposal/preview
+paths, authored-field differences from the previous proposal, each request
+context path, attempt/correction counts, cumulative project request usage before/after,
+and elapsed stage time including validation/rendering. Raw model responses
+remain in the normal conversation events; individual request usage remains
+in the project's request records. Historical executions retain their original
+shared-run usage summaries; those are not combined with new project-local counts.
+No photos or local paths are added to the
+model context by the runner. Existing executions and proposal files are
+preserved when resuming.
+
+### Assess saved replay evidence offline
+
+The assessment command needs no request log, historical ledger, credentials, original input sequence
+file, or original source-photo paths. It reads the saved replay, imported
+photos and immutable proposals without starting/recovering a conversation,
+rendering new previews, accepting anything, or making model requests.
+
+```powershell
+# Either sequence: verify saved evidence only.
+.\.venv\Scripts\python.exe -m ai_collage.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT
+
+# Dark portrait sequence: also check the specific historical expectations.
+.\.venv\Scripts\python.exe -m ai_collage.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --profile dark-portrait-adjustments
+```
+
+The default `integrity` profile checks source/instruction hashes, proposal
+identity/parent chains, schema/controls/recomputed geometry, saved recipe/PNG
+digests, per-execution result consistency and sequence completion. It does
+**not** check whether a move, swap or styling change followed the user's intent.
+
+The `dark-portrait-adjustments` profile additionally preserves the old fixed
+checks: dark-neutral background, photo 2 smaller than the others, subtle
+white borders/rounding/tilt, an in-place shrink, border removal, straightening,
+and no unrelated authored changes. Exact white is a historical profile rule,
+not a universal composition requirement. It requires the four corresponding
+named messages on a 1200x1800 four-photo replay, with reopening before
+straightening; it is not a landscape profile.
+No prompts or live execution are duplicated in the assessor.
+
+Each invocation appends `replay\assessments\0001.json`, then `0002.json`, etc.,
+with the assessed replay report's hash, profile, completion flag and per-execution
+results. It never rewrites the replay or an earlier assessment. Exit code 0
+means a complete replay whose applicable mechanical checks passed; failures
+or incomplete sequences return 1. Questions, interruptions and service failures
+have no proposal to assess and remain visible as `not_assessed`. A subsequent
+explicit retry may yield an eventual pass; that is not a first-attempt success
+claim, and the original failure remains recorded.
+
+Acceptance fidelity remains covered by offline conversation tests, not by an
+assessment that changes the project. Composition and subjective request quality
+are reviewed separately by the user or Copilot; there is no automated AI judge
+or subjective scoring system. Historical evaluation reports remain untouched.
 
 ### Future authorized live use
 
@@ -199,15 +332,13 @@ $env:PATH = 'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin;' + $env:PATH
 This changes only the current PowerShell process and its children, not system
 configuration.
 
-For explicitly authorized live use, add `--run step2-first-pass` to the chat
-command to select the existing shared allowance. A halted allowance requires
-separate approval before unhalting; unused requests do not grant permission.
-Unknown run IDs do not create an allowance; local controls remain usable with
-a halted/exhausted run.
-Never silently reprovision, rename, delete, or move ledgers to refresh a budget.
+For explicitly authorized live use, add `--live` to the chat command. Replays
+use their explicit execution command instead. Neither needs a shared run or
+allowance. Old experiment ledgers remain untouched historical evidence, not
+active limits, and this simplification grants no new service-call authorization.
 
-The transport durably reserves each actual outbound inference before dispatch,
-up to the shared 50-request ceiling. The per-request limits are 50,000 input
+The transport durably records each actual outbound inference before dispatch.
+The per-request limits are 50,000 input
 tokens, 25,000 output tokens including reasoning, and 120 seconds. Input
 preflight uses a conservative token bound; actual provider usage is recorded
 separately. Oversize context fails without truncation. SDK/transport retries,
@@ -218,7 +349,7 @@ Storage-off is not a promise about all service logging.
 
 There are at most three validation-guided corrections for completed invalid
 JSON or hard layout/control violations: four total attempts per user request,
-stopping earlier on success or a budget/error boundary. Numeric containment
+stopping earlier on success, a per-request limit or an error. Numeric containment
 feedback includes current outer/rotated/sampled bounds, pixel overshoot, and
 conservative normalized `center_x`/`center_y` placement ranges under
 `safe_box_center_normalized`. It never changes the proposed recipe automatically.
@@ -365,17 +496,18 @@ for the rationale behind the feature increments.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r .\requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest -q .\tests --ignore=.\tests\test_agent.py
+.\.venv\Scripts\python.exe -m pytest -q .\tests --ignore=.\tests\test_agent.py --ignore=.\tests\test_replay.py --ignore=.\tests\test_assess.py
 ```
 
 Deterministic tests are grouped into contracts, geometry, centre anchoring,
 rendering, storage, CLI, and curated examples. This includes integration checks
 and CLI subprocesses, not only unit tests. Optional mocked agent tests live
-separately in `tests\test_agent.py` and are excluded above. Run those separately
+separately in `tests\test_agent.py`, `tests\test_replay.py` and
+`tests\test_assess.py` and are excluded above. Run those separately
 when working on the agent:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q .\tests\test_agent.py
+.\.venv\Scripts\python.exe -m pytest -q .\tests\test_agent.py .\tests\test_replay.py .\tests\test_assess.py
 ```
 
 These agent tests use fake replies and mocked HTTP; they do not call a live

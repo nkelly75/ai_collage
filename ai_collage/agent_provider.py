@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 
-from .agent_budget import RunLedger
+from .agent_requests import RequestLog
 from .agent_models import REPLY
 from .models import CollageError
 from .projects import parse_json
@@ -61,7 +61,7 @@ def response_format() -> dict[str, object]:
 
 
 class FoundryModel:
-    async def complete(self, context: dict[str, object], ledger: RunLedger, purpose: str) -> str:
+    async def complete(self, context: dict[str, object], requests: RequestLog, purpose: str) -> str:
         # Optional imports stay out of engine-only commands and local chat controls.
         from azure.core.exceptions import ClientAuthenticationError
         from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
@@ -69,17 +69,17 @@ class FoundryModel:
         from openai import APIError, AsyncOpenAI
         import httpx
 
-        gate = guarded_transport(ledger, purpose, httpx.AsyncHTTPTransport(retries=0))
+        gate = guarded_transport(requests, purpose, httpx.AsyncHTTPTransport(retries=0))
         try:
             async with DefaultAzureCredential(exclude_interactive_browser_credential=True) as credential:
                 token = get_bearer_token_provider(credential, AUDIENCE)
                 async with AsyncOpenAI(
                     base_url=ENDPOINT, api_key=token, max_retries=0,
-                    timeout=ledger.config.limits.timeout_seconds,
+                    timeout=requests.limits.timeout_seconds,
                     http_client=httpx.AsyncClient(transport=gate, follow_redirects=False),
                 ) as sdk:
-                    async with asyncio.timeout(ledger.config.limits.timeout_seconds):
-                        return await run_agent(context, sdk, ledger)
+                    async with asyncio.timeout(requests.limits.timeout_seconds):
+                        return await run_agent(context, sdk, requests)
         except (APIError, ClientAuthenticationError, AgentFrameworkException, TimeoutError) as exc:
             status = getattr(exc, "status_code", None)
             raise CollageError(
@@ -88,7 +88,7 @@ class FoundryModel:
             ) from exc
 
 
-async def run_agent(context: dict[str, object], sdk: object, ledger: RunLedger) -> str:
+async def run_agent(context: dict[str, object], sdk: object, requests: RequestLog) -> str:
     from agent_framework import Agent
     from agent_framework.openai import OpenAIChatClient
 
@@ -96,7 +96,7 @@ async def run_agent(context: dict[str, object], sdk: object, ledger: RunLedger) 
         client=OpenAIChatClient(model=DEPLOYMENT, async_client=sdk),
         name="CollageDesigner", instructions=instructions(),
         default_options={
-            "store": False, "max_tokens": ledger.config.limits.output_tokens,
+            "store": False, "max_tokens": requests.limits.output_tokens,
             "reasoning": {"effort": "high"},
             "response_format": response_format(),
         },
@@ -107,7 +107,7 @@ async def run_agent(context: dict[str, object], sdk: object, ledger: RunLedger) 
     return response.text
 
 
-def guarded_transport(ledger: RunLedger, purpose: str, transport: object):
+def guarded_transport(requests: RequestLog, purpose: str, transport: object):
     import httpx
     import tiktoken
 
@@ -128,7 +128,7 @@ def guarded_transport(ledger: RunLedger, purpose: str, transport: object):
             body = parse_json(request.content)
             if not isinstance(body, dict):
                 raise CollageError("Provider request must be a JSON object.")
-            limits = ledger.config.limits
+            limits = requests.limits
             if (
                 body.get("model") != DEPLOYMENT or body.get("store") is not False
                 or body.get("max_output_tokens") != limits.output_tokens
@@ -144,7 +144,7 @@ def guarded_transport(ledger: RunLedger, purpose: str, transport: object):
             if not isinstance(body.get("input"), list) or len(body["input"]) > 4:
                 raise CollageError("Unexpected provider message framing.")
             input_bound = len(request.content) + 4096
-            attempt = ledger.reserve(purpose, input_bound)
+            attempt = requests.reserve(purpose, input_bound)
             self.used = True
             started = time.monotonic()
             try:
@@ -152,7 +152,7 @@ def guarded_transport(ledger: RunLedger, purpose: str, transport: object):
                     response = await transport.handle_async_request(request)
                     await response.aread()
             except (httpx.HTTPError, TimeoutError, asyncio.CancelledError):
-                ledger.finish(attempt.model_copy(update={
+                requests.finish(attempt.model_copy(update={
                     "status": "error", "duration": time.monotonic() - started,
                     "error": "transport interrupted or timed out",
                 }))
@@ -175,7 +175,7 @@ def guarded_transport(ledger: RunLedger, purpose: str, transport: object):
                 "reasoning_tokens": output_details.get("reasoning_tokens"),
                 "error": None if complete else f"HTTP {response.status_code}; status {raw.get('status')}",
             })
-            ledger.finish(type(attempt).model_validate(finished.model_dump()))
+            requests.finish(type(attempt).model_validate(finished.model_dump()))
             return response
 
         async def aclose(self) -> None:

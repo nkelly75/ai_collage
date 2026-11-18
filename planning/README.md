@@ -16,7 +16,18 @@ See the [Quick start](../README.md#quick-start),
 and generated [JSON Schema](../docs/layout.schema.json) for current behavior.
 Formats 1 and 2 are unsupported untouched archives, not migrated or loaded.
 The agent prompt and context now use authored centres directly, with offline
-coverage. Live requests remain paused pending user review of the revised prompt.
+coverage. A single format 3 four-message replay completed without corrections
+or acceptance. Interactive landscape exploration and a JSON-driven replay
+runner follow; these are not a successor 006 phase or a reliability assessment.
+The runner records evidence without evaluating or accepting results. A separate
+offline assessment command checks saved evidence and the named dark portrait
+mechanical profile; the duplicate fixed live evaluator has been removed.
+Acceptance fidelity stays in offline tests, and qualitative review stays with
+the user or Copilot. Live requests still need explicit bounded authorization.
+Replay and chat now record request usage per project, without a shared
+allowance or provisioning step. Four calls per message, token/time limits and
+explicit retry/continuation guard against runaway usage; chat requires `--live`.
+Historical experiment ledgers remain untouched records, not active prerequisites.
 The checkpoint A results below describe
 the preceding format 2 implementation, not a format 3 agent evaluation.
 

@@ -1,0 +1,29 @@
+{
+  "record_version": 1,
+  "name": "landscape-staggered",
+  "images": [
+    "..\\..\\photos\\01_tower_bridge.jpg",
+    "..\\..\\photos\\02_breakfast.jpg",
+    "..\\..\\photos\\03_london_eye.jpg",
+    "..\\..\\photos\\04_daunt_books.jpg"
+  ],
+  "canvas": {"width": 1600, "height": 900},
+  "messages": [
+    {
+      "name": "initial",
+      "prompt": "Use a light background. Make photo 3 the main picture on the right. Arrange the other three down the left, slightly staggered from side to side. Size them to fit comfortably, with clear separation or only shallow overlap."
+    },
+    {
+      "name": "swap",
+      "prompt": "Swap the positions of photos 1 and 4. Keep their sizes and styling unchanged."
+    },
+    {
+      "name": "move-and-shrink",
+      "prompt": "Move photo 2 closer to photo 3 and make photo 2 a bit smaller. It's fine if there is no overlap. Leave everything else alone."
+    },
+    {
+      "name": "square-corners",
+      "prompt": "Remove the rounded corners from photo 3 only."
+    }
+  ]
+}
