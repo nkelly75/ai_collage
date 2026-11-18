@@ -1,6 +1,6 @@
 # Local CLI Guide
 
-The current offline engine uses **layout/project format 2**. It imports original
+The current offline engine uses **layout/project format 3**. It imports original
 JPEG/PNG photos and deterministically renders editable JSON recipes, without
 credentials or model calls. See the [layout field guide](layout-format.md) for
 syntax and the [README](../README.md) for the project story.
@@ -22,23 +22,23 @@ the `temp-foundry-test` experiments, which must not run as part of this workflow
 
 ## Fresh projects and old archives
 
-Format 1 projects and saved snapshots are **untouched archives**, not migrated
+Format 1 and 2 projects and saved snapshots are **untouched archives**, not migrated
 automatically. Their PNGs remain viewable, but the new CLI rejects their format.
 Do not edit their metadata or apply new recipes to them. New-format equivalents
 of all seven curated recipes retain their descriptive filenames in `examples`.
 
 The default data directory remains `.collage-data`. The commands below instead
-use a **fresh `.collage-data-v2` root** to avoid touching archived projects.
+use a **fresh `.collage-data-v3` root** to avoid touching archived projects.
 Both roots are ignored by Git. Put the global `--data-dir` option before the
 command and use the same root for every command in a workflow.
 
 ## Render the supplied photos
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 create --project portrait-demo --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 inspect --project portrait-demo
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project portrait-demo --layout .\examples\portrait_9x16.json
-Invoke-Item .\.collage-data-v2\users\local-dev\projects\portrait-demo\renders\v0001.png
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 create --project portrait-demo --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 inspect --project portrait-demo
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project portrait-demo --layout .\examples\portrait_9x16.json
+Invoke-Item .\.collage-data-v3\users\local-dev\projects\portrait-demo\renders\v0001.png
 ```
 
 The first recipe makes a 900x1600 (9:16) white canvas with four complete 396x528
@@ -50,7 +50,7 @@ not stacking positions or content recognition.
 than deleting a previous project. To try the second 900x1200 (3:4) arrangement:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project portrait-demo --layout .\examples\portrait_3x4.json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project portrait-demo --layout .\examples\portrait_3x4.json
 ```
 
 The same whole photos sit at (36,48), (468,48), (36,624), and (468,624). Applying
@@ -85,10 +85,16 @@ a letter or digit. Windows device names such as `con` and `com1` are rejected.
 Imported paths resolve known UUID assets within the owner's uploads directory;
 recipes cannot supply paths. `local-dev` is a namespace, not authentication.
 There are no delete, reset, photo replacement/removal, or migration commands.
-Optional natural-language interaction uses
-the separate proposal workflow below.
+Positions in authored recipes are `box.center_x` and `box.center_y`,
+normalized independently on the canvas axes. Resizing keeps that centre fixed.
+Derived render boxes still use top-left integer pixel coordinates.
 
 ## Conversational proposals (optional)
+
+**Format 3 prompt/context adaptation is covered offline.** The agent now edits
+authored centres directly instead of calculating resize position offsets.
+Live requests remain paused pending user review of the revised prompt.
+Use fresh format 3 projects; do not resume archived format 2 projects.
 
 Live model requests require an explicitly authorized allowance. See
 [record 005's handoff](../planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff)
@@ -116,17 +122,17 @@ credentials or model calls:
 .\.venv\Scripts\python.exe -c "from ai_collage.agent_provider import instructions; print(instructions())"
 ```
 
-Create a format 2 photo project with `create`, using `.collage-data-step2` for
-this experiment. Start a new conversation by choosing its canvas:
+Create a fresh format 3 project with `create`, using `.collage-data-v3`.
+Start a new conversation by choosing its canvas:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-step2 chat --project YOUR-NEW-PROJECT --canvas 1200 1800 --no-open
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 chat --project YOUR-NEW-PROJECT --canvas 1200 1800 --no-open
 ```
 
 To resume an existing conversation locally:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-step2 chat --project YOUR-EXISTING-PROJECT --no-open
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 chat --project YOUR-EXISTING-PROJECT --no-open
 ```
 
 With **no `--run`**, chat is local-only: it does not initialize credentials or
@@ -157,7 +163,7 @@ corrupt state, and altered previews produce explicit conflicts, not silent repai
 Defaults live in:
 
 ```text
-.collage-data-step2\users\local-dev\preferences.json
+.collage-data-v3\users\local-dev\preferences.json
 ```
 
 ```json
@@ -175,8 +181,8 @@ conversations, or select `--preferences FILE` when creating one. Existing
 conversations retain their snapshot; requests never rewrite the defaults file.
 
 Conversation state, bounded event files, and immutable `proposals\P001`
-artifacts live under the project's `conversation` directory. The single shared
-allowance is outside projects under `users\local-dev\agent-runs\step2-first-pass`.
+artifacts live under the project's `conversation` directory. Run allowances
+live outside projects under `users\local-dev\agent-runs\<run-id>`.
 All experiment runtime files remain ignored by Git.
 
 ### Future authorized live use
@@ -214,9 +220,11 @@ There are at most three validation-guided corrections for completed invalid
 JSON or hard layout/control violations: four total attempts per user request,
 stopping earlier on success or a budget/error boundary. Numeric containment
 feedback includes current outer/rotated/sampled bounds, pixel overshoot, and
-conservative normalized placement ranges where the current frame can fit.
-It never changes the proposed recipe automatically. Context includes the
-valid baseline's recomputable untilted pixel centres for targeted resizing.
+conservative normalized `center_x`/`center_y` placement ranges under
+`safe_box_center_normalized`. It never changes the proposed recipe automatically.
+Context includes the valid baseline's authored centre coordinates and derived
+geometry for size/clearance checks. Resizing in place keeps those authored
+centres exactly; rounded render boxes are not replacement position anchors.
 A valid clarification waits for the real
 user. Service/authentication/incomplete/timeout/render-I/O failures do not
 trigger model correction. Photos, filenames, local paths, and credentials are
@@ -234,8 +242,8 @@ reference. Intentional overlap, not cropping, hides parts of the whole photos.
 Import the same four photos into a fresh project:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 create --project emma-demo --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-demo --layout .\examples\emma_2x3.json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 create --project emma-demo --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project emma-demo --layout .\examples\emma_2x3.json
 ```
 
 Back to front, the layer array contains Eye (3), bookshop (4), breakfast (2),
@@ -249,7 +257,7 @@ bookshop and breakfast. The bookshop uses zoom 1.05 and pan 0/0.9, revealing mor
 of the entrance mat, projecting sign, and foreground street.
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-demo --layout .\examples\emma_framed_2x3.json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project emma-demo --layout .\examples\emma_framed_2x3.json
 ```
 
 ## Emma's rounded variation
@@ -258,7 +266,7 @@ of the entrance mat, projecting sign, and foreground street.
 15-pixel white borders, adding a 10-pixel photo radius (25-pixel outer radius).
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-demo --layout .\examples\emma_rounded_2x3.json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project emma-demo --layout .\examples\emma_rounded_2x3.json
 ```
 
 ## Emma's evolved tilted demo
@@ -274,7 +282,7 @@ Breakfast is shifted right but retains 40 pixels of right clearance. Every
 rotated frame stays on canvas, while intentional inter-photo overlaps remain.
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-demo --layout .\examples\emma_tilted_2x3.json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project emma-demo --layout .\examples\emma_tilted_2x3.json
 ```
 
 ## Emma's London Eye background demo
@@ -283,8 +291,8 @@ rotated frame stays on canvas, while intentional inter-photo overlaps remain.
 Bridge 1, London Eye 2, bookshop 3. Breakfast is not imported.
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 create --project emma-london-eye-demo --images .\photos\01_tower_bridge.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-london-eye-demo --layout .\examples\emma_london_eye_3x4.json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 create --project emma-london-eye-demo --images .\photos\01_tower_bridge.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project emma-london-eye-demo --layout .\examples\emma_london_eye_3x4.json
 ```
 
 The 1200x1600 canvas matches the uncropped night photo, placed first in `layers`
@@ -298,10 +306,11 @@ smaller foreground photos, corner clearances, 10-pixel white borders, and
 Edit the recipe, not `layouts\v0001.json`. The recipe contains canvas/layers,
 normalized boxes, mode/crop choices, and optional frame styling. A saved
 snapshot contains the validated `recipe` once, a separate `geometry` array,
-`schema_version: 2`, and a backend-assigned accepted `version`.
+`schema_version: 3`, and a backend-assigned accepted `version`.
 
 Derived geometry records outer and inset pixel boxes, resolved normalized
 height, optional fractional source crop, and optional rotated footprint.
+Normalized resolved boxes describe the derived top-left, not the authored centre.
 Reopening recomputes these values and rejects inconsistencies. A recipe has
 no paths, owner/project settings, accepted revision, or derived pixel fields.
 Changing it does not change any previous snapshot or preview.
@@ -345,7 +354,7 @@ lower layers rather than painting rectangular white corners.
 ### Tilt
 
 `rotation_degrees` rotates the complete frame clockwise for positive values.
-The untilted box retains its meaning; the engine checks the expanded sampled
+The authored centre is unchanged; the engine checks the expanded sampled
 footprint against the canvas. It never silently crops a tilted corner.
 
 See the [layout field guide](layout-format.md) for current units, limits, and
@@ -356,11 +365,22 @@ for the rationale behind the feature increments.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r .\requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest -q .\tests
+.\.venv\Scripts\python.exe -m pytest -q .\tests --ignore=.\tests\test_agent.py
 ```
 
-Tests are grouped into contracts, geometry, rendering, storage, CLI, and curated
-examples. Shared fixtures/helpers remain small. Synthetic photo tests check
+Deterministic tests are grouped into contracts, geometry, centre anchoring,
+rendering, storage, CLI, and curated examples. This includes integration checks
+and CLI subprocesses, not only unit tests. Optional mocked agent tests live
+separately in `tests\test_agent.py` and are excluded above. Run those separately
+when working on the agent:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q .\tests\test_agent.py
+```
+
+These agent tests use fake replies and mocked HTTP; they do not call a live
+model or initialize Azure credentials.
+Shared fixtures/helpers remain small. Synthetic photo tests check
 known pixels and shapes; they do not depend on the personal photos in `photos`.
 Example tests use synthetic 3:4 sources matching the recipes' required aspect
 ratios. Real-photo before/after comparisons are separate phase evidence.

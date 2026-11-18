@@ -147,7 +147,7 @@ class ProjectStore:
                     photos.append(photo)
                     staged_assets.append(staged_asset)
                 project = Project(
-                    schema_version=2,
+                    schema_version=3,
                     owner_id=OWNER_ID,
                     project_id=project_id,
                     photos=photos,

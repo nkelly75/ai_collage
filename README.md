@@ -16,8 +16,8 @@ background. Captions are not implemented yet.
 
 The deterministic engine runs offline without credentials or model calls.
 An optional metadata-only conversational agent now has a terminal entry point,
-durable proposals, and explicit acceptance. **Checkpoint A now passes all four
-scripted live cases**, including shrinking a photo without moving its centre,
+durable proposals, and explicit acceptance. **The format 2 checkpoint A pass
+completed all four scripted live cases**, including shrinking a photo without moving its centre,
 border removal, resume/straightening, and exact acceptance. Numeric geometry
 feedback and high reasoning effort resolved the earlier failures. This is
 trial-ready under the bounded checks, not user sign-off or a reliability claim.
@@ -27,11 +27,16 @@ and [latest results](planning/005-model-connected-layouts.md#authorized-six-roun
 A graphical UI and Azure hosting remain future work. Separate Foundry
 experiments are not part of the application workflow.
 
-**Layout format 2** uses explicit whole/cover modes, stable `photo_id` values,
-and a back-to-front `layers` array. See the [layout field guide](docs/layout-format.md)
-and generated [JSON Schema](docs/layout.schema.json). Format 1 projects remain
+**Layout format 3** uses centre-anchored `center_x`/`center_y` positions,
+explicit whole/cover modes, stable `photo_id` values, and a back-to-front
+`layers` array. Resizing keeps the authored centre fixed. See the
+[layout field guide](docs/layout-format.md) and generated
+[JSON Schema](docs/layout.schema.json). Format 1 and 2 projects remain
 untouched archives: their PNGs are viewable, but the new CLI does not load or
-migrate their histories. Use a fresh data root for the converted examples.
+migrate their histories. Use a fresh data root for the updated examples.
+The agent prompt and context now use format 3, with offline coverage. Live
+requests remain paused for user review of the revised prompt; there is no
+format 3 live evaluation result yet.
 
 ## Where the idea came from
 
@@ -49,7 +54,7 @@ reference for exploring which layout capabilities the project needs.
 ## Quick start
 
 Use Python 3.12+ and PowerShell from the repository root. Rendering runs offline
-without credentials. These commands use `.collage-data-v2`, separate from any
+without credentials. These commands use `.collage-data-v3`, separate from any
 old `.collage-data` archive; original photos stay unchanged.
 
 ### Setup (once)
@@ -70,8 +75,8 @@ Create a project, apply `emma_tilted_2x3.json`, and open the resulting
 bookshop 4.
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 create --project emma-tilted-demo --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
-$tilted = .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-tilted-demo --layout .\examples\emma_tilted_2x3.json | ConvertFrom-Json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 create --project emma-tilted-demo --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+$tilted = .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project emma-tilted-demo --layout .\examples\emma_tilted_2x3.json | ConvertFrom-Json
 Invoke-Item $tilted.render_path
 ```
 
@@ -82,8 +87,8 @@ Bridge 1, Eye 2, bookshop 3, with **no breakfast**. The resulting PNG is
 **1200x1600 (3:4)**.
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 create --project emma-london-eye-demo --images .\photos\01_tower_bridge.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
-$londonEye = .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v2 apply-layout --project emma-london-eye-demo --layout .\examples\emma_london_eye_3x4.json | ConvertFrom-Json
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 create --project emma-london-eye-demo --images .\photos\01_tower_bridge.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+$londonEye = .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project emma-london-eye-demo --layout .\examples\emma_london_eye_3x4.json | ConvertFrom-Json
 Invoke-Item $londonEye.render_path
 ```
 
@@ -168,7 +173,7 @@ for instructions to run the tests.
 | Document | Purpose |
 |---|---|
 | [Local CLI guide](docs/cli-guide.md) | Setup, commands, examples, layout rules, limits, storage, and tests |
-| [Layout field guide](docs/layout-format.md) | Concise format 2 contract and adjustment examples for people and future LLMs |
+| [Layout field guide](docs/layout-format.md) | Concise format 3 contract and adjustment examples for people and future LLMs |
 | [Input JSON Schema](docs/layout.schema.json) | Generated structural schema, synchronized with the models by a test |
 | [Planning and implementation history](planning/README.md) | Current direction, blueprint reconciliation, and numbered historical planning records |
 | [Foundry experiments](temp-foundry-test/README.md) | Separate keyless model-connectivity examples; running them makes paid service calls |

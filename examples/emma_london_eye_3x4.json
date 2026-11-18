@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "canvas": {
     "width": 1200,
     "height": 1600,
@@ -10,8 +10,8 @@
       "photo_id": 2,
       "mode": "whole",
       "box": {
-        "x": 0.0,
-        "y": 0.0,
+        "center_x": 0.5,
+        "center_y": 0.5,
         "width": 1.0
       }
     },
@@ -19,8 +19,8 @@
       "photo_id": 3,
       "mode": "cover",
       "box": {
-        "x": 0.049167,
-        "y": 0.044375,
+        "center_x": 0.23,
+        "center_y": 0.23625,
         "width": 0.361667,
         "height": 0.38375
       },
@@ -40,8 +40,8 @@
       "photo_id": 1,
       "mode": "whole",
       "box": {
-        "x": 0.513333,
-        "y": 0.523125,
+        "center_x": 0.734583333,
+        "center_y": 0.7421875,
         "width": 0.4425
       },
       "border": {

@@ -7,12 +7,12 @@ from .models import (
     Canvas,
     CollageError,
     Crop,
-    FrameBox,
     InputLayout,
     Layer,
     LayerGeometry,
     Photo,
     PixelBox,
+    ResolvedBox,
     ResolvedLayout,
     SourceCrop,
 )
@@ -73,10 +73,22 @@ def _pixel_frame(
         if layer.mode == "whole"
         else round_half_up(height * canvas.height) - 2 * border
     )
+    outer_height = photo_height + 2 * border
+    x = Fraction(str(layer.box.center_x)) * canvas.width - Fraction(width, 2)
+    y = Fraction(str(layer.box.center_y)) * canvas.height - Fraction(outer_height, 2)
     return (
-        round_half_up(Fraction(str(layer.box.x)) * canvas.width),
-        round_half_up(Fraction(str(layer.box.y)) * canvas.height),
-        width, photo_height + 2 * border, photo_width, photo_height,
+        round_half_up(x), round_half_up(y),
+        width, outer_height, photo_width, photo_height,
+    )
+
+
+def _frame_origin(
+    layer: Layer, height: Fraction,
+) -> tuple[Fraction, Fraction]:
+    box = layer.box
+    return (
+        Fraction(str(box.center_x)) - Fraction(str(box.width)) / 2,
+        Fraction(str(box.center_y)) - height / 2,
     )
 
 
@@ -84,7 +96,7 @@ def _bounds_error(
     message: str, layer: Layer, photo: Photo, canvas: Canvas, height: Fraction,
 ) -> LayoutBoundsError:
     width = Fraction(str(layer.box.width))
-    x, y = Fraction(str(layer.box.x)), Fraction(str(layer.box.y))
+    x, y = _frame_origin(layer, height)
     outer = (
         float(x * canvas.width), float(y * canvas.height),
         float((x + width) * canvas.width), float((y + height) * canvas.height),
@@ -116,15 +128,26 @@ def _bounds_error(
         ("x", width, canvas.width, 0, 2),
         ("y", height, canvas.height, 1, 3),
     ):
-        # Integer-origin intervals conservatively include half-up rounding;
-        # intersect them with authored and continuous rotated containment.
-        minimum = max(0, -continuous[lower] / size, ceil(-relative[lower]) / size)
+        # Translate legal integer origins into centre ranges under half-up rounding.
+        pixel_extent = pw if axis == "x" else ph
+        pixel_minimum = (ceil(-relative[lower]) + pixel_extent / 2 - 0.5) / size
+        pixel_maximum = (
+            floor(size - relative[upper]) + pixel_extent / 2 + 0.5
+        ) / size
+        # The upper rounding boundary is exclusive; report an inclusive decimal range.
+        pixel_maximum = (ceil(pixel_maximum * 1e9) - 1) / 1e9
+        minimum = max(
+            float(extent / 2),
+            (float(extent * size / 2) - continuous[lower]) / size,
+            pixel_minimum,
+        )
         maximum = min(
-            float(1 - extent), (size - continuous[upper]) / size,
-            floor(size - relative[upper]) / size,
+            float(1 - extent / 2),
+            (size + float(extent * size / 2) - continuous[upper]) / size,
+            pixel_maximum,
         )
         minimum, maximum = ceil(minimum * 1e9) / 1e9, floor(maximum * 1e9) / 1e9
-        ranges[axis] = [minimum, maximum]
+        ranges[f"center_{axis}"] = [minimum, maximum]
     fits = photo_width > 0 and photo_height > 0 and all(
         lower <= upper for lower, upper in ranges.values()
     )
@@ -141,9 +164,9 @@ def _bounds_error(
             "right": max(0, max(box[2] for box in bounds) - canvas.width),
             "bottom": max(0, max(box[3] for box in bounds) - canvas.height),
         },
-        "safe_box_position_normalized": ranges if fits else None,
+        "safe_box_center_normalized": ranges if fits else None,
         "range_note": (
-            "Conservative inclusive x/y ranges for this size, border and rotation, "
+            "Conservative inclusive placement ranges for this size, border and rotation, "
             "including pixel rounding and rotation sampling clearance. "
             "Null means no safe positive-pixel placement at this size."
         ),
@@ -164,7 +187,7 @@ def resolve_layout(
     for layer in layout.layers:
         photo = by_id[layer.photo_id]
         box = layer.box
-        x, y, width = (Fraction(str(value)) for value in (box.x, box.y, box.width))
+        width = Fraction(str(box.width))
         border_width = layer.border.width_px if layer.border is not None else 0
         photo_width = width * canvas.width - 2 * border_width
         if photo_width <= 0:
@@ -179,7 +202,8 @@ def resolve_layout(
                 raise CollageError(
                     f"Photo {layer.photo_id} border leaves no positive photo area."
                 )
-        if x + width > 1 or y + height > 1:
+        x, y = _frame_origin(layer, height)
+        if x < 0 or y < 0 or x + width > 1 or y + height > 1:
             raise _bounds_error(
                 f"Photo {layer.photo_id} extends beyond the canvas.",
                 layer, photo, canvas, height,
@@ -193,7 +217,8 @@ def resolve_layout(
         if photo_pixel_height <= 0:
             raise CollageError(f"Photo {layer.photo_id} rounds to zero photo pixels.")
         if (
-            pixel_x + pixel_width > canvas.width
+            pixel_x < 0 or pixel_y < 0
+            or pixel_x + pixel_width > canvas.width
             or pixel_y + pixel_height > canvas.height
         ):
             raise _bounds_error(
@@ -242,7 +267,9 @@ def resolve_layout(
         resolved.append(
             LayerGeometry(
                 photo_id=layer.photo_id,
-                box_normalized=FrameBox(x=box.x, y=box.y, width=box.width, height=float(height)),
+                box_normalized=ResolvedBox(
+                    x=float(x), y=float(y), width=box.width, height=float(height),
+                ),
                 box_pixels=PixelBox(
                     x=pixel_x, y=pixel_y, width=pixel_width, height=pixel_height,
                 ),
@@ -258,5 +285,5 @@ def resolve_layout(
             )
         )
     return ResolvedLayout(
-        schema_version=2, version=version, recipe=layout, geometry=resolved,
+        schema_version=layout.schema_version, version=version, recipe=layout, geometry=resolved,
     )

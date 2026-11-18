@@ -23,6 +23,7 @@ def test_exif_orientation_is_used_for_metadata_and_rendering(
     project = store.create("exif", [path, photo_file(tmp_path / "other.png")])
     assert (project.photos[0].width, project.photos[0].height) == (20, 40)
     data = framed_layout_data() if framed else layout_data()
+    data["layers"][0]["box"]["center_y"] = 0.5
     data["layers"][0]["border"] = {"width_px": border_width, "color": "#00FF00"}
     resolved, output = store.apply_layout("exif", write_layout(tmp_path, data))
     box = resolved.geometry[0].photo_box_pixels
@@ -46,8 +47,9 @@ def test_border_outer_geometry_and_exact_ring_pixels(store, sources, tmp_path):
     store.create("borders", sources)
     data = layout_data()
     colors = ["#00FF00", "#FFFF00"]
-    for element, color in zip(data["layers"], colors, strict=True):
+    for element, color, center_y in zip(data["layers"], colors, [0.16, 0.28], strict=True):
         element["border"] = {"width_px": 2, "color": color}
+        element["box"]["center_y"] = center_y
     resolved, output = store.apply_layout("borders", write_layout(tmp_path, data))
     assert resolved.geometry[0].box_pixels.model_dump() == {
         "x": 5, "y": 10, "width": 20, "height": 12
@@ -80,8 +82,8 @@ def test_border_outer_geometry_and_exact_ring_pixels(store, sources, tmp_path):
 def test_border_may_touch_canvas_edges_without_clipping(store, sources, tmp_path):
     store.create("edge-borders", sources)
     data = layout_data()
-    for element, y in zip(data["layers"], [0.88, 0.64], strict=True):
-        element["box"] = {"x": 0.8, "y": y, "width": 0.2}
+    for element, center_y in zip(data["layers"], [0.94, 0.82], strict=True):
+        element["box"] = {"center_x": 0.9, "center_y": center_y, "width": 0.2}
         element["border"] = {"width_px": 2, "color": "#00FF00"}
     resolved, output = store.apply_layout("edge-borders", write_layout(tmp_path, data))
     for element in resolved.geometry:
@@ -95,8 +97,8 @@ def test_border_may_touch_canvas_edges_without_clipping(store, sources, tmp_path
 @pytest.mark.parametrize(
     "box, message",
     [
-        ({"x": 0.05, "y": 0.89, "width": 0.2}, "beyond the canvas"),
-        ({"x": 0.795, "y": 0, "width": 0.205}, "pixel canvas bounds"),
+        ({"center_x": 0.15, "center_y": 0.95, "width": 0.2}, "beyond the canvas"),
+        ({"center_x": 0.95, "center_y": 0.5, "width": 0.205}, "beyond the canvas"),
     ],
 )
 def test_border_bounds_failures_preserve_accepted_state(
@@ -161,9 +163,9 @@ def test_photo_and_border_share_one_stacking_layer(store, tmp_path, foreground, 
     ]
     store.create("layered-borders", sources)
     data = layout_data()
-    data["layers"][0]["box"] = {"x": 0.1, "y": 0.1, "width": 0.5}
+    data["layers"][0]["box"] = {"center_x": 0.35, "center_y": 0.35, "width": 0.5}
     data["layers"][0]["border"] = {"width_px": 3, "color": "#00FF00"}
-    data["layers"][1]["box"] = {"x": 0.4, "y": 0.3, "width": 0.3}
+    data["layers"][1]["box"] = {"center_x": 0.55, "center_y": 0.45, "width": 0.3}
     data["layers"][1]["border"] = {"width_px": 2, "color": "#FFFF00"}
     for element in data["layers"]:
         element["corner_radius_px"] = radius
@@ -422,11 +424,12 @@ def test_tilt_preserves_corners_size_center_and_physical_angle(
     element, other = data["layers"]
     x, y = (canvas[0] - width) // 2, (canvas[1] - height) // 2
     element["box"] = {
-        "x": x / canvas[0], "y": y / canvas[1], "width": width / canvas[0],
+        "center_x": (x + width / 2) / canvas[0],
+        "center_y": (y + height / 2) / canvas[1], "width": width / canvas[0],
     }
     if framed:
         element["box"]["height"] = height / canvas[1]
-    other["box"] = {"x": 0.02, "y": 0.02, "width": 0.05}
+    other["box"] = {"center_x": 0.05, "center_y": 0.05, "width": 0.05}
     if framed:
         other["box"]["height"] = 0.05
     element["rotation_degrees"] = angle
@@ -473,13 +476,12 @@ def test_tilt_rejects_all_canvas_edges_without_changing_accepted_state(
     data = framed_layout_data() if framed else layout_data()
     front = data["layers"][0]
     front.update(border={"width_px": 2, "color": "#FFFFFF"}, corner_radius_px=4)
-    front["box"].update(x=0.3, y=0.3)
+    front["box"].update(center_x=0.4, center_y=0.4)
     if side in {"left", "right"}:
-        front["box"]["x"] = 0 if side == "left" else 0.8
+        front["box"]["center_x"] = 0.1 if side == "left" else 0.9
     else:
-        front["box"]["y"] = (
-            0 if side == "top" else (0.8 if framed else 0.88)
-        )
+        margin = 0.1 if framed else 0.06
+        front["box"]["center_y"] = margin if side == "top" else 1 - margin
     store.apply_layout("tilt-bounds", write_layout(tmp_path, data))
     directory = store.project_dir("tilt-bounds")
     before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
@@ -495,13 +497,15 @@ def test_tilt_checks_pixel_rounding_and_sampling_margin_after_continuous_bounds(
     store.create("tilt-pixels", sources)
     data = framed_layout_data()
     front = data["layers"][0]
-    front["box"] = {"x": 0.0149, "y": 0.2, "width": 0.4, "height": 0.2}
+    front["box"] = {
+        "center_x": 0.2149, "center_y": 0.3, "width": 0.4, "height": 0.2,
+    }
     front["rotation_degrees"] = 10
     # Ideal left edge is just positive; rounding x down puts the tilted corner outside.
     with pytest.raises(CollageError, match="rotated pixel footprint.*sampling margin"):
         store.apply_layout("tilt-pixels", write_layout(tmp_path, data))
     assert store.load("tilt-pixels").current_version is None
-    front["box"]["x"] = 0.04
+    front["box"]["center_x"] = 0.24
     resolved, _ = store.apply_layout("tilt-pixels", write_layout(tmp_path, data))
     assert resolved.geometry[0].rotated_box_pixels.x == 0
 
@@ -550,9 +554,9 @@ def test_tilt_antialiases_edges_without_dark_fringes(store, tmp_path, background
     data = framed_layout_data(200, 150)
     data["canvas"]["background"] = background
     front, other = data["layers"]
-    front["box"] = {"x": 0.2, "y": 0.2, "width": 0.4, "height": 0.4}
+    front["box"] = {"center_x": 0.4, "center_y": 0.4, "width": 0.4, "height": 0.4}
     front["rotation_degrees"] = -3.5
-    other["box"] = {"x": 0.01, "y": 0.01, "width": 0.05, "height": 0.05}
+    other["box"] = {"center_x": 0.035, "center_y": 0.035, "width": 0.05, "height": 0.05}
     resolved, output = store.apply_layout("tilt-smooth", write_layout(tmp_path, data))
     box = resolved.geometry[0].rotated_box_pixels
     with Image.open(output) as image:
@@ -572,7 +576,7 @@ def test_tilt_antialiases_edges_without_dark_fringes(store, tmp_path, background
 def test_overlap_uses_layer_order_without_renaming_photos(store, sources, tmp_path):
     store.create("overlap", sources)
     data = layout_data()
-    data["layers"][1]["box"] = {"x": 0.05, "y": 0.1, "width": 0.2}
+    data["layers"][1]["box"] = {"center_x": 0.15, "center_y": 0.3, "width": 0.2}
     data["layers"].reverse()
     resolved, output = store.apply_layout("overlap", write_layout(tmp_path, data))
     assert [element.photo_id for element in resolved.geometry] == [2, 1]

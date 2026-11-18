@@ -1,6 +1,7 @@
 .venv/
 .collage-data/
 .collage-data-v2/
+.collage-data-v3/
 .collage-data-step2/
 __pycache__/
 .pytest_cache/

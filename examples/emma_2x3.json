@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "canvas": {
     "width": 1200,
     "height": 1800,
@@ -10,8 +10,8 @@
       "photo_id": 3,
       "mode": "whole",
       "box": {
-        "x": 0.0,
-        "y": 0.0,
+        "center_x": 0.265,
+        "center_y": 0.232777778,
         "width": 0.53
       },
       "border": {
@@ -23,8 +23,8 @@
       "photo_id": 4,
       "mode": "whole",
       "box": {
-        "x": 0.354,
-        "y": 0.0,
+        "center_x": 0.677,
+        "center_y": 0.284333334,
         "width": 0.646
       },
       "border": {
@@ -36,8 +36,8 @@
       "photo_id": 2,
       "mode": "whole",
       "box": {
-        "x": 0.5,
-        "y": 0.561,
+        "center_x": 0.75,
+        "center_y": 0.780555555,
         "width": 0.5
       },
       "border": {
@@ -49,8 +49,8 @@
       "photo_id": 1,
       "mode": "whole",
       "box": {
-        "x": 0.0,
-        "y": 0.4366,
+        "center_x": 0.32,
+        "center_y": 0.718333333,
         "width": 0.64
       },
       "border": {

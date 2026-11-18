@@ -72,7 +72,9 @@ def compare(step: int, current: ResolvedLayout, previous: ResolvedLayout | None)
         for value in (old, now):
             for layer in value["layers"]:
                 if layer["photo_id"] == 2:
-                    layer["box"] = None
+                    layer["box"]["width"] = None
+                    if "height" in layer["box"]:
+                        layer["box"]["height"] = None
     elif step == 2:
         if any(layer["border"] is not None for layer in now["layers"]):
             errors.append("Some borders remain.")

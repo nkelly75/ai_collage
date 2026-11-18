@@ -325,7 +325,7 @@ def test_recipe_adjustments_do_not_edit_accepted_intent(store, sources, tmp_path
     saved = store.version_paths("adjustments", 1)[0]
     before = (saved.read_bytes(), first_output.read_bytes())
     front = data["layers"][0]
-    front["box"].update(x=0.1, width=0.3, height=0.25)
+    front["box"].update(center_x=0.25, width=0.3, height=0.25)
     front["crop"].update(zoom=2, pan_x=1, pan_y=0)
     data["layers"].reverse()
     second, _ = store.apply_layout("adjustments", write_layout(tmp_path, data))

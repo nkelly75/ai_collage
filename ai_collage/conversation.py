@@ -168,13 +168,8 @@ class Conversation:
             "trusted_controls": self.state.controls.model_dump(),
             "editing_baseline": baseline.model_dump(mode="json") if baseline else None,
             "baseline_geometry": (
-                [{
-                    **g.model_dump(mode="json"),
-                    "untilted_center_pixels": {
-                        "x": g.box_pixels.x + g.box_pixels.width / 2,
-                        "y": g.box_pixels.y + g.box_pixels.height / 2,
-                    },
-                } for g in resolve_layout(baseline, project.photos, 1).geometry]
+                [g.model_dump(mode="json")
+                 for g in resolve_layout(baseline, project.photos, 1).geometry]
                 if baseline else None
             ),
             "history": history, "user_request": prompt, "validation_feedback": feedback,

@@ -12,7 +12,7 @@ MAX_CANVAS_AXIS = 4096
 OWNER_ID = "local-dev"
 
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
-SchemaVersion = Annotated[int, Field(strict=True, ge=2, le=2)]
+SchemaVersion = Annotated[int, Field(strict=True, ge=3, le=3)]
 Coordinate = Annotated[float, Field(strict=True, ge=0, le=1)]
 Extent = Annotated[float, Field(strict=True, gt=0, le=1)]
 ProjectId = Annotated[
@@ -42,10 +42,10 @@ class Model(BaseModel):
     @field_validator("schema_version", mode="before", check_fields=False)
     @classmethod
     def supported_version(cls, value: object) -> object:
-        if type(value) is int and value != 2:
+        if type(value) is int and value != 3:
             raise ValueError(
-                f"Unsupported schema_version {value}; expected 2. "
-                "Old projects are read-only archives; create a fresh v2 project."
+                f"Unsupported schema_version {value}; expected 3. "
+                "Old projects are read-only archives; create a fresh v3 project."
             )
         return value
 
@@ -68,8 +68,12 @@ class Canvas(Model):
 
 
 class WholeBox(Model):
-    x: Coordinate = Field(description="Untilted outer left edge, as a fraction of canvas width.")
-    y: Coordinate = Field(description="Untilted outer top edge, as a fraction of canvas height.")
+    center_x: Coordinate = Field(
+        description="Outer frame centre, as a fraction of canvas width."
+    )
+    center_y: Coordinate = Field(
+        description="Outer frame centre, as a fraction of canvas height."
+    )
     width: Extent = Field(description="Border-inclusive outer width / canvas width.")
 
 
@@ -107,7 +111,7 @@ class PhotoLayer(Model):
 class WholeLayer(PhotoLayer):
     mode: Literal["whole"]
     box: WholeBox = Field(
-        description="Width-only frame; derive height from the oriented photo without cropping."
+        description="Centre-anchored width-only frame; derive height without cropping."
     )
 
 
@@ -129,6 +133,13 @@ class InputLayout(Model):
     layers: Annotated[list[Layer], Field(min_length=2, max_length=6)] = Field(
         description="Photo layers ordered back to front; each imported photo appears exactly once."
     )
+
+
+class ResolvedBox(Model):
+    x: Coordinate = Field(description="Derived untilted outer left / canvas width.")
+    y: Coordinate = Field(description="Derived untilted outer top / canvas height.")
+    width: Extent
+    height: Extent
 
 
 class PixelBox(Model):
@@ -153,7 +164,7 @@ class SourceCrop(Model):
 
 class LayerGeometry(Model):
     photo_id: PositiveInt
-    box_normalized: FrameBox
+    box_normalized: ResolvedBox
     box_pixels: PixelBox
     photo_box_pixels: PixelBox
     source_crop: SourceCrop | None

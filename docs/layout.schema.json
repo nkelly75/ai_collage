@@ -145,18 +145,18 @@
     "FrameBox": {
       "additionalProperties": false,
       "properties": {
-        "x": {
-          "description": "Untilted outer left edge, as a fraction of canvas width.",
+        "center_x": {
+          "description": "Outer frame centre, as a fraction of canvas width.",
           "maximum": 1,
           "minimum": 0,
-          "title": "X",
+          "title": "Center X",
           "type": "number"
         },
-        "y": {
-          "description": "Untilted outer top edge, as a fraction of canvas height.",
+        "center_y": {
+          "description": "Outer frame centre, as a fraction of canvas height.",
           "maximum": 1,
           "minimum": 0,
-          "title": "Y",
+          "title": "Center Y",
           "type": "number"
         },
         "width": {
@@ -175,8 +175,8 @@
         }
       },
       "required": [
-        "x",
-        "y",
+        "center_x",
+        "center_y",
         "width",
         "height"
       ],
@@ -186,18 +186,18 @@
     "WholeBox": {
       "additionalProperties": false,
       "properties": {
-        "x": {
-          "description": "Untilted outer left edge, as a fraction of canvas width.",
+        "center_x": {
+          "description": "Outer frame centre, as a fraction of canvas width.",
           "maximum": 1,
           "minimum": 0,
-          "title": "X",
+          "title": "Center X",
           "type": "number"
         },
-        "y": {
-          "description": "Untilted outer top edge, as a fraction of canvas height.",
+        "center_y": {
+          "description": "Outer frame centre, as a fraction of canvas height.",
           "maximum": 1,
           "minimum": 0,
-          "title": "Y",
+          "title": "Center Y",
           "type": "number"
         },
         "width": {
@@ -209,8 +209,8 @@
         }
       },
       "required": [
-        "x",
-        "y",
+        "center_x",
+        "center_y",
         "width"
       ],
       "title": "WholeBox",
@@ -258,7 +258,7 @@
         },
         "box": {
           "$ref": "#/$defs/WholeBox",
-          "description": "Width-only frame; derive height from the oriented photo without cropping."
+          "description": "Centre-anchored width-only frame; derive height without cropping."
         }
       },
       "required": [
@@ -273,8 +273,8 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "maximum": 2,
-      "minimum": 2,
+      "maximum": 3,
+      "minimum": 3,
       "title": "Schema Version",
       "type": "integer"
     },

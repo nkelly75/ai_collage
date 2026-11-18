@@ -18,13 +18,15 @@ def photo_file(path, size=(40, 20), color="red", **save_options):
 
 def layout_data(width=100, height=100):
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "canvas": {"width": width, "height": height, "background": "#FFFFFF"},
         "layers": [
             {"photo_id": 1, "mode": "whole",
-             "box": {"x": 0.05, "y": 0.1, "width": 0.2}},
+             "box": {"center_x": 0.15, "center_y": 0.1 + 0.05 * width / height,
+                     "width": 0.2}},
             {"photo_id": 2, "mode": "whole",
-             "box": {"x": 0.5, "y": 0.1, "width": 0.2}},
+             "box": {"center_x": 0.6, "center_y": 0.1 + 0.2 * width / height,
+                     "width": 0.2}},
         ],
     }
 
@@ -40,6 +42,7 @@ def framed_layout_data(width=100, height=100):
     for layer in data["layers"]:
         layer["mode"] = "cover"
         layer["box"]["height"] = 0.2
+        layer["box"]["center_y"] = 0.2
         layer["crop"] = {}
     return data
 
@@ -47,8 +50,8 @@ def framed_layout_data(width=100, height=100):
 def rounded_layout_data(framed=False, border_width=5):
     data = framed_layout_data() if framed else layout_data()
     front, back = data["layers"]
-    front["box"] = {"x": 0.2, "y": 0.2, "width": 0.6}
-    back["box"] = {"x": 0.1, "y": 0.1, "width": 0.8}
+    front["box"] = {"center_x": 0.5, "center_y": 0.5, "width": 0.6}
+    back["box"] = {"center_x": 0.5, "center_y": 0.5, "width": 0.8}
     if framed:
         front["box"]["height"] = 0.6
         back["box"]["height"] = 0.8

@@ -1,4 +1,4 @@
-"""Strict local conversation records, separate from format 2 recipes."""
+"""Strict local conversation records, separate from format 3 recipes."""
 
 from typing import Annotated, Literal
 

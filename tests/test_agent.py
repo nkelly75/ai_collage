@@ -109,6 +109,32 @@ def test_question_and_answer_use_real_history(agent_project):
     assert len(ledger.attempts()) == 2
 
 
+def test_resize_context_keeps_authored_center_instead_of_rounded_pixel_center(agent_project):
+    conversation, ledger = agent_project
+    data = layout_data()
+    data["layers"][0]["box"] = {"center_x": 0.3, "center_y": 0.3, "width": 0.19}
+    p1, _ = ask(conversation, ledger, reply(data))
+    baseline = conversation.proposal(p1)
+    resumed = Conversation(conversation.store, "demo")
+    smaller = copy.deepcopy(data)
+    smaller["layers"][0]["box"]["width"] = 0.17
+    p2, model = ask(resumed, ledger, reply(smaller), prompt="Make photo 1 smaller in the same spot")
+    context = model.contexts[0]
+    assert context["editing_baseline"] == baseline.recipe.model_dump(mode="json")
+    assert context["editing_baseline"]["schema_version"] == 3
+    frame = context["baseline_geometry"][0]
+    assert frame == baseline.geometry[0].model_dump(mode="json")
+    assert "untilted_center_pixels" not in frame
+    pixels = frame["box_pixels"]
+    assert pixels["x"] + pixels["width"] / 2 == 30.5
+    assert baseline.recipe.layers[0].box.center_x * 100 == 30
+    updated = resumed.proposal(p2)
+    assert updated.recipe.layers[0].box.model_dump() == {
+        "center_x": 0.3, "center_y": 0.3, "width": 0.17,
+    }
+    assert resumed.store.load("demo").current_version is None
+
+
 @pytest.mark.parametrize("bad", [
     "```json\n{}\n```", '{"kind":"question","question":""}',
     '{"kind":"question","question":"Hi","recipe":{}}',
@@ -140,9 +166,9 @@ def test_four_invalid_responses_preserve_good_baseline_and_block_fifth(agent_pro
 def test_fourth_attempt_succeeds_with_latest_candidate_feedback(agent_project):
     conversation, ledger = agent_project
     bad = layout_data()
-    bad["layers"][1]["box"]["y"] = 0.9
+    bad["layers"][1]["box"]["center_y"] = 0.95
     newer = copy.deepcopy(bad)
-    newer["layers"][1]["box"]["y"] = 0.8
+    newer["layers"][1]["box"]["center_y"] = 0.9
     result, model = ask(conversation, ledger, "{}", reply(bad), reply(newer), reply())
     assert result == "P001"
     assert len(ledger.attempts()) == len(model.contexts) == 4
@@ -154,6 +180,11 @@ def test_fourth_attempt_succeeds_with_latest_candidate_feedback(agent_project):
         assert feedback["photo_id"] == 2
         assert feedback["overshoot_px"]["bottom"] > 0
         assert feedback["sampled_footprint_bounds_px"][3] > 100
+        assert "safe_box_position_normalized" not in feedback
+        assert (
+            feedback["safe_box_center_normalized"]["center_y"][1]
+            < candidate["layers"][1]["box"]["center_y"]
+        )
         assert context["history"][-1]["response"] == reply(candidate)
         assert context["editing_baseline"] is None
         assert len(context["validation_feedback"].encode("utf-8")) <= 8192
@@ -388,7 +419,7 @@ def test_real_framework_mocked_http_gate(store, status):
 
     ledger = RunLedger.provision(store, "mocked")
     captured = []
-    text = '{"kind":"question","question":"Which photo?"}'
+    text = reply()
 
     async def handler(request):
         captured.append(json.loads(request.content))
@@ -406,6 +437,12 @@ def test_real_framework_mocked_http_gate(store, status):
         assert not {"oneOf", "anyOf", "allOf", "enum", "const", "not"}.intersection(schema)
         assert set(schema["properties"]) == {"kind", "recipe", "question"}
         assert "oneOf" not in json.dumps(schema) and "discriminator" not in json.dumps(schema)
+        definitions = schema["$defs"]
+        version = definitions["InputLayout"]["properties"]["schema_version"]
+        assert version["minimum"] == version["maximum"] == 3
+        assert set(definitions["WholeBox"]["required"]) == {
+            "center_x", "center_y", "width",
+        }
         if status in {"429", "401"}:
             return httpx.Response(int(status), json={"error": {"code": "offline", "message": "offline"}})
         if status == "timeout":
@@ -425,6 +462,7 @@ def test_real_framework_mocked_http_gate(store, status):
 
     if status == "completed":
         assert asyncio.run(execute()) == text
+        assert REPLY.validate_python(json.loads(text)).recipe.schema_version == 3
     else:
         with pytest.raises((CollageError, APIError, AgentFrameworkException)):
             asyncio.run(execute())
@@ -491,14 +529,18 @@ def test_scripted_comparisons_preserve_exact_unrelated_fields(agent_project):
     data = layout_data()
     data["canvas"]["background"] = "#282828"
     data["layers"][0]["box"]["width"] = 0.4
+    data["layers"][0]["box"].update(center_x=0.3, center_y=0.3)
     for layer in data["layers"]:
         layer.update(border={"width_px": 1, "color": "#FFFFFF"}, corner_radius_px=1, rotation_degrees=1)
     initial = resolve(data)
     assert compare(0, initial, None) == []
     smaller = copy.deepcopy(data)
-    smaller["layers"][1]["box"] = {"x": 0.51, "y": 0.12, "width": 0.18}
+    smaller["layers"][1]["box"]["width"] = 0.18
     resized = resolve(smaller)
     assert compare(1, resized, initial) == []
+    shifted = copy.deepcopy(smaller)
+    shifted["layers"][1]["box"]["center_x"] += 0.0001
+    assert "Unrelated" in " ".join(compare(1, resolve(shifted), initial))
     changed = copy.deepcopy(smaller)
     changed["layers"][0]["corner_radius_px"] = 2
     assert "Unrelated" in " ".join(compare(1, resolve(changed), initial))
@@ -519,3 +561,11 @@ def test_response_union_strictness_and_size():
         REPLY.validate_python({"kind": "question", "question": " "})
     with pytest.raises(ValidationError):
         REPLY.validate_python({"kind": "question", "question": "a" * 1001})
+
+
+@pytest.mark.parametrize("old_version", [1, 2])
+def test_proposal_response_rejects_old_recipe_versions(old_version):
+    data = layout_data()
+    data["schema_version"] = old_version
+    with pytest.raises(ValidationError, match="Unsupported schema_version"):
+        REPLY.validate_python({"kind": "proposal", "recipe": data})

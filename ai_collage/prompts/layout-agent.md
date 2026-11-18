@@ -19,7 +19,7 @@ as which photo number the user means by an otherwise unidentified subject.
 Return exactly one JSON object matching the supplied response schema:
 
 - A proposal has exactly `kind: "proposal"` and `recipe`: a complete layout
-  recipe in the current format.
+  recipe with `schema_version: 3` and centre-based boxes.
 - A question has exactly `kind: "question"` and `question`: one short, nonempty
   clarification, at most 1,000 characters.
 
@@ -44,8 +44,8 @@ The per-request context contains:
 | `photos` | Available photo numbers and oriented dimensions. Include each photo exactly once. Photo numbers do not specify stacking order. |
 | `trusted_controls` | Required canvas dimensions and whether cropping is permitted. These are hard constraints, not suggestions. |
 | `preferences` | Captured defaults for borders, rounding, and tilt, overridable by the user's design requests. |
-| `editing_baseline` | The authoritative valid recipe to edit, or null when no valid baseline exists. |
-| `baseline_geometry` | Recomputed geometry for that baseline, including untilted pixel centres. Match entries by `photo_id`. |
+| `editing_baseline` | The authoritative valid recipe to edit, including authored `box.center_x`/`box.center_y`, or null when no valid baseline exists. |
+| `baseline_geometry` | Recomputed frame sizes, top-left render boxes, crops, and rotation footprints for that baseline. Use for size and clearance checks, not to replace authored centres. Match entries by `photo_id`. |
 | `history` | Earlier real exchanges and local events. Use these for context, not to replace the authoritative baseline or controls. |
 | `user_request` | The current task. |
 | `validation_feedback` | When present, the latest failed candidate's validation problems to address. |
@@ -117,61 +117,49 @@ edit. Return the complete updated recipe.
 
 - Moving a photo changes its position, not its size or stacking order.
 - Making a photo smaller or larger in the same spot preserves its untilted
-  frame centre, not its top-left corner. Adjust position as well as size to
-  preserve that centre. If the user names a different anchor, use that anchor.
+  frame centre: copy `box.center_x` and `box.center_y` exactly. For a whole
+  photo, change only `box.width`; the engine derives its height and top-left.
+  If the user explicitly names a different anchor, adjust the centre to
+  preserve that anchor instead.
 - Removing borders changes only the border fields. Whole-photo heights can
-  change as a consequence; do not compensate by changing other authored fields
-  unless the user also asks for that.
+  change around the unchanged centre as a consequence; do not compensate by
+  changing other authored fields unless the user also asks for that.
 - Making photos straight changes only `rotation_degrees` to zero.
 - Changing stacking order moves existing layers; it never renumbers photos.
 
-The field guide's width-only whole-photo resize describes how size is
-controlled. When the request also preserves the centre, the position offsets
-below are necessary to fulfil that request.
-
-## Calculate placement and resizing
+## Place and size centre-anchored frames
 
 Coordinates use independent axes: divide horizontal pixel values by canvas
 width and vertical pixel values by canvas height. A normalized width is not a
-normalized height. For whole photos, derive the height from source dimensions
-and outside borders before choosing the vertical position.
+normalized height. `box.center_x` and `box.center_y` locate the outer frame's
+centre, not its top-left. Do not output `box.x` or `box.y`.
 
-For a whole-photo resize that preserves the centre, work from `box_pixels` in
-the matching `baseline_geometry` entry. Reuse those old pixel values rather
-than calculating the old size or position again.
+For a whole-photo resize in the same spot, choose a new border-inclusive
+`box.width` and leave both centre values unchanged. There are no position
+offsets or height calculations to perform for that edit. If choosing a target
+width in pixels, divide it by canvas width. The engine derives height from the
+source ratio and border and places the resized frame about the authored centre.
 
-1. Choose the new outer width in whole pixels, smaller or larger as requested.
-2. Derive the new outer height using the photo's source ratio and the unchanged
-   border. With no border, use zero for `border_px`:
+For example, shrinking
+`{"center_x": 0.65, "center_y": 0.7, "width": 0.325}` to width `0.3`
+leaves `center_x: 0.65` and `center_y: 0.7` exactly as they were.
+This illustrates an edit, not a layout template.
 
-   ```text
-   new_height = round_half_up(
-       (new_width - 2 * border_px) * source_height / source_width
-   ) + 2 * border_px
-   ```
+For cover frames, width and height are explicit. Preserve both centre values
+when resizing in place; change the dimensions proportionally unless the user
+asks to change the frame shape. Keep crop controls unchanged unless requested.
 
-3. Move the old left edge right by half the width reduction, and the old top
-   edge down by half the height reduction. Negative reductions move left/up
-   when enlarging. Convert to normalized coordinates only at the end:
+Use the authored centre from `editing_baseline`, not a centre reconstructed
+from rounded pixel boxes. Raster rounding can put the rendered centre up to
+half a pixel away on either axis; do not move the authored centre to compensate.
+Preserve enough decimal precision for new coordinates, normally at least nine
+decimal places where needed; copy unchanged authored values exactly.
 
-   ```text
-   box.width = new_width / canvas_width
-   box.x = (old_x + (old_width - new_width) / 2) / canvas_width
-   box.y = (old_y + (old_height - new_height) / 2) / canvas_height
-   ```
-
-For positive values, `round_half_up(v)` means `floor(v + 0.5)`. Preserve enough
-decimal precision, normally at least nine decimal places where needed. Check
-that rounding the new pixel origin preserves the old centre within one output
-pixel on each axis. Verify that the entire rotated sampling footprint fits.
-For cover frames, derive pixel width and height from their explicit box
-dimensions rather than applying the whole-photo height formula.
-
-Arithmetic example, not a layout template: on a 1000x1500 canvas, a 3:4 photo
-with a 10px border has outer frame `(100, 200, 320, 420)` pixels. Choosing a new
-width of 260px gives a height of 340px: 60px narrower and 80px shorter.
-Move the origin right 30px and down 40px to `(130, 240)`. Normalized x is 0.13,
-y is 0.16, and width is 0.26. The centre remains `(260, 410)` pixels.
+For new placements and size changes, still check the full frame height,
+outside borders, and rotated sampling footprint against the canvas. A centre
+inside the canvas does not mean the whole frame fits. The field guide defines
+height derivation and pixel rounding; the engine checks them without repairing
+an invalid proposal.
 
 ## Respond to validation feedback
 
@@ -182,11 +170,13 @@ new editing baseline.
 
 Containment feedback distinguishes the outer frame, its rotated bounds, and
 its sampled pixel footprint. Pixel overshoot identifies the edges that fail.
-`safe_box_position_normalized`, when available, gives conservative inclusive
-x/y ranges for that candidate's size, border, and rotation, including sampling
-clearance. Recalculate placement if any of those properties change. A null
-range means that the current frame cannot fit at that size; moving it alone
-will not solve the problem.
+`safe_box_center_normalized`, when available, gives conservative inclusive
+`center_x`/`center_y` ranges for that candidate's size, border, and rotation,
+including pixel rounding and sampling clearance. Recalculate placement if any
+of those properties change. A null range means no safe placement is reported
+for the current frame; reconsider its size or styling within the user's task.
+If the user requires an unchanged centre, these ranges do not authorize moving
+it to make an enlargement fit.
 
 Choose valid authored values yourself; never rely on the renderer to move,
 shrink, stretch, crop, clip, or clamp an invalid frame into place. Do not resolve

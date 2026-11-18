@@ -7,12 +7,18 @@ plans evolved, not competing current specifications.
 
 ## Current status
 
-The offline foundation, subsequent layout capabilities, and format 2 engine
-refactoring are implemented. The local Python CLI imports photos, validates and
+The offline foundation, subsequent layout capabilities, and engine refactoring
+are implemented. The deterministic engine now uses **format 3**, with normalized
+`center_x`/`center_y` anchors for resizing and rotation. The local Python CLI imports photos, validates and
 renders editable recipes, and persists accepted versions for later rendering.
 See the [Quick start](../README.md#quick-start),
 [CLI guide](../docs/cli-guide.md), [layout field guide](../docs/layout-format.md),
 and generated [JSON Schema](../docs/layout.schema.json) for current behavior.
+Formats 1 and 2 are unsupported untouched archives, not migrated or loaded.
+The agent prompt and context now use authored centres directly, with offline
+coverage. Live requests remain paused pending user review of the revised prompt.
+The checkpoint A results below describe
+the preceding format 2 implementation, not a format 3 agent evaluation.
 
 The optional model-connected terminal and durable proposal workflow from
 [record 005](005-model-connected-layouts.md) are implemented with offline
@@ -61,13 +67,13 @@ since that proposal are:
 | Original proposal or assumption | Current position |
 |---|---|
 | Pillow was a proposed renderer. | Pillow is implemented, with strict Pydantic contracts and deterministic geometry/rendering. |
-| One master layout JSON with element IDs, `source_image_id`, `src`, `z_index`, and reserved `crop_pan`. | Format 2 recipes use stable `photo_id`, back-to-front `layers`, explicit whole/cover modes, and cover-only `crop`. Saved snapshots separate authored `recipe` from derived `geometry`; asset paths belong to project metadata. |
+| One master layout JSON with element IDs, `source_image_id`, `src`, `z_index`, and reserved `crop_pan`. | Format 3 recipes use centre coordinates, stable `photo_id`, back-to-front `layers`, explicit whole/cover modes, and cover-only `crop`. Saved snapshots separate authored `recipe` from derived `geometry`; asset paths belong to project metadata. |
 | Independently shaped frames and pan/zoom waited for a future graphical UI. | Cover frames and pan/zoom already work through JSON recipes. Graphical controls remain future work; outside borders and rounded corners are also implemented. |
 | Image-background fitting was unresolved, and the draft used `expand=True` for rotation. | An ordinary lowest photo layer supplies an image background. Tilt uses centre-preserving rotation and validated sampled footprints; angles are -10 to +10 degrees, not the draft schema's -15 to +15. |
 | Phase 1 included model-generated layouts and durable conversations. | Offline foundation, durable conversations, and fixed checkpoint A layout/refinement/acceptance cases now pass. The user-led trial and subjective sign-off remain outstanding. |
 | Captions, shadows, UI, and authenticated cloud deployment were envisioned. | These remain unimplemented; historical model names, hosting details, and cost estimates are not verified current selections or prices. |
 
-Format 1 saved projects remain untouched archives, not loadable or migrated by
+Format 1 and 2 saved projects remain untouched archives, not loadable or migrated by
 the current CLI. Their PNGs remain viewable. Current reproduction instructions
 use a fresh data root and the converted example recipes.
 
