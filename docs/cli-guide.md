@@ -17,7 +17,7 @@ python -m venv .\.venv
 Activation is unnecessary. If `python` is not on PATH, use your installed Python
 executable's full path for environment creation. Runtime dependencies are Pillow
 and Pydantic; `requirements-dev.txt` adds pytest. Installation downloads packages;
-the application and tests run offline. The root environment is separate from
+the deterministic engine and routine tests run offline. The root environment is separate from
 the `temp-foundry-test` experiments, which must not run as part of this workflow.
 
 ## Fresh projects and old archives
@@ -84,8 +84,145 @@ Project IDs are 1-64 lowercase letters/digits/hyphens, beginning and ending with
 a letter or digit. Windows device names such as `con` and `com1` are rejected.
 Imported paths resolve known UUID assets within the owner's uploads directory;
 recipes cannot supply paths. `local-dev` is a namespace, not authentication.
-There are no delete, reset, photo replacement/removal, migration, or
-natural-language commands.
+There are no delete, reset, photo replacement/removal, or migration commands.
+Optional natural-language interaction uses
+the separate proposal workflow below.
+
+## Conversational proposals (optional)
+
+Live model requests require an explicitly authorized allowance. See
+[record 005's handoff](../planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff)
+for checkpoint status, evaluation evidence, and approval boundaries.
+
+Engine-only users need no optional dependencies. To install the agent into the
+root application environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r .\requirements-agent.txt
+```
+
+The verified offline combination is Agent Framework OpenAI provider 1.18.2,
+OpenAI SDK 2.54.0, and HTTPX 0.28.1. The manifest pins the provider and constrains
+the compatible SDK major version. Do not reuse or run the separate
+`temp-foundry-test` environment/scripts.
+
+Agent instructions live in `ai_collage\prompts\layout-agent.md`. The provider
+loads that Markdown and appends the shared [layout field guide](layout-format.md)
+on each request; controls, baseline, history, and feedback are supplied separately.
+To print the assembled instructions offline from the repository root, without
+credentials or model calls:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from ai_collage.agent_provider import instructions; print(instructions())"
+```
+
+Create a format 2 photo project with `create`, using `.collage-data-step2` for
+this experiment. Start a new conversation by choosing its canvas:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-step2 chat --project YOUR-NEW-PROJECT --canvas 1200 1800 --no-open
+```
+
+To resume an existing conversation locally:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-step2 chat --project YOUR-EXISTING-PROJECT --no-open
+```
+
+With **no `--run`**, chat is local-only: it does not initialize credentials or
+send model requests. `/status`, `/help`, and `/quit` are available without
+proposals; `/show`, `/rate`, and `/accept` act on existing successful proposals.
+A resume uses the captured preferences and effective controls. Omit
+`--canvas`, or supply the same dimensions; use `/canvas` for an explicit change.
+
+| Local command | Behavior |
+|---|---|
+| `/show P001` | Print/open the immutable preview; never regenerate it. |
+| `/rate P001 worked "Looks right"` | Store optional `worked`, `partly`, or `failed` feedback; no inference or acceptance. |
+| `/accept P001` | Publish the selected recipe and byte-identical preview as an accepted version; no model call or replacement render. |
+| `/status` | Show controls, baseline, accepted version, captured defaults, and selected run usage. |
+| `/canvas 1600 900` | Change future proposal dimensions, leaving existing previews unchanged. |
+| `/cropping allow` or `/cropping forbid` | Change future cropping permission; whole photos are the default. |
+| `/help` or `/quit` | Explain commands or exit without losing the conversation. |
+
+Unknown commands and invalid arguments fail locally. Without `--no-open`,
+Windows opens successful PNGs in the OS viewer; viewer errors retain the path.
+EOF/Ctrl+C exit cleanly. Ordinary text is a model request only when an explicitly
+authorized run is selected. Proposal IDs are distinct from accepted versions.
+An older proposal can be accepted as the next version and becomes the editing
+baseline; an already-current acceptance is idempotent. Current canvas/cropping
+controls must permit the chosen proposal. External accepted-version changes,
+corrupt state, and altered previews produce explicit conflicts, not silent repair.
+
+Defaults live in:
+
+```text
+.collage-data-step2\users\local-dev\preferences.json
+```
+
+```json
+{
+  "preferences_version": 1,
+  "borders": "prefer",
+  "rounding": "prefer",
+  "tilt": "prefer"
+}
+```
+
+Each effect accepts `prefer`, `avoid`, or `agent_choice`. These are overridable
+design defaults, not restrictions. Edit this file explicitly for **future**
+conversations, or select `--preferences FILE` when creating one. Existing
+conversations retain their snapshot; requests never rewrite the defaults file.
+
+Conversation state, bounded event files, and immutable `proposals\P001`
+artifacts live under the project's `conversation` directory. The single shared
+allowance is outside projects under `users\local-dev\agent-runs\step2-first-pass`.
+All experiment runtime files remain ignored by Git.
+
+### Future authorized live use
+
+These are instructions, **not permission to run paid calls**. Live use requires
+a keyless Azure login with access to the configured deployment. The application
+does not initiate interactive login. If Azure CLI is installed at the following
+location but missing from the shell's PATH, add it for the current process:
+
+```powershell
+$env:PATH = 'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin;' + $env:PATH
+```
+
+This changes only the current PowerShell process and its children, not system
+configuration.
+
+For explicitly authorized live use, add `--run step2-first-pass` to the chat
+command to select the existing shared allowance. A halted allowance requires
+separate approval before unhalting; unused requests do not grant permission.
+Unknown run IDs do not create an allowance; local controls remain usable with
+a halted/exhausted run.
+Never silently reprovision, rename, delete, or move ledgers to refresh a budget.
+
+The transport durably reserves each actual outbound inference before dispatch,
+up to the shared 50-request ceiling. The per-request limits are 50,000 input
+tokens, 25,000 output tokens including reasoning, and 120 seconds. Input
+preflight uses a conservative token bound; actual provider usage is recorded
+separately. Oversize context fails without truncation. SDK/transport retries,
+tools, hosted history, response storage, and unexpected extra inference are
+disabled/rejected. High reasoning effort is explicitly requested and checked
+on the outbound request; reasoning tokens share the 25,000-token output cap.
+Storage-off is not a promise about all service logging.
+
+There are at most three validation-guided corrections for completed invalid
+JSON or hard layout/control violations: four total attempts per user request,
+stopping earlier on success or a budget/error boundary. Numeric containment
+feedback includes current outer/rotated/sampled bounds, pixel overshoot, and
+conservative normalized placement ranges where the current frame can fit.
+It never changes the proposed recipe automatically. Context includes the
+valid baseline's recomputable untilted pixel centres for targeted resizing.
+A valid clarification waits for the real
+user. Service/authentication/incomplete/timeout/render-I/O failures do not
+trigger model correction. Photos, filenames, local paths, and credentials are
+not automatically sent: the agent receives photo numbers/dimensions, recipes,
+defaults, controls, and actual conversation text. User-entered text is not
+automatically scrubbed of sensitive information.
 
 ## Emma's layered 2:3 example
 

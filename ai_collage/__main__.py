@@ -24,10 +24,23 @@ def main(argv: list[str] | None = None) -> int:
             subparser.add_argument("--layout", type=Path, required=True)
         elif command == "render":
             subparser.add_argument("--version", type=int)
+    chat = commands.add_parser("chat", help="Create/resume a proposal conversation.")
+    chat.add_argument("--project", required=True)
+    chat.add_argument("--canvas", nargs=2, type=int)
+    chat.add_argument("--preferences", type=Path)
+    chat.add_argument("--run")
+    chat.add_argument("--no-open", action="store_true")
     args = parser.parse_args(argv)
     try:
         store = ProjectStore(args.data_dir)
-        if args.command == "create":
+        if args.command == "chat":
+            from .chat import run_chat
+
+            return run_chat(
+                store, args.project, canvas=tuple(args.canvas) if args.canvas else None,
+                preferences=args.preferences, run_id=args.run, no_open=args.no_open,
+            )
+        elif args.command == "create":
             store.create(args.project, args.images)
             result = store.inspect(args.project)
         elif args.command == "inspect":

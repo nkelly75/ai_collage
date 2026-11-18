@@ -1,0 +1,7 @@
+-r requirements.txt
+agent-framework-openai==1.18.2
+openai>=2,<3
+httpx>=0.28,<1
+azure-identity>=1.25,<2
+aiohttp>=3.9,<4
+tiktoken>=0.12,<1

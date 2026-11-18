@@ -91,8 +91,10 @@ than allocating a huge zoomed image.
 
 - **Move photo 3:** locate `photo_id: 3` and change its `box.x`/`box.y`; leave
   its identity, crop, style, and array position alone.
-- **Resize a whole photo:** change only `box.width`. Height follows the source
-  ratio and border rules.
+- **Resize a whole photo:** `box.width` controls size; height follows the source
+  ratio and border rules. Keeping `box.x`/`box.y` unchanged anchors the top-left.
+  To preserve the centre instead, also offset x/y by half the reduction in
+  outer width/height on their respective axes.
 - **Resize/reframe a cover photo:** change its outer box dimensions for a
   different frame shape, or change only `crop` to pan/zoom within the same frame.
 - **Bring photo 1 forward:** move its existing layer later in `layers`; do not

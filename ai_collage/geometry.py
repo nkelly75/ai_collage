@@ -4,10 +4,12 @@ from fractions import Fraction
 from math import ceil, cos, floor, radians, sin
 
 from .models import (
+    Canvas,
     CollageError,
     Crop,
     FrameBox,
     InputLayout,
+    Layer,
     LayerGeometry,
     Photo,
     PixelBox,
@@ -16,6 +18,14 @@ from .models import (
 )
 
 ROTATION_PADDING = 2
+
+
+class LayoutBoundsError(CollageError):
+    """Containment failure with metadata-only, candidate-specific diagnostics."""
+
+    def __init__(self, message: str, details: dict[str, object]):
+        super().__init__(message)
+        self.details = details
 
 
 def round_half_up(value: Fraction) -> int:
@@ -52,6 +62,94 @@ def _rotated_bounds(
     )
 
 
+def _pixel_frame(
+    layer: Layer, photo: Photo, canvas: Canvas, height: Fraction,
+) -> tuple[int, int, int, int, int, int]:
+    border = layer.border.width_px if layer.border is not None else 0
+    width = round_half_up(Fraction(str(layer.box.width)) * canvas.width)
+    photo_width = width - 2 * border
+    photo_height = (
+        round_half_up(Fraction(photo_width * photo.height, photo.width))
+        if layer.mode == "whole"
+        else round_half_up(height * canvas.height) - 2 * border
+    )
+    return (
+        round_half_up(Fraction(str(layer.box.x)) * canvas.width),
+        round_half_up(Fraction(str(layer.box.y)) * canvas.height),
+        width, photo_height + 2 * border, photo_width, photo_height,
+    )
+
+
+def _bounds_error(
+    message: str, layer: Layer, photo: Photo, canvas: Canvas, height: Fraction,
+) -> LayoutBoundsError:
+    width = Fraction(str(layer.box.width))
+    x, y = Fraction(str(layer.box.x)), Fraction(str(layer.box.y))
+    outer = (
+        float(x * canvas.width), float(y * canvas.height),
+        float((x + width) * canvas.width), float((y + height) * canvas.height),
+    )
+    rotated = _rotated_bounds(
+        outer[0], outer[1], float(width * canvas.width),
+        float(height * canvas.height), layer.rotation_degrees,
+    )
+    px, py, pw, ph, photo_width, photo_height = _pixel_frame(layer, photo, canvas, height)
+    if layer.rotation_degrees:
+        sampled = _rotated_bounds(
+            px, py, pw, ph, layer.rotation_degrees, padding=ROTATION_PADDING,
+        )
+        sampled = (
+            floor(sampled[0]), floor(sampled[1]), ceil(sampled[2]), ceil(sampled[3]),
+        )
+        relative = _rotated_bounds(
+            0, 0, pw, ph, layer.rotation_degrees, padding=ROTATION_PADDING,
+        )
+    else:
+        sampled = (px, py, px + pw, py + ph)
+        relative = (0, 0, pw, ph)
+    continuous = _rotated_bounds(
+        0, 0, float(width * canvas.width), float(height * canvas.height),
+        layer.rotation_degrees,
+    )
+    ranges = {}
+    for axis, extent, size, lower, upper in (
+        ("x", width, canvas.width, 0, 2),
+        ("y", height, canvas.height, 1, 3),
+    ):
+        # Integer-origin intervals conservatively include half-up rounding;
+        # intersect them with authored and continuous rotated containment.
+        minimum = max(0, -continuous[lower] / size, ceil(-relative[lower]) / size)
+        maximum = min(
+            float(1 - extent), (size - continuous[upper]) / size,
+            floor(size - relative[upper]) / size,
+        )
+        minimum, maximum = ceil(minimum * 1e9) / 1e9, floor(maximum * 1e9) / 1e9
+        ranges[axis] = [minimum, maximum]
+    fits = photo_width > 0 and photo_height > 0 and all(
+        lower <= upper for lower, upper in ranges.values()
+    )
+    bounds = (outer, rotated, sampled)
+    return LayoutBoundsError(message, {
+        "error": message, "photo_id": layer.photo_id,
+        "outer_bounds_px": outer, "rotated_outer_bounds_px": rotated,
+        "sampled_footprint_bounds_px": sampled,
+        "bounds_order": ["left", "top", "right", "bottom"],
+        "canvas_limits_px": [0, 0, canvas.width, canvas.height],
+        "overshoot_px": {
+            "left": max(0, -min(box[0] for box in bounds)),
+            "top": max(0, -min(box[1] for box in bounds)),
+            "right": max(0, max(box[2] for box in bounds) - canvas.width),
+            "bottom": max(0, max(box[3] for box in bounds) - canvas.height),
+        },
+        "safe_box_position_normalized": ranges if fits else None,
+        "range_note": (
+            "Conservative inclusive x/y ranges for this size, border and rotation, "
+            "including pixel rounding and rotation sampling clearance. "
+            "Null means no safe positive-pixel placement at this size."
+        ),
+    })
+
+
 def resolve_layout(
     layout: InputLayout, photos: list[Photo], version: int
 ) -> ResolvedLayout:
@@ -82,27 +180,26 @@ def resolve_layout(
                     f"Photo {layer.photo_id} border leaves no positive photo area."
                 )
         if x + width > 1 or y + height > 1:
-            raise CollageError(f"Photo {layer.photo_id} extends beyond the canvas.")
-        pixel_width = round_half_up(width * canvas.width)
-        photo_pixel_width = pixel_width - 2 * border_width
+            raise _bounds_error(
+                f"Photo {layer.photo_id} extends beyond the canvas.",
+                layer, photo, canvas, height,
+            )
+        (
+            pixel_x, pixel_y, pixel_width, pixel_height,
+            photo_pixel_width, photo_pixel_height,
+        ) = _pixel_frame(layer, photo, canvas, height)
         if photo_pixel_width <= 0:
             raise CollageError(f"Photo {layer.photo_id} rounds to zero photo pixels.")
-        if layer.mode == "whole":
-            photo_pixel_height = round_half_up(
-                Fraction(photo_pixel_width * photo.height, photo.width)
-            )
-        else:
-            photo_pixel_height = round_half_up(height * canvas.height) - 2 * border_width
-        pixel_height = photo_pixel_height + 2 * border_width
-        pixel_x = round_half_up(x * canvas.width)
-        pixel_y = round_half_up(y * canvas.height)
         if photo_pixel_height <= 0:
             raise CollageError(f"Photo {layer.photo_id} rounds to zero photo pixels.")
         if (
             pixel_x + pixel_width > canvas.width
             or pixel_y + pixel_height > canvas.height
         ):
-            raise CollageError(f"Photo {layer.photo_id} exceeds the pixel canvas bounds.")
+            raise _bounds_error(
+                f"Photo {layer.photo_id} exceeds the pixel canvas bounds.",
+                layer, photo, canvas, height,
+            )
         max_radius = min(photo_pixel_width, photo_pixel_height) // 2
         if layer.corner_radius_px > max_radius:
             raise CollageError(
@@ -117,9 +214,10 @@ def resolve_layout(
                 layer.rotation_degrees,
             )
             if left < 0 or top < 0 or right > canvas.width or bottom > canvas.height:
-                raise CollageError(
+                raise _bounds_error(
                     f"Photo {layer.photo_id} rotated frame extends beyond the canvas. "
-                    "Explicitly move or resize its untilted box."
+                    "Explicitly move or resize its untilted box.",
+                    layer, photo, canvas, height,
                 )
             left, top, right, bottom = _rotated_bounds(
                 pixel_x, pixel_y, pixel_width, pixel_height,
@@ -131,10 +229,11 @@ def resolve_layout(
                 rotated_x < 0 or rotated_y < 0
                 or rotated_right > canvas.width or rotated_bottom > canvas.height
             ):
-                raise CollageError(
+                raise _bounds_error(
                     f"Photo {layer.photo_id} rotated pixel footprint, including its "
                     "sampling margin, exceeds the canvas bounds. "
-                    "Explicitly move or resize its untilted box."
+                    "Explicitly move or resize its untilted box.",
+                    layer, photo, canvas, height,
                 )
             rotated_box = PixelBox(
                 x=rotated_x, y=rotated_y,

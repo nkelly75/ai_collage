@@ -14,10 +14,18 @@ Centre-based tilt supports -10 to +10 degrees, with the entire rotated frame
 required to fit on the canvas. A full-canvas image layer can serve as a photo
 background. Captions are not implemented yet.
 
-The collage application runs offline without credentials or model calls.
-Natural-language design, a graphical UI, and Azure hosting are planned, not
-implemented. Separate Foundry connectivity experiments are not part of the
-collage workflow.
+The deterministic engine runs offline without credentials or model calls.
+An optional metadata-only conversational agent now has a terminal entry point,
+durable proposals, and explicit acceptance. **Checkpoint A now passes all four
+scripted live cases**, including shrinking a photo without moving its centre,
+border removal, resume/straightening, and exact acceptance. Numeric geometry
+feedback and high reasoning effort resolved the earlier failures. This is
+trial-ready under the bounded checks, not user sign-off or a reliability claim.
+The user-led checkpoint B still needs separate approval. See the
+[conversation guide](docs/cli-guide.md#conversational-proposals-optional)
+and [latest results](planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff).
+A graphical UI and Azure hosting remain future work. Separate Foundry
+experiments are not part of the application workflow.
 
 **Layout format 2** uses explicit whole/cover modes, stable `photo_id` values,
 and a back-to-front `layers` array. See the [layout field guide](docs/layout-format.md)

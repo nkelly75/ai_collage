@@ -2,8 +2,13 @@
 
 Build natural-language collage design around deterministic rendering of original
 photos, not AI image regeneration. The offline Python engine/CLI and layout
-format 2 are implemented; application LLM integration, UI, and cloud hosting
-remain future work.
+format 2 are implemented. Optional terminal LLM integration has offline-tested
+proposal mechanics. Checkpoint A now passes its four fixed live cases and exact
+acceptance. The authorized follow-up stopped at 4/6 development rounds and 17/50
+requests; the remaining allowance is halted after success. This is trial-ready
+under the scripted checks, not user sign-off. Checkpoint B, further changes/live
+evaluation, UI and cloud hosting remain unapproved. Read record 005 and obtain
+new bounded authorization before continuing.
 
 Read first:
 - [README](../README.md): overview, Quick start, and examples.

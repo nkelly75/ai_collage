@@ -1,7 +1,7 @@
 from PIL import Image, ImageDraw
 import pytest
 
-from ai_collage.geometry import resolve_layout
+from ai_collage.geometry import LayoutBoundsError, resolve_layout
 from ai_collage.models import CollageError, InputLayout
 
 from .helpers import framed_layout_data, layout_data, photo_file, write_layout
@@ -135,4 +135,62 @@ def test_rounded_pixel_bounds_are_checked_separately(store, tmp_path):
     data["layers"][0]["box"] = {"x": 0.75, "y": 0, "width": 0.25}
     # Continuous x + width is exactly 1, but rounding gives x=8 and width=3.
     with pytest.raises(CollageError, match="pixel canvas bounds"):
+        resolve_layout(InputLayout.model_validate(data), project.photos, 1)
+
+
+@pytest.mark.parametrize("rotation", [0.0, 3.0, -10.0])
+@pytest.mark.parametrize("cover", [False, True])
+def test_bounds_feedback_ranges_obey_actual_sampling(store, sources, rotation, cover):
+    project = store.create("feedback", sources)
+    data = framed_layout_data(120, 180) if cover else layout_data(120, 180)
+    layer = data["layers"][1]
+    layer["box"].update(y=0.9, width=0.235)
+    layer["border"] = {"width_px": 1, "color": "#FFFFFF"}
+    layer["rotation_degrees"] = rotation
+    with pytest.raises(LayoutBoundsError) as caught:
+        resolve_layout(InputLayout.model_validate(data), project.photos, 1)
+    details = caught.value.details
+    assert details["photo_id"] == 2
+    assert details["canvas_limits_px"] == [0, 0, 120, 180]
+    assert details["overshoot_px"]["bottom"] > 0
+    assert details["sampled_footprint_bounds_px"][3] > 180
+    ranges = details["safe_box_position_normalized"]
+    assert ranges is not None
+    for x in (ranges["x"][0], sum(ranges["x"]) / 2, ranges["x"][1]):
+        for y in (ranges["y"][0], sum(ranges["y"]) / 2, ranges["y"][1]):
+            layer["box"].update(x=x, y=y)
+            resolved = resolve_layout(InputLayout.model_validate(data), project.photos, 1)
+            assert resolved.recipe.layers[1].box.x == x
+            assert resolved.recipe.layers[1].box.y == y
+
+
+def test_bounds_feedback_reports_frame_that_cannot_fit(store, sources):
+    project = store.create("too-tall", sources)
+    data = layout_data(200, 100)
+    data["layers"][1]["box"]["width"] = 0.8
+    with pytest.raises(LayoutBoundsError) as caught:
+        resolve_layout(InputLayout.model_validate(data), project.photos, 1)
+    assert caught.value.details["safe_box_position_normalized"] is None
+    assert caught.value.details["overshoot_px"]["bottom"] > 0
+
+
+@pytest.mark.parametrize("size,x,width,rotation,message", [
+    (100, 0.0, 0.2, 3.0, "rotated frame"),
+    (100, 0.01, 0.2, 3.0, "sampling margin"),
+    (10, 0.75, 0.25, 0.0, "pixel canvas bounds"),
+])
+def test_bounds_feedback_covers_rotation_sampling_and_pixel_failures(
+    store, sources, size, x, width, rotation, message,
+):
+    project = store.create("footprint-feedback", sources)
+    data = layout_data(size, size)
+    layer = data["layers"][0]
+    layer["box"].update(x=x, width=width)
+    layer["rotation_degrees"] = rotation
+    with pytest.raises(LayoutBoundsError, match=message) as caught:
+        resolve_layout(InputLayout.model_validate(data), project.photos, 1)
+    ranges = caught.value.details["safe_box_position_normalized"]
+    assert ranges is not None
+    for edge in (0, 1):
+        layer["box"].update(x=ranges["x"][edge], y=ranges["y"][edge])
         resolve_layout(InputLayout.model_validate(data), project.photos, 1)

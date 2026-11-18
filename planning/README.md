@@ -14,10 +14,23 @@ See the [Quick start](../README.md#quick-start),
 [CLI guide](../docs/cli-guide.md), [layout field guide](../docs/layout-format.md),
 and generated [JSON Schema](../docs/layout.schema.json) for current behavior.
 
-Application LLM integration and conversational refinement are not implemented.
-The model-connected experiment outlined as Step 2 in record 002 still requires
-a separately approved brief and paid-call budget. Completing the offline
-foundation does not complete the original blueprint's broader Phase 1.
+The optional model-connected terminal and durable proposal workflow from
+[record 005](005-model-connected-layouts.md) are implemented with offline
+coverage. **Checkpoint A now passes all four fixed live cases and exact
+acceptance**, including shrinking photo 2 with zero centre drift. The separately
+authorized follow-up used 4/6 meaningful development rounds and 17/50 fresh
+requests, then halted after success. Numeric containment feedback, the bounded
+three-correction loop, explicit pixel-centre context, and high reasoning effort
+are implemented. This is trial-ready under the scripted checks, not a broader
+reliability claim or the user's final sign-off. Checkpoint B still needs separate
+authorization. See the [latest handoff](005-model-connected-layouts.md#authorized-six-round-follow-up-handoff).
+The earlier 6/6-cycle result, three-attempt allowance, excluded diagnostics, and
+all failed evaluation reports remain preserved; no old counts were refunded.
+Record 005 is now closed as a historical implementation/evaluation record,
+not an active work plan. This does not signify user acceptance, stabilized
+code, or commit readiness: staging captures progress pending further work.
+No successor plan has been created; checkpoint B remains unstarted.
+Completing the offline foundation does not complete the blueprint's broader Phase 1.
 Separate [Foundry experiments](../temp-foundry-test/README.md) are reference
 work, not application integration; running them makes paid service calls.
 
@@ -33,6 +46,7 @@ and record 003 spans several feature increments.
 | [002: Phase 1 offline foundation](002-phase-1-offline-foundation.md) | Step 1 completed; Step 2 outlined but unapproved. Preserves the original format 1 contract and guardrails. | `phase_1_implementation_plan.md` |
 | [003: Layout evolution](003-layout-evolution.md) | Implemented borders, cover framing, rounded corners, and tilt, plus format 2 reconciliation and visual-demo decisions. | `docs\layout-decisions.md` |
 | [004: Engine refactoring](004-engine-refactoring.md) | Completed format 2 brief, verification, example-equivalence evidence, reviewer outcomes, and retry accounting. | `docs\engine-refactoring-spec.md` |
+| [005: Model-connected layouts](005-model-connected-layouts.md) | Closed historical implementation/evaluation record. Checkpoint A scripted checks and exact acceptance passed: 4/6 follow-up rounds, 17/50 fresh requests. Not user sign-off or commit readiness; checkpoint B unstarted and unapproved. | New planning record. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
@@ -50,7 +64,7 @@ since that proposal are:
 | One master layout JSON with element IDs, `source_image_id`, `src`, `z_index`, and reserved `crop_pan`. | Format 2 recipes use stable `photo_id`, back-to-front `layers`, explicit whole/cover modes, and cover-only `crop`. Saved snapshots separate authored `recipe` from derived `geometry`; asset paths belong to project metadata. |
 | Independently shaped frames and pan/zoom waited for a future graphical UI. | Cover frames and pan/zoom already work through JSON recipes. Graphical controls remain future work; outside borders and rounded corners are also implemented. |
 | Image-background fitting was unresolved, and the draft used `expand=True` for rotation. | An ordinary lowest photo layer supplies an image background. Tilt uses centre-preserving rotation and validated sampled footprints; angles are -10 to +10 degrees, not the draft schema's -15 to +15. |
-| Phase 1 included model-generated layouts and durable conversations. | Only its offline foundation and subsequent engine increments are complete. No application model calls or conversation persistence have been added. |
+| Phase 1 included model-generated layouts and durable conversations. | Offline foundation, durable conversations, and fixed checkpoint A layout/refinement/acceptance cases now pass. The user-led trial and subjective sign-off remain outstanding. |
 | Captions, shadows, UI, and authenticated cloud deployment were envisioned. | These remain unimplemented; historical model names, hosting details, and cost estimates are not verified current selections or prices. |
 
 Format 1 saved projects remain untouched archives, not loadable or migrated by
@@ -63,8 +77,8 @@ The product goal remains natural-language layout creation and refinement
 without regenerating source photos. One metadata-only Microsoft Agent Framework
 for Python agent calling a Microsoft Foundry model is the intended experiment;
 ordinary code retains validation, geometry, rendering, and project persistence.
-Final model selection and supported structured-output behavior need confirmation
-for that experiment.
+Checkpoint A uses the existing `gpt-5.4-mini` deployment; native schema transport
+is verified, but model-generated geometry still needs a separately bounded follow-up.
 
 React + TypeScript + Vite remains the intended UI, with backend-rendered
 previews. Azure Functions and private Blob Storage remain the target deployment,

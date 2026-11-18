@@ -38,8 +38,15 @@ def _invalid_constant(value: str) -> None:
 def read_json(path: Path) -> object:
     with path.open("rb") as stream:
         raw = stream.read(MAX_JSON_BYTES + 1)
+    try:
+        return parse_json(raw)
+    except CollageError as exc:
+        raise CollageError(f"{path}: {exc}") from exc
+
+
+def parse_json(raw: bytes) -> object:
     if len(raw) > MAX_JSON_BYTES:
-        raise CollageError(f"{path}: JSON exceeds the 1 MiB document limit.")
+        raise CollageError("JSON exceeds the 1 MiB document limit.")
     try:
         return json.loads(
             raw.decode("utf-8-sig"),
@@ -47,7 +54,7 @@ def read_json(path: Path) -> object:
             parse_constant=_invalid_constant,
         )
     except (ValueError, UnicodeError, RecursionError) as exc:
-        raise CollageError(f"{path}: invalid JSON: {exc}") from exc
+        raise CollageError(f"invalid JSON: {exc}") from exc
 
 
 def _write_json(path: Path, value: Project | ResolvedLayout) -> None:
@@ -171,9 +178,20 @@ class ProjectStore:
 
     def apply_layout(self, project_id: str, layout_path: Path) -> tuple[ResolvedLayout, Path]:
         project = self.load(project_id)
+        layout = InputLayout.model_validate(read_json(layout_path))
+        return self.accept_recipe(
+            project_id, layout, expected_version=project.current_version
+        )
+
+    def accept_recipe(
+        self, project_id: str, layout: InputLayout, *,
+        expected_version: int | None, preview: Path | None = None,
+    ) -> tuple[ResolvedLayout, Path]:
+        project = self.load(project_id)
+        if project.current_version != expected_version:
+            raise CollageError("Accepted version changed; inspect the project before accepting.")
         if project.current_version is not None:
             self.load_layout(project, project.current_version)
-        layout = InputLayout.model_validate(read_json(layout_path))
         version = (project.current_version or 0) + 1
         resolved = resolve_layout(layout, project.photos, version)
         paths = self.photo_paths(project)
@@ -189,7 +207,10 @@ class ProjectStore:
         with tempfile.TemporaryDirectory(prefix=".apply-", dir=directory) as temp:
             staging = Path(temp)
             try:
-                render_layout(resolved, project.photos, paths, staging / "render.png")
+                if preview is None:
+                    render_layout(resolved, project.photos, paths, staging / "render.png")
+                else:
+                    shutil.copyfile(preview, staging / "render.png")
                 _write_json(staging / "layout.json", resolved)
                 _write_json(
                     staging / "project.json",
