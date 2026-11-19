@@ -11,14 +11,14 @@ from ai_collage.replay import replay
 from ai_collage.models import CollageError
 
 from .helpers import REPO, layout_data, photo_file
-from .test_agent import FakeModel, agent_project, asyncio_wakeup_pair, reply
+from .test_agent import FakeModel, agent_project, asyncio_wakeup_pair, intent, reply, turns
 from .test_replay import execute, scenario
 
 
 @pytest.fixture
 def saved_replay(store, scenario):
     path, _ = scenario
-    execute(store, path, FakeModel(reply(), reply()), remaining=True)
+    execute(store, path, FakeModel(*turns(reply(), reply())), remaining=True)
     return store.project_dir("demo")
 
 
@@ -62,7 +62,7 @@ def dark_replay(store, tmp_path, sources):
             layer["rotation_degrees"] = 0
         asyncio.run(replay(
             store, "dark", path, remaining=True,
-            client=FakeModel(*(reply(data) for data in (initial, resized, borderless, straight))),
+            client=FakeModel(*turns(*(reply(data) for data in (initial, resized, borderless, straight)))),
         ))
         return store.project_dir("dark")
     return create
@@ -227,7 +227,7 @@ def test_incomplete_replays_do_not_pass(store, scenario, outcome):
     path, _ = scenario
     responses = {
         "partial": reply(),
-        "question": '{"kind":"question","question":"Which photo?"}',
+        "question": intent("question", question="Which photo?"),
         "failed": CollageError("Service stopped"),
         "pending": RuntimeError("interrupted"),
     }
@@ -235,7 +235,9 @@ def test_incomplete_replays_do_not_pass(store, scenario, outcome):
         with pytest.raises(RuntimeError, match="interrupted"):
             execute(store, path, FakeModel(responses[outcome]))
     else:
-        execute(store, path, FakeModel(responses[outcome]))
+        execute(store, path, FakeModel(*(
+            turns(responses[outcome]) if outcome == "partial" else [responses[outcome]]
+        )))
     report = assess(store, "demo")
     assert not report.complete and not report.passed
     assert "incomplete" in " ".join(report.errors)
@@ -244,7 +246,7 @@ def test_incomplete_replays_do_not_pass(store, scenario, outcome):
 
 def test_retry_history_is_preserved_in_an_eventually_passing_assessment(store, scenario):
     path, _ = scenario
-    model = FakeModel(CollageError("Service stopped"), reply(), reply())
+    model = FakeModel(CollageError("Service stopped"), *turns(reply(), reply()))
     execute(store, path, model)
     execute(store, path, model, resume=True, retry=True, remaining=True)
     report = assess(store, "demo")
@@ -260,3 +262,30 @@ def test_cli_writes_a_failed_assessment_and_returns_nonzero(saved_replay, store,
     ]) == 1
     report = json.loads(capsys.readouterr().out)
     assert not report["passed"] and Path(report["report_path"]).is_file()
+
+
+@pytest.mark.parametrize("artifact", ["stage", "request-purpose", "source-differences"])
+def test_current_stage_and_source_evidence_must_be_truthful(saved_replay, store, artifact):
+    root = saved_replay / "replay"
+    if artifact == "stage":
+        path = root / "steps" / "0001" / "context-0001.json"
+        data = read_json(path)
+        data["stage"] = "generation"
+        path.write_text(json.dumps(data), encoding="utf-8")
+    elif artifact == "request-purpose":
+        path = saved_replay / "conversation" / "requests" / "attempt-0002.json"
+        data = read_json(path)
+        data["purpose"] = "demo: interpretation"
+        path.write_text(json.dumps(data), encoding="utf-8")
+    else:
+        path = root / "report.json"
+        data = read_json(path)
+        data["executions"][1]["changes"] = [
+            {"field": "recipe.canvas.background", "before": "#FFFFFF", "after": "#000000"},
+        ]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        (root / "steps" / "0002" / "result.json").write_text(
+            json.dumps(data["executions"][1]), encoding="utf-8",
+        )
+    report = assess(store, "demo")
+    assert not report.passed and any(case.errors for case in report.cases)

@@ -117,9 +117,13 @@ def run_chat(
                     from .agent_provider import FoundryModel
 
                     result = await conversation.request(text, FoundryModel(), requests)
-                    print(result)
-                    if result.startswith("P") and conversation.state.baseline == result:
-                        path = conversation.preview_path(result)
+                    if result.kind == "question":
+                        print(result.question)
+                    else:
+                        assert result.proposal_id is not None
+                        label = "Generated" if result.kind == "proposal" else "Restored"
+                        print(f"{label} {result.proposal_id}")
+                        path = conversation.preview_path(result.proposal_id)
                         print(path)
                         print(json.dumps(requests.summary()))
                         if not no_open:

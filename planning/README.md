@@ -7,61 +7,21 @@ plans evolved, not competing current specifications.
 
 ## Current status
 
-The offline foundation, subsequent layout capabilities, and engine refactoring
-are implemented. The deterministic engine now uses **format 3**, with normalized
-`center_x`/`center_y` anchors for resizing and rotation. The local Python CLI imports photos, validates and
-renders editable recipes, and persists accepted versions for later rendering.
-See the [Quick start](../README.md#quick-start),
-[CLI guide](../docs/cli-guide.md), [layout field guide](../docs/layout-format.md),
-and generated [JSON Schema](../docs/layout.schema.json) for current behavior.
-Formats 1 and 2 are unsupported untouched archives, not migrated or loaded.
-The agent prompt and context now use authored centres directly, with offline
-coverage. A single format 3 four-message replay completed without corrections
-or acceptance. Interactive landscape exploration and a JSON-driven replay
-runner followed; these preceded 006 and are not a reliability assessment.
-The runner records evidence without evaluating or accepting results. A separate
-offline assessment command checks saved evidence and the named dark portrait
-mechanical profile; the duplicate fixed live evaluator has been removed.
-Acceptance fidelity stays in offline tests, and qualitative review stays with
-the user or Copilot. Live requests still need explicit bounded authorization.
-Replay and chat now record request usage per project, without a shared
-allowance or provisioning step. Four calls per message, token/time limits and
-explicit retry/continuation guard against runaway usage; chat requires `--live`.
-Historical experiment ledgers remain untouched records, not active prerequisites.
-The checkpoint A results below describe
-the preceding format 2 implementation, not a format 3 agent evaluation.
+The deterministic local engine uses **layout format 3**. The optional
+metadata-only agent supports natural-language proposals and iteration, with
+saved replay evidence and offline assessment. See the
+[CLI guide](../docs/cli-guide.md) and [layout field guide](../docs/layout-format.md)
+for current behavior and contracts.
 
-The optional model-connected terminal and durable proposal workflow from
-[record 005](005-model-connected-layouts.md) are implemented with offline
-coverage. **Checkpoint A now passes all four fixed live cases and exact
-acceptance**, including shrinking photo 2 with zero centre drift. The separately
-authorized follow-up used 4/6 meaningful development rounds and 17/50 fresh
-requests, then halted after success. Numeric containment feedback, the bounded
-three-correction loop, explicit pixel-centre context, and high reasoning effort
-are implemented. This is trial-ready under the scripted checks, not a broader
-reliability claim or the user's final sign-off. Checkpoint B still needs separate
-authorization. See the [latest handoff](005-model-connected-layouts.md#authorized-six-round-follow-up-handoff).
-The earlier 6/6-cycle result, three-attempt allowance, excluded diagnostics, and
-all failed evaluation reports remain preserved; no old counts were refunded.
-Record 005 is now closed as a historical implementation/evaluation record,
-not an active work plan. Committed progress does not signify user acceptance
-or stabilized code.
-[006: Simplification and repeatability](006-simplification-and-repeatability.md)
-started with an optional 200-call outer guard, then stopped on a fresh landscape
-baseline's incorrect position swap. It used 8 calls and no development recoveries;
-no prompt simplification or frozen assessment followed in that first attempt.
-The revised pass is now complete: targeted swap fix, 8.84% shorter assembled
-instructions, two development replay pairs and four frozen assessment replays.
-All 32 successful messages needed no validation corrections; one service timeout
-was preserved and explicitly retried after user authorization. It used 33/200
-calls and no development recoveries. Requested edits passed, but frozen portrait
-composition/overlap varied. The frozen candidate and old counter/evidence remain
-unchanged. This is a closed bounded experiment, not design-quality sign-off.
-See the separate [results record](006_results.md). Checkpoint B remains excluded
-and unstarted.
-Completing the offline foundation does not complete the blueprint's broader Phase 1.
-Separate [Foundry experiments](../temp-foundry-test/README.md) are reference
-work, not application integration; running them makes paid service calls.
+[008](008-project-lifecycle-and-interactive-iteration.md) is complete and closed;
+see [008 results](008_results.md) for evidence and limitations. Records 005,
+006, and the 008 smoke-check allowance are closed, not permission for more calls.
+Human trials remain unstarted and separately gated; scripted success is not
+user sign-off. [007](007-image-understanding-and-interactive-design.md) remains
+exploratory; vision, UI, and cloud hosting are not authorized by these records.
+[009](009-user-led-natural-language-trial.md) records the next user-led trial
+and its simple usage approach; it has not started.
+The blueprint's broader Phase 1 is not complete.
 
 ## Planning records
 
@@ -75,8 +35,11 @@ and record 003 spans several feature increments.
 | [002: Phase 1 offline foundation](002-phase-1-offline-foundation.md) | Step 1 completed; Step 2 outlined but unapproved. Preserves the original format 1 contract and guardrails. | `phase_1_implementation_plan.md` |
 | [003: Layout evolution](003-layout-evolution.md) | Implemented borders, cover framing, rounded corners, and tilt, plus format 2 reconciliation and visual-demo decisions. | `docs\layout-decisions.md` |
 | [004: Engine refactoring](004-engine-refactoring.md) | Completed format 2 brief, verification, example-equivalence evidence, reviewer outcomes, and retry accounting. | `docs\engine-refactoring-spec.md` |
-| [005: Model-connected layouts](005-model-connected-layouts.md) | Closed historical implementation/evaluation record. Checkpoint A scripted checks and exact acceptance passed: 4/6 follow-up rounds, 17/50 fresh requests. Not user sign-off or commit readiness; checkpoint B unstarted and unapproved. | New planning record. |
-| [006: Simplification and repeatability](006-simplification-and-repeatability.md) | Completed revised pass: swap fix, 8.84% shorter instructions, eight completed replays, 33/200 calls including one explicitly retried timeout, 0/2 recoveries. Targeted edits pass; visual overlap varies. Original failed baseline preserved. See [006_results.md](006_results.md). | New planning record. |
+| [005: Model-connected layouts](005-model-connected-layouts.md) | Closed implementation/evaluation record. See the [checkpoint A handoff](005-model-connected-layouts.md#authorized-six-round-follow-up-handoff); checkpoint B remains unstarted and unapproved. | New planning record. |
+| [006: Simplification and repeatability](006-simplification-and-repeatability.md) | Closed revised pass: swap fix and prompt simplification. See [006 results](006_results.md) for replay evidence and limitations. | New planning record. |
+| [007: Vision for photos and collage feedback](007-image-understanding-and-interactive-design.md) | Exploratory vision ideas: preview understanding plus human feedback, photo descriptions and subjects; colour/contrast analysis lower priority. No implementation authorized. | New discussion record. |
+| [008: Project lifecycle and interactive iteration](008-project-lifecycle-and-interactive-iteration.md) | Complete and closed. See [008 results](008_results.md) for implementation and verification evidence. | New planning record. |
+| [009: User-led natural-language trial](009-user-led-natural-language-trial.md) | Not started. User drives continuation; no fixed trial-wide call allowance. | New planning record. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

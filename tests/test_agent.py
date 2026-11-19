@@ -9,9 +9,10 @@ from pydantic import ValidationError
 
 from ai_collage.agent_requests import RequestLog
 from ai_collage.agent_files import child, digest, save
-from ai_collage.agent_models import Controls, Exchange, Preferences, REPLY
+from ai_collage.agent_models import Controls, Exchange, Preferences, INTENT
 from ai_collage.conversation import Conversation
 from ai_collage.models import CollageError
+from ai_collage.models import InputLayout
 from ai_collage.projects import read_json
 
 from .helpers import framed_layout_data, layout_data
@@ -61,12 +62,27 @@ class FakeModel:
 
 
 def reply(data=None):
-    return json.dumps({"kind": "proposal", "recipe": data or layout_data()})
+    return json.dumps(data or layout_data())
 
 
-def ask(conversation, requests, *responses, prompt="Make a collage"):
-    model = FakeModel(*responses)
-    return asyncio.run(conversation.request(prompt, model, requests)), model
+def intent(action, **fields):
+    return json.dumps({"action": action, **fields})
+
+
+def turns(*responses):
+    return [
+        item for index, response in enumerate(responses)
+        for item in (intent("fresh") if index == 0 else intent("edit", source="current"), response)
+    ]
+
+
+def ask(conversation, requests, *responses, prompt="Make a collage", action=None):
+    action = action or (
+        intent("edit", source="current") if conversation.baseline() else intent("fresh")
+    )
+    model = FakeModel(action, *responses)
+    result = asyncio.run(conversation.request(prompt, model, requests))
+    return result.proposal_id if result.kind != "question" else result.question, model
 
 
 @pytest.fixture
@@ -95,19 +111,19 @@ def test_proposals_resume_accept_older_and_idempotence(agent_project):
     assert resumed.accept(p1) == 3
     assert store.version_paths("demo", 1)[1].read_bytes() == png
     assert store.version_paths("demo", 3)[1].read_bytes() == png
-    assert len(requests.attempts()) == 2
+    assert len(requests.attempts()) == 4
 
 
 def test_question_and_answer_use_real_history(agent_project):
     conversation, requests = agent_project
-    question = '{"kind":"question","question":"Which photo number?"}'
-    result, _ = ask(conversation, requests, question, prompt="Make breakfast smaller")
+    question = intent("question", question="Which photo number?")
+    result, _ = ask(conversation, requests, action=question, prompt="Make breakfast smaller")
     assert result == "Which photo number?"
     assert conversation.state.baseline is None
     _, model = ask(Conversation(conversation.store, "demo"), requests, reply(), prompt="Photo 2")
     assert model.contexts[0]["history"][0]["prompt"] == "Make breakfast smaller"
     assert model.contexts[0]["history"][0]["response"] == question
-    assert len(requests.attempts()) == 2
+    assert len(requests.attempts()) == 3
 
 
 def test_resize_context_keeps_authored_center_instead_of_rounded_pixel_center(agent_project):
@@ -120,7 +136,7 @@ def test_resize_context_keeps_authored_center_instead_of_rounded_pixel_center(ag
     smaller = copy.deepcopy(data)
     smaller["layers"][0]["box"]["width"] = 0.17
     p2, model = ask(resumed, requests, reply(smaller), prompt="Make photo 1 smaller in the same spot")
-    context = model.contexts[0]
+    context = model.contexts[1]
     assert context["editing_baseline"] == baseline.recipe.model_dump(mode="json")
     assert context["editing_baseline"]["schema_version"] == 3
     frame = context["baseline_geometry"][0]
@@ -146,22 +162,22 @@ def test_invalid_response_one_correction(agent_project, bad):
     conversation, requests = agent_project
     result, model = ask(conversation, requests, bad, reply())
     assert result == "P001"
-    assert len(model.contexts) == 2
-    assert model.contexts[1]["validation_feedback"]
-    assert len(requests.attempts()) == 2
+    assert len(model.contexts) == 3
+    assert model.contexts[2]["validation_feedback"]
+    assert len(requests.attempts()) == 3
 
 
 def test_four_invalid_responses_preserve_good_baseline_and_block_fifth(agent_project):
     conversation, requests = agent_project
     p1, _ = ask(conversation, requests, reply())
-    model = FakeModel("{}", "{}", "{}", "{}", reply())
+    model = FakeModel(intent("edit", source="current"), "{}", "{}", "{}", reply())
     with pytest.raises(CollageError, match="correction failed"):
         asyncio.run(conversation.request("Make it nicer", model, requests))
     assert conversation.state.baseline == p1
-    assert len(requests.attempts()) == 5
+    assert len(requests.attempts()) == 6
     assert len(model.contexts) == 4
     assert all(context["editing_baseline"] == conversation.proposal(p1).recipe.model_dump(mode="json")
-               for context in model.contexts)
+               for context in model.contexts[1:])
 
 
 def test_fourth_attempt_succeeds_with_latest_candidate_feedback(agent_project):
@@ -170,11 +186,11 @@ def test_fourth_attempt_succeeds_with_latest_candidate_feedback(agent_project):
     bad["layers"][1]["box"]["center_y"] = 0.95
     newer = copy.deepcopy(bad)
     newer["layers"][1]["box"]["center_y"] = 0.9
-    result, model = ask(conversation, requests, "{}", reply(bad), reply(newer), reply())
+    result, model = ask(conversation, requests, reply(bad), reply(newer), reply())
     assert result == "P001"
     assert len(requests.attempts()) == len(model.contexts) == 4
     assert [event.outcome for event in conversation.history()] == [
-        "invalid", "invalid", "invalid", "proposal",
+        "intent", "invalid", "invalid", "proposal",
     ]
     for context, candidate in zip(model.contexts[2:], (bad, newer), strict=True):
         feedback = json.loads(context["validation_feedback"])
@@ -208,8 +224,9 @@ def test_service_error_no_correction_and_recorded_prompt(agent_project):
 
 def test_conversation_records_requests_without_explicit_accounting_setup(agent_project):
     conversation, requests = agent_project
-    result = asyncio.run(conversation.request("Make a collage", FakeModel(reply())))
-    assert result == "P001" and len(requests.attempts()) == 1
+    result = asyncio.run(conversation.request("Make a collage", FakeModel(*turns(reply()))))
+    assert result.kind == "proposal" and result.proposal_id == "P001"
+    assert len(requests.attempts()) == 2
     assert conversation.history()[-1].run_id is None
 
 
@@ -241,7 +258,7 @@ def test_defaults_snapshot_and_ratings_stay_local(agent_project):
     assert not any(event["kind"] == "rating" for event in context["history"])
     assert "original_filename" not in json.dumps(context)
     assert "uploads" not in json.dumps(context)
-    assert len(requests.attempts()) == 1
+    assert len(requests.attempts()) == 2
     with pytest.raises(CollageError, match="captured"):
         Conversation(conversation.store, "demo", preferences=conversation.state_path)
 
@@ -283,12 +300,12 @@ def test_proposal_render_failure_does_not_replace_baseline(agent_project, monkey
     with pytest.raises(OSError, match="simulated"):
         ask(conversation, requests, reply())
     assert Conversation(conversation.store, "demo").state.baseline == p1
-    assert len(requests.attempts()) == 2
+    assert len(requests.attempts()) == 4
     failed = Conversation(conversation.store, "demo").history()[-1]
     assert failed.outcome == "error"
     assert failed.prompt == "Make a collage"
     assert failed.response == reply()
-    assert failed.attempt == 2
+    assert failed.attempt == 4
 
 
 def test_acceptance_reconciles_exact_commit_after_index_failure(agent_project, monkeypatch):
@@ -377,7 +394,7 @@ def test_chat_live_opt_in_needs_no_allowance(agent_project, monkeypatch, capsys)
     conversation, requests = agent_project
     from ai_collage.__main__ import main
 
-    model = FakeModel(reply())
+    model = FakeModel(*turns(reply()))
     monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: model)
     lines = iter(["Make a collage", "/status", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
@@ -387,7 +404,7 @@ def test_chat_live_opt_in_needs_no_allowance(agent_project, monkeypatch, capsys)
     ]) == 0
     output = capsys.readouterr()
     assert not output.err and '"requests"' in output.out
-    assert len(model.contexts) == len(requests.attempts()) == 1
+    assert len(model.contexts) == len(requests.attempts()) == 2
     assert not (conversation.store.owner_dir / "agent-runs").exists()
     assert conversation.store.load("demo").current_version is None
 
@@ -440,7 +457,8 @@ def test_prompt_sources_reload_independently_of_cwd_and_fail_if_missing(tmp_path
 
 
 @pytest.mark.parametrize("status", ["completed", "incomplete", "429", "401", "timeout", "oversize"])
-def test_real_framework_mocked_http_gate(store, status):
+@pytest.mark.parametrize("stage", ["interpretation", "generation"])
+def test_real_framework_mocked_http_gate(store, status, stage):
     pytest.importorskip("agent_framework")
     import httpx
     from openai import AsyncOpenAI, APIError
@@ -449,7 +467,7 @@ def test_real_framework_mocked_http_gate(store, status):
 
     requests = RequestLog(store, "mocked")
     captured = []
-    text = reply()
+    text = reply() if stage == "generation" else intent("fresh")
 
     async def handler(request):
         captured.append(json.loads(request.content))
@@ -461,18 +479,22 @@ def test_real_framework_mocked_http_gate(store, status):
             for part in message.get("content", [])
             if isinstance(part, dict)
         )
-        assert instructions() in instruction_texts
+        assert instructions(stage) in instruction_texts
         schema = captured[-1]["text"]["format"]["schema"]
         assert schema["type"] == "object" and schema["additionalProperties"] is False
         assert not {"oneOf", "anyOf", "allOf", "enum", "const", "not"}.intersection(schema)
-        assert set(schema["properties"]) == {"kind", "recipe", "question"}
+        assert set(schema["properties"]) == (
+            {"schema_version", "canvas", "layers"} if stage == "generation"
+            else {"action", "source", "proposal_id", "question"}
+        )
         assert "oneOf" not in json.dumps(schema) and "discriminator" not in json.dumps(schema)
         definitions = schema["$defs"]
-        version = definitions["InputLayout"]["properties"]["schema_version"]
-        assert version["minimum"] == version["maximum"] == 3
-        assert set(definitions["WholeBox"]["required"]) == {
-            "center_x", "center_y", "width",
-        }
+        if stage == "generation":
+            version = schema["properties"]["schema_version"]
+            assert version["minimum"] == version["maximum"] == 3
+            assert set(definitions["WholeBox"]["required"]) == {
+                "center_x", "center_y", "width",
+            }
         if status in {"429", "401"}:
             return httpx.Response(int(status), json={"error": {"code": "offline", "message": "offline"}})
         if status == "timeout":
@@ -488,11 +510,17 @@ def test_real_framework_mocked_http_gate(store, status):
             base_url=ENDPOINT, api_key="offline-not-a-real-credential", max_retries=0,
             http_client=httpx.AsyncClient(transport=gate),
         ) as sdk:
-            return await run_agent({"user_request": "x" * (60_000 if status == "oversize" else 1)}, sdk, requests)
+            return await run_agent({
+                "stage": stage,
+                "user_request": "x" * (60_000 if status == "oversize" else 1),
+            }, sdk, requests)
 
     if status == "completed":
         assert asyncio.run(execute()) == text
-        assert REPLY.validate_python(json.loads(text)).recipe.schema_version == 3
+        if stage == "generation":
+            assert InputLayout.model_validate(json.loads(text)).schema_version == 3
+        else:
+            assert INTENT.validate_python(json.loads(text)).action == "fresh"
     else:
         with pytest.raises((CollageError, APIError, AgentFrameworkException)):
             asyncio.run(execute())
@@ -547,9 +575,9 @@ def test_gate_rejects_an_extra_dispatch(store):
 
 def test_response_union_strictness_and_size():
     with pytest.raises(ValidationError):
-        REPLY.validate_python({"kind": "question", "question": " "})
+        INTENT.validate_python({"action": "question", "question": " "})
     with pytest.raises(ValidationError):
-        REPLY.validate_python({"kind": "question", "question": "a" * 1001})
+        INTENT.validate_python({"action": "question", "question": "a" * 1001})
 
 
 def test_optional_outer_cap_survives_new_projects_and_context_restarts(store, tmp_path):
@@ -605,4 +633,246 @@ def test_proposal_response_rejects_old_recipe_versions(old_version):
     data = layout_data()
     data["schema_version"] = old_version
     with pytest.raises(ValidationError, match="Unsupported schema_version"):
-        REPLY.validate_python({"kind": "proposal", "recipe": data})
+        InputLayout.model_validate(data)
+
+
+def test_fresh_retry_and_old_source_edit_keep_durable_provenance(agent_project):
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply(), prompt="Use a dark background")
+    changed = layout_data()
+    changed["layers"][1]["box"]["width"] = 0.18
+    p2, _ = ask(conversation, requests, reply(changed), prompt="Make photo 2 smaller")
+    resumed = Conversation(conversation.store, "demo")
+    p3, model = ask(
+        resumed, requests, reply(changed), prompt="I hate that, try again",
+        action=intent("retry", proposal_id=p2),
+    )
+    generation = model.contexts[1]
+    assert generation["editing_baseline"] == resumed.proposal(p1).recipe.model_dump(mode="json")
+    assert generation["reference_to_avoid"] == resumed.proposal(p2).recipe.model_dump(mode="json")
+    assert generation["original_task"] == "Make photo 2 smaller"
+    p4, model = ask(
+        resumed, requests, reply(changed), prompt="Try again, smaller still",
+        action=intent("retry", proposal_id=p3),
+    )
+    assert model.contexts[1]["original_task"] == "Make photo 2 smaller"
+    assert resumed.proposal(p4).parent == p1
+    assert resumed.proposal(p4).intent.task_turn == resumed.proposal(p2).intent.task_turn
+    p5, model = ask(resumed, requests, reply(), action=intent("fresh"), prompt="Start over")
+    assert model.contexts[1]["editing_baseline"] is None
+    assert model.contexts[1]["baseline_geometry"] is None
+    assert model.contexts[1]["reference_to_avoid"] == resumed.proposal(p4).recipe.model_dump(mode="json")
+    assert resumed.proposal(p5).parent is None
+    p6, model = ask(
+        resumed, requests, reply(changed),
+        action=intent("edit", source=p1), prompt="Go back to the first and shrink photo 2",
+    )
+    assert resumed.proposal(p6).parent == p1
+    assert model.contexts[1]["editing_baseline"] == resumed.proposal(p1).recipe.model_dump(mode="json")
+    assert resumed.store.load("demo").current_version is None
+
+
+def test_composition_retry_and_exact_selection_are_not_acceptance(agent_project, monkeypatch):
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply(), prompt="Make an airy collage")
+    p2, model = ask(
+        conversation, requests, reply(), action=intent("retry", proposal_id=p1), prompt="Try again",
+    )
+    assert model.contexts[1]["editing_baseline"] is None
+    assert model.contexts[1]["original_task"] == "Make an airy collage"
+    assert model.contexts[1]["reference_to_avoid"] is not None
+    before = conversation.preview_path(p1).read_bytes()
+
+    def forbidden(*args):
+        raise AssertionError("Selection must not render or accept")
+
+    monkeypatch.setattr("ai_collage.conversation.render_layout", forbidden)
+    monkeypatch.setattr(conversation.store, "accept_recipe", forbidden)
+    client = FakeModel(intent("select", proposal_id=p1))
+    result = asyncio.run(conversation.request("Go back to the first one", client, requests))
+    assert result.kind == "selection" and result.proposal_id == p1
+    assert len(client.contexts) == 1
+    assert conversation.preview_path(p1).read_bytes() == before
+    resumed = Conversation(conversation.store, "demo")
+    assert resumed.state.baseline == p1
+    assert resumed.state.accepted_proposal is None
+    assert resumed.proposal(p2).parent is None
+
+
+def test_failed_compound_edit_keeps_current_baseline_and_no_generation_questions(agent_project):
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply())
+    p2, _ = ask(conversation, requests, reply())
+    client = FakeModel(
+        intent("edit", source=p1),
+        intent("question", question="Can I change the canvas?"),
+        intent("select", proposal_id=p1),
+        json.dumps({"kind": "proposal", "recipe": layout_data()}),
+        reply(),
+    )
+    with pytest.raises(CollageError, match="correction failed"):
+        asyncio.run(conversation.request("Go back to first and enlarge photo 2", client, requests))
+    assert Conversation(conversation.store, "demo").state.baseline == p2
+    assert [context["stage"] for context in client.contexts] == [
+        "interpretation", "generation", "generation", "generation",
+    ]
+    assert all(
+        context["resolved_intent"]["source"]["proposal_id"] == p1 for context in client.contexts[1:]
+    )
+    assert conversation.history()[-1].outcome == "invalid"
+
+
+def test_invalid_intent_gets_only_two_attempts_and_unknown_id_never_selects(agent_project):
+    conversation, requests = agent_project
+    p1, _ = ask(conversation, requests, reply())
+    client = FakeModel(intent("select", proposal_id="P999"), "{}", intent("fresh"), reply())
+    with pytest.raises(CollageError, match="correction failed"):
+        asyncio.run(conversation.request("Go back to it", client, requests))
+    assert len(client.contexts) == 2 and conversation.state.baseline == p1
+    assert all(context["stage"] == "interpretation" for context in client.contexts)
+
+
+def test_two_interpretations_leave_only_two_generation_calls(agent_project):
+    conversation, requests = agent_project
+    client = FakeModel("{}", intent("fresh"), "{}", reply(), reply())
+    result = asyncio.run(conversation.request("Make a collage", client, requests))
+    assert result.kind == "proposal" and len(requests.attempts()) == 4
+    assert [context["stage"] for context in client.contexts] == [
+        "interpretation", "interpretation", "generation", "generation",
+    ]
+
+
+def test_clarification_task_survives_interpretation_correction_and_restart(agent_project):
+    conversation, requests = agent_project
+    ask(conversation, requests, action=intent("question", question="Which photo?"),
+        prompt="Make one photo stand out")
+    client = FakeModel("{}", intent("fresh"), reply())
+    resumed = Conversation(conversation.store, "demo")
+    result = asyncio.run(resumed.request("Photo 2", client, requests))
+    assert result.proposal_id is not None
+    proposal = resumed.proposal(result.proposal_id)
+    assert proposal.intent.task_request == "Make one photo stand out"
+    assert proposal.intent.task_turn == 1
+    assert client.contexts[-1]["user_request"] == "Photo 2"
+    assert client.contexts[-1]["history"][0]["prompt"] == "Make one photo stand out"
+
+
+def test_initial_accepted_layout_is_a_valid_source(agent_project, tmp_path):
+    conversation, _ = agent_project
+    from .helpers import write_layout
+
+    conversation.store.create("accepted", [
+        *conversation.store.photo_paths(conversation.store.load("demo")).values(),
+    ])
+    conversation.store.apply_layout("accepted", write_layout(tmp_path))
+    resumed = Conversation(conversation.store, "accepted", canvas=(100, 100))
+    requests = RequestLog(conversation.store, "accepted")
+    proposal_id, model = ask(resumed, requests, reply())
+    assert model.contexts[-1]["resolved_intent"]["source"]["accepted_version"] == 1
+    assert resumed.proposal(proposal_id).intent.source.accepted_version == 1
+    assert resumed.store.load("accepted").current_version == 1
+
+
+def test_fresh_layout_keeps_initial_accepted_recipe_as_reference(agent_project, tmp_path):
+    conversation, _ = agent_project
+    from .helpers import write_layout
+
+    conversation.store.create(
+        "accepted", list(conversation.store.photo_paths(conversation.store.load("demo")).values()),
+    )
+    conversation.store.apply_layout("accepted", write_layout(tmp_path))
+    resumed = Conversation(conversation.store, "accepted", canvas=(100, 100))
+    requests = RequestLog(conversation.store, "accepted")
+    proposal_id, model = ask(resumed, requests, reply(), action=intent("fresh"))
+    assert model.contexts[-1]["editing_baseline"] is None
+    assert model.contexts[-1]["reference_to_avoid"] is not None
+    assert resumed.proposal(proposal_id).intent.reference.accepted_version == 1
+
+
+def test_incompatible_source_requires_clarification_without_changing_controls(agent_project):
+    conversation, requests = agent_project
+    conversation.controls(Controls(width=100, height=100, cropping=True))
+    proposal_id, _ = ask(conversation, requests, reply(framed_layout_data()))
+    conversation.controls(Controls(width=100, height=100, cropping=False))
+    client = FakeModel(
+        intent("select", proposal_id=proposal_id),
+        intent("question", question="That proposal uses cropping; change the local control first?"),
+    )
+    result = asyncio.run(conversation.request("Go back to that one", client, requests))
+    assert result.kind == "question"
+    assert conversation.state.controls.cropping is False
+    assert conversation.state.accepted_proposal is None
+    assert len(client.contexts) == 2
+
+
+def test_generation_service_failure_never_reinterprets(agent_project):
+    conversation, requests = agent_project
+    client = FakeModel(intent("fresh"), CollageError("service stopped"), reply())
+    with pytest.raises(CollageError, match="service stopped"):
+        asyncio.run(conversation.request("Make a collage", client, requests))
+    assert len(client.contexts) == 2
+    assert conversation.state.baseline is None
+    assert conversation.history()[-1].stage == "generation"
+    assert conversation.history()[-1].intent.action == "fresh"
+
+    class PreflightFailure(FakeModel):
+        async def complete(self, context, requests, purpose):
+            if context["stage"] == "generation":
+                raise CollageError("Authentication unavailable before dispatch")
+            return await super().complete(context, requests, purpose)
+
+    with pytest.raises(CollageError, match="before dispatch"):
+        asyncio.run(conversation.request("Try another composition", PreflightFailure(intent("fresh")), requests))
+    assert len(requests.attempts()) == 3
+    assert conversation.history()[-1].attempt is None
+
+
+def test_concurrent_state_change_during_inference_is_not_overwritten(agent_project):
+    conversation, requests = agent_project
+
+    class ConcurrentModel(FakeModel):
+        async def complete(self, context, requests, purpose):
+            raw = await super().complete(context, requests, purpose)
+            other = Conversation(conversation.store, "demo")
+            other.controls(Controls(width=120, height=100))
+            return raw
+
+    with pytest.raises(CollageError, match="Conversation changed"):
+        asyncio.run(conversation.request("Make a collage", ConcurrentModel(intent("fresh")), requests))
+    resumed = Conversation(conversation.store, "demo")
+    assert resumed.state.controls.width == 120
+    assert len(resumed.history()) == 1 and resumed.state.baseline is None
+
+
+def test_old_conversation_rejected_without_writing(agent_project):
+    conversation, requests = agent_project
+    state = read_json(conversation.state_path)
+    state["record_version"] = 1
+    conversation.state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = conversation.state_path.read_bytes()
+    with pytest.raises(ValidationError, match="record_version"):
+        Conversation(conversation.store, "demo")
+    assert conversation.state_path.read_bytes() == before and not requests.attempts()
+
+
+def test_intent_prompt_identity_reloads_and_stage_schema_is_strict(tmp_path, monkeypatch):
+    from ai_collage import agent_provider
+
+    package = tmp_path / "package"
+    prompt = package / "prompts" / "request-intent.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text("Interpret first", encoding="utf-8")
+    monkeypatch.setattr(agent_provider, "__file__", str(package / "agent_provider.py"))
+    assert agent_provider.instructions("interpretation") == "Interpret first"
+    prompt.write_text("Updated intent", encoding="utf-8")
+    assert agent_provider.instructions("interpretation") == "Updated intent"
+    schema = agent_provider.response_format("interpretation")["json_schema"]["schema"]
+    assert schema["type"] == "object" and schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {"action", "source", "proposal_id", "question"}
+    for data in (
+        {"action": "fresh", "source": "current"},
+        {"action": "select", "proposal_id": "P001", "recipe": {}},
+        {"action": "edit"},
+    ):
+        with pytest.raises(ValidationError):
+            INTENT.validate_python(data)

@@ -8,11 +8,13 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from .agent_files import canonical, child, digest, save
-from .agent_models import Proposal
+from .agent_models import (
+    HISTORY, INTENT, Attempt, ConversationState, Exchange, Proposal, QuestionIntent,
+)
 from .geometry import resolve_layout
 from .models import CollageError, ResolvedLayout
 from .projects import ProjectStore, read_json
-from .replay import ReplayReport, StepResult
+from .replay import ReplayReport, StepResult, authored_changes
 
 Profile = Literal["integrity", "dark-portrait-adjustments"]
 
@@ -104,12 +106,13 @@ class CaseAssessment(BaseModel):
 
 
 class AssessmentReport(BaseModel):
-    record_version: Literal[1] = 1
+    record_version: Literal[2] = 2
     project_id: str
     profile: Profile
     replay_sha256: str
     complete: bool = False
     passed: bool = False
+    clarification_assisted: bool = False
     errors: list[str] = Field(default_factory=list)
     cases: list[CaseAssessment] = Field(default_factory=list)
     report_path: str | None = None
@@ -117,14 +120,20 @@ class AssessmentReport(BaseModel):
 
 def _proposal(
     store: ProjectStore, project_id: str, replay: ReplayReport,
-    result: StepResult, parent: str | None,
+    result: StepResult,
 ) -> ResolvedLayout:
     if result.proposal_id is None:
         raise CollageError("Proposal execution has no proposal ID.")
     directory = child(store.project_dir(project_id), "conversation", "proposals", result.proposal_id)
     proposal = Proposal.model_validate(read_json(child(directory, "proposal.json")))
+    parent = proposal.intent.source.proposal_id if proposal.intent.source else None
     if proposal.proposal_id != result.proposal_id or proposal.parent != parent:
         raise CollageError("Proposal identity or parent does not match the replay.")
+    if result.status == "proposal" and (
+        proposal.intent != result.intent or proposal.intent.source != result.source
+        or proposal.turn_id != result.event_id
+    ):
+        raise CollageError("Proposal source/task provenance does not match the replay.")
     controls = replay.sequence.canvas
     recipe = proposal.recipe
     if proposal.controls != controls or (recipe.canvas.width, recipe.canvas.height) != (
@@ -185,13 +194,28 @@ def assess(
             )
 
     cursor = 0
-    parent = None
-    previous = None
+    baseline = None
+    published: dict[str, ResolvedLayout] = {}
+    state = ConversationState.model_validate(read_json(child(
+        store.project_dir(project_id), "conversation", "state.json",
+    )))
+    events = {
+        number: HISTORY.validate_python(read_json(child(
+            store.project_dir(project_id), "conversation", "events", f"{number:06d}.json",
+        ))) for number in state.history
+    }
+    if project.current_version is not None or state.accepted_proposal is not None:
+        report.errors.append("Replay changed acceptance.")
+    if digest(canonical(state)) != replay.conversation_sha256:
+        report.errors.append("Conversation state does not match the recorded replay identity.")
+    previous_attempts = 0
     for number, result in enumerate(replay.executions, 1):
         case = CaseAssessment(
             execution=number, step=result.step, name=result.name, recorded_outcome=result.status,
         )
         report.cases.append(case)
+        if result.baseline_before != baseline:
+            case.errors.append("Execution baseline does not match the previous outcome.")
         if (
             result.step != cursor or not 0 <= result.step < len(replay.sequence.messages)
             or result.name != replay.sequence.messages[result.step].name
@@ -200,33 +224,158 @@ def assess(
         ):
             case.errors.append("Execution does not match the recorded message/cursor.")
         try:
+            if result.answer is not None:
+                report.clarification_assisted = True
+                reference = result.answers_execution
+                if (
+                    result.answer_origin not in {"user", "copilot"}
+                    or reference is None or not 1 <= reference < number
+                ):
+                    case.errors.append("Clarification answer has no valid provenance.")
+                else:
+                    question = replay.executions[reference - 1]
+                    preceding = replay.executions[number - 2]
+                    repeated_answer = (
+                        preceding.status == "failed"
+                        and preceding.answers_execution == reference
+                        and preceding.answer == result.answer
+                        and preceding.answer_origin == result.answer_origin
+                    )
+                    if (
+                        question.status != "question" or question.step != result.step
+                        or (reference != number - 1 and not repeated_answer)
+                    ):
+                        case.errors.append("Answer does not continue the pending question.")
+                answered = {
+                    item.answers_execution for item in replay.executions[:number]
+                    if item.step == result.step and item.answer is not None
+                }
+                if len(answered) > 2:
+                    case.errors.append("Clarification-answer limit exceeded.")
+            elif result.answer_origin is not None or result.answers_execution is not None:
+                case.errors.append("Clarification provenance has no answer.")
             captured = StepResult.model_validate(read_json(
                 child(root, "steps", f"{number:04d}", "result.json")
             ))
             if captured != result:
                 case.errors.append("Per-execution result does not match the replay report.")
-            if result.status == "proposal":
-                current = _proposal(store, project_id, replay, result, parent)
+            before = result.usage_before.get("attempts")
+            after = result.usage_after.get("attempts")
+            if (
+                type(before) is not int or type(after) is not int
+                or before != previous_attempts or after - before != result.attempts
+                or not 0 <= result.attempts <= len(result.contexts) <= 4
+            ):
+                raise CollageError("Execution call accounting is inconsistent.")
+            previous_attempts = after
+            stages = []
+            for index, context_path in enumerate(result.contexts, 1):
+                expected_path = child(root, "steps", f"{number:04d}", f"context-{index:04d}.json")
+                if Path(context_path).resolve() != expected_path.resolve():
+                    raise CollageError("Captured context path is outside its execution.")
+                context = read_json(expected_path)
+                if not isinstance(context, dict) or context.get("stage") not in {
+                    "interpretation", "generation",
+                }:
+                    raise CollageError("Captured context has no valid stage.")
+                stage = context["stage"]
+                stages.append(stage)
+                if (
+                    context.get("user_request") != (
+                        result.answer if result.answer is not None else result.prompt
+                    )
+                    or context.get("trusted_controls") != replay.sequence.canvas.model_dump(mode="json")
+                    or (
+                        stage == "generation"
+                        and context.get("resolved_intent") != (
+                            result.intent.model_dump(mode="json") if result.intent else None
+                        )
+                    )
+                ):
+                    raise CollageError("Captured stage context does not match the execution.")
+            interpretations = stages.count("interpretation")
+            if (
+                not 1 <= interpretations <= 2
+                or stages != ["interpretation"] * interpretations
+                + ["generation"] * (len(stages) - interpretations)
+                or (result.status in {"selection", "question"} and "generation" in stages)
+                or (result.status == "proposal" and "generation" not in stages)
+            ):
+                raise CollageError("Execution stage order or limits are inconsistent.")
+            for index in range(before + 1, after + 1):
+                attempt = Attempt.model_validate(read_json(child(
+                    store.project_dir(project_id), "conversation", "requests",
+                    f"attempt-{index:04d}.json",
+                )))
+                if attempt.number != index or attempt.purpose != f"{project_id}: {stages[index - before - 1]}":
+                    raise CollageError("Request accounting does not match the captured stages.")
+            if result.status in {"proposal", "selection", "question"}:
+                event = events.get(result.event_id)
+                if (
+                    not isinstance(event, Exchange)
+                    or event.outcome != result.status or event.proposal_id != result.proposal_id
+                    or event.intent != result.intent
+                    or event.prompt != (result.answer if result.answer is not None else result.prompt)
+                ):
+                    case.errors.append("Conversation event does not match the execution outcome.")
+                elif result.status == "question":
+                    question_reply = INTENT.validate_json(event.response or "")
+                    if not isinstance(question_reply, QuestionIntent) or question_reply.question != result.question:
+                        case.errors.append("Recorded question does not match its conversation event.")
+            if result.status in {"proposal", "selection"}:
+                if result.intent is None or result.source != result.intent.source:
+                    raise CollageError("Successful execution has no matching resolved intent.")
+                if result.source is not None and (
+                    result.source.accepted_version is not None
+                    or result.source.proposal_id not in published
+                ):
+                    raise CollageError("Execution source was not published before this step.")
+                current = _proposal(store, project_id, replay, result)
+                previous = published.get(result.source.proposal_id) if result.source else None
+                expected_changes = (
+                    authored_changes(
+                        previous.recipe.model_dump(mode="json"), current.recipe.model_dump(mode="json"),
+                    ) if previous is not None and result.status == "proposal" else []
+                )
+                if result.changes != expected_changes:
+                    case.errors.append("Authored differences do not match the actual edit source.")
+                if result.status == "selection":
+                    if (
+                        result.proposal_id not in published or result.intent.action != "select"
+                        or result.source is None or result.source.proposal_id != result.proposal_id
+                    ):
+                        case.errors.append("Selection is not an exact previously published proposal.")
+                else:
+                    if result.proposal_id in published or result.intent.action == "select":
+                        case.errors.append("Generation identity/action is inconsistent.")
+                    assert result.proposal_id is not None
+                    published[result.proposal_id] = current
                 if profile == "dark-portrait-adjustments" and profile_matches and 0 <= result.step < 4:
-                    case.errors.extend(dark_portrait_errors(result.step, current, previous))
-                previous = current
+                    if result.status != "proposal":
+                        case.errors.append("Historical profile requires a generated proposal.")
+                    else:
+                        case.errors.extend(dark_portrait_errors(result.step, current, previous))
                 case.status = "failed" if case.errors else "passed"
-            elif result.status in {"pending", "question"} and number != len(replay.executions):
-                case.errors.append("Replay continued after an interrupted execution or question.")
+            elif result.status == "pending" and number != len(replay.executions):
+                case.errors.append("Replay continued after an interrupted execution.")
+            elif result.status == "question" and number != len(replay.executions):
+                following = replay.executions[number]
+                if following.answers_execution != number or following.answer is None:
+                    case.errors.append("Replay continued without answering its pending question.")
         except (CollageError, ValidationError, OSError) as exc:
             case.errors.append(f"{type(exc).__name__}: {exc}")
-            if result.status == "proposal":
-                previous = None
         if case.errors:
             case.status = "failed"
-        if result.status == "proposal":
+        if result.status in {"proposal", "selection"}:
             cursor += 1
-            parent = result.proposal_id
+            baseline = result.proposal_id
     if replay.next_step != cursor:
         report.errors.append("Replay cursor does not match its successful proposal executions.")
+    if state.baseline != baseline:
+        report.errors.append("Conversation baseline does not match the replay outcomes.")
     report.complete = (
         cursor == len(replay.sequence.messages) and replay.next_step == cursor
-        and bool(replay.executions) and replay.executions[-1].status == "proposal"
+        and bool(replay.executions) and replay.executions[-1].status in {"proposal", "selection"}
     )
     if not report.complete:
         report.errors.append("Replay is incomplete; unexecuted messages have not been assessed.")

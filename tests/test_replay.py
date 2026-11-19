@@ -12,7 +12,7 @@ from ai_collage.projects import read_json
 from ai_collage.replay import ReplayReport, main, replay
 
 from .helpers import REPO, layout_data
-from .test_agent import FakeModel, asyncio_wakeup_pair, reply
+from .test_agent import FakeModel, asyncio_wakeup_pair, intent, reply, turns
 
 
 @pytest.fixture
@@ -39,9 +39,9 @@ def test_stepwise_resume_allows_only_future_edits_and_captures_evidence(store, s
     path, data = scenario
     changed = layout_data()
     changed["canvas"]["background"] = "#202020"
-    model = FakeModel(reply(), reply(changed))
+    model = FakeModel(*turns(reply(), reply(changed)))
     first = execute(store, path, model)
-    assert first.next_step == 1 and len(model.contexts) == 1
+    assert first.next_step == 1 and len(model.contexts) == 2
     root = store.project_dir("demo") / "replay"
     original = {
         item: item.read_bytes()
@@ -53,13 +53,13 @@ def test_stepwise_resume_allows_only_future_edits_and_captures_evidence(store, s
     data["messages"][1]["prompt"] = "Use a dark grey background; leave everything else alone."
     path.write_text(json.dumps(data), encoding="utf-8")
     resumed = execute(store, path, model, resume=True, remaining=True)
-    assert resumed.next_step == 2 and len(model.contexts) == 2
+    assert resumed.next_step == 2 and len(model.contexts) == 4
     result = resumed.executions[-1]
     assert result.reopened and result.status == "proposal"
-    assert result.attempts == 1 and result.validation_corrections == 0
+    assert result.attempts == 2 and result.validation_corrections == 0
     assert [change.field for change in result.changes] == ["recipe.canvas.background"]
     assert read_json(Path(result.contexts[0]))["user_request"] == data["messages"][1]["prompt"]
-    assert model.contexts[1]["editing_baseline"] == read_json(
+    assert model.contexts[3]["editing_baseline"] == read_json(
         Path(first.executions[0].proposal_path)
     )["recipe"]
     assert all(item.read_bytes() == raw for item, raw in original.items())
@@ -71,7 +71,7 @@ def test_stepwise_resume_allows_only_future_edits_and_captures_evidence(store, s
     assert store.load("demo").current_version is None
     assert Conversation(store, "demo").state.accepted_proposal is None
     assert execute(store, path, model, resume=True).next_step == 2
-    assert len(model.contexts) == 2
+    assert len(model.contexts) == 4
 
 
 def test_remaining_reopens_at_the_declared_message(store, scenario, monkeypatch):
@@ -85,16 +85,17 @@ def test_remaining_reopens_at_the_declared_message(store, scenario, monkeypatch)
             opened.append(self.state.baseline)
 
     monkeypatch.setattr("ai_collage.replay.Conversation", ObservedConversation)
-    result = execute(store, path, FakeModel(reply(), reply()), remaining=True)
+    result = execute(store, path, FakeModel(*turns(reply(), reply())), remaining=True)
     assert opened == [None, "P001"]
-    assert result.next_step == 2 and len(requests.attempts()) == 2
+    assert result.next_step == 2 and len(requests.attempts()) == 4
 
 
 def test_failure_stops_batch_and_requires_explicit_retry(store, scenario):
     path, _ = scenario
-    model = FakeModel(reply(), CollageError("Service stopped"), reply())
+    model = FakeModel(*turns(reply()), CollageError("Service stopped"),
+                      intent("edit", source="current"), reply())
     result = execute(store, path, model, remaining=True)
-    assert result.next_step == 1 and len(model.contexts) == 2
+    assert result.next_step == 1 and len(model.contexts) == 3
     assert result.executions[-1].status == "failed"
     assert "Service stopped" in result.executions[-1].error
     failure_path = store.project_dir("demo") / "replay" / "steps" / "0002" / "result.json"
@@ -102,7 +103,7 @@ def test_failure_stops_batch_and_requires_explicit_retry(store, scenario):
     with pytest.raises(CollageError, match="explicit"):
         execute(store, path, model, resume=True)
     result = execute(store, path, model, resume=True, retry=True)
-    assert result.next_step == 2 and len(model.contexts) == 3
+    assert result.next_step == 2 and len(model.contexts) == 5
     assert failure_path.read_bytes() == failure
     assert len(result.executions) == 3 and result.executions[1].status == "failed"
 
@@ -120,13 +121,14 @@ def test_pre_dispatch_failure_is_preserved_without_spending_an_attempt(store, sc
     assert report.executions[0].attempts == 0
     assert len(report.executions[0].contexts) == 1
     assert requests.attempts() == []
+    assert Conversation(store, "demo").history()[-1].attempt is None
     with pytest.raises(CollageError, match="explicit"):
         execute(store, path, FakeModel(reply()), resume=True)
 
 
 def test_question_stops_without_advancing_or_answering(store, scenario):
     path, _ = scenario
-    model = FakeModel('{"kind":"question","question":"Which photo?"}', reply())
+    model = FakeModel(intent("question", question="Which photo?"), reply())
     report = execute(store, path, model, remaining=True)
     assert report.next_step == 0 and len(model.contexts) == 1
     assert report.executions[0].question == "Which photo?"
@@ -138,10 +140,10 @@ def test_question_stops_without_advancing_or_answering(store, scenario):
 
 def test_validation_corrections_capture_each_context(store, scenario):
     path, _ = scenario
-    report = execute(store, path, FakeModel("not JSON", reply()))
+    report = execute(store, path, FakeModel("not JSON", intent("fresh"), reply()))
     result = report.executions[0]
-    assert result.status == "proposal" and result.attempts == 2
-    assert result.validation_corrections == 1 and len(result.contexts) == 2
+    assert result.status == "proposal" and result.attempts == 3
+    assert result.validation_corrections == 1 and len(result.contexts) == 3
     assert read_json(Path(result.contexts[0]))["validation_feedback"] is None
     assert read_json(Path(result.contexts[1]))["validation_feedback"]
 
@@ -150,7 +152,7 @@ def test_question_matching_a_proposal_id_is_not_treated_as_a_proposal(store, sce
     path, _ = scenario
     report = execute(
         store, path,
-        FakeModel(reply(), '{"kind":"question","question":"P001"}'), remaining=True,
+        FakeModel(*turns(reply()), intent("question", question="P001")), remaining=True,
     )
     assert report.next_step == 1
     assert report.executions[-1].status == "question"
@@ -164,7 +166,7 @@ def test_instructions_changing_during_correction_stop_before_another_call(store,
     class ChangedInstructions(FakeModel):
         async def complete(self, context, requests, purpose):
             response = await super().complete(context, requests, purpose)
-            monkeypatch.setattr("ai_collage.replay.instructions", lambda: "Changed instructions")
+            monkeypatch.setattr("ai_collage.replay.instruction_bundle", lambda: "Changed instructions")
             return response
 
     model = ChangedInstructions("not JSON", reply())
@@ -177,7 +179,7 @@ def test_instructions_changing_during_correction_stop_before_another_call(store,
 def test_four_invalid_responses_stop_the_batch_before_the_next_message(store, scenario):
     path, _ = scenario
     requests = RequestLog(store, "demo")
-    model = FakeModel(*["not JSON"] * 4, reply())
+    model = FakeModel(intent("fresh"), *["not JSON"] * 3, reply())
     report = execute(store, path, model, remaining=True)
     assert report.next_step == 0 and len(model.contexts) == 4
     assert len(report.executions) == 1
@@ -193,31 +195,34 @@ def test_four_message_batch_cannot_make_more_than_sixteen_calls(store, scenario)
         {"name": "fourth", "prompt": "Keep the layout."},
     ])
     path.write_text(json.dumps(data), encoding="utf-8")
-    model = FakeModel(*(["{}", "{}", "{}", reply()] * 4), reply())
+    model = FakeModel(*[
+        response for index in range(4)
+        for response in (
+            intent("fresh") if index == 0 else intent("edit", source="current"), "{}", "{}", reply(),
+        )
+    ], reply())
     report = execute(store, path, model, remaining=True)
     assert report.next_step == 4 and len(model.contexts) == 16
     assert [result.attempts for result in report.executions] == [4] * 4
-    assert [result.validation_corrections for result in report.executions] == [3] * 4
+    assert [result.validation_corrections for result in report.executions] == [2] * 4
     assert len(RequestLog(store, "demo").attempts()) == 16
     assert not (store.owner_dir / "agent-runs").exists()
     execute(store, path, model, resume=True, remaining=True)
     assert len(model.contexts) == 16
 
 
-def test_legacy_replay_can_resume_without_its_old_allowance(store, scenario):
+def test_legacy_replay_version_is_rejected_without_rewriting(store, scenario):
     path, _ = scenario
-    model = FakeModel(reply(), reply())
+    model = FakeModel(*turns(reply(), reply()))
     execute(store, path, model)
     root = store.project_dir("demo") / "replay"
     original = (root / "steps" / "0001" / "result.json").read_bytes()
     report = read_json(root / "report.json")
-    historical_path = str(store.data_dir / "missing-old-run" / "run.json")
-    report["ledger_path"] = historical_path
-    report.pop("requests_path")
+    report["record_version"] = 1
     (root / "report.json").write_text(json.dumps(report), encoding="utf-8")
-    result = execute(store, path, model, resume=True)
-    assert result.next_step == 2 and result.ledger_path == historical_path
-    assert result.requests_path == str(RequestLog(store, "demo").root)
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="record_version"):
+        execute(store, path, model, resume=True)
     assert (root / "steps" / "0001" / "result.json").read_bytes() == original
     assert not (store.owner_dir / "agent-runs").exists()
 
@@ -225,7 +230,7 @@ def test_legacy_replay_can_resume_without_its_old_allowance(store, scenario):
 @pytest.mark.parametrize("change", ["prompt", "canvas", "source", "instructions", "conversation"])
 def test_resume_rejects_changed_execution_identity(store, scenario, monkeypatch, change):
     path, data = scenario
-    model = FakeModel(reply(), reply())
+    model = FakeModel(*turns(reply(), reply()))
     execute(store, path, model)
     if change == "prompt":
         data["messages"][0]["prompt"] = "A changed attempted message"
@@ -234,14 +239,14 @@ def test_resume_rejects_changed_execution_identity(store, scenario, monkeypatch,
     elif change == "source":
         data["images"].reverse()
     elif change == "instructions":
-        monkeypatch.setattr("ai_collage.replay.instructions", lambda: "Changed instructions")
+        monkeypatch.setattr("ai_collage.replay.instruction_bundle", lambda: "Changed instructions")
     else:
         conversation = Conversation(store, "demo")
         conversation.controls(conversation.state.controls.model_copy(update={"cropping": True}))
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(CollageError, match="changed"):
         execute(store, path, model, resume=True)
-    assert len(model.contexts) == 1
+    assert len(model.contexts) == 2
 
 
 def test_interrupted_step_cannot_be_blindly_replayed(store, scenario):
@@ -259,7 +264,7 @@ def test_interrupted_step_cannot_be_blindly_replayed(store, scenario):
 
 def test_inconsistent_cursor_cannot_skip_a_message(store, scenario):
     path, _ = scenario
-    model = FakeModel(reply(), reply())
+    model = FakeModel(*turns(reply(), reply()))
     execute(store, path, model)
     report_path = store.project_dir("demo") / "replay" / "report.json"
     report = read_json(report_path)
@@ -267,7 +272,7 @@ def test_inconsistent_cursor_cannot_skip_a_message(store, scenario):
     report_path.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(CollageError, match="cursor"):
         execute(store, path, model, resume=True)
-    assert len(model.contexts) == 1
+    assert len(model.contexts) == 2
 
 
 def test_existing_project_is_not_overwritten(store, sources, scenario):
@@ -312,15 +317,186 @@ def test_invalid_sequence_fails_before_creating_a_project(store, scenario):
 
 @pytest.mark.parametrize("response,code", [
     (reply(), 0),
-    ('{"kind":"question","question":"Which photo?"}', 1),
+    (intent("question", question="Which photo?"), 1),
     (CollageError("Service failed"), 1),
 ])
 def test_cli_runs_one_step_and_reports_stop_status(store, scenario, monkeypatch, capsys, response, code):
     path, _ = scenario
-    monkeypatch.setattr("ai_collage.replay.FoundryModel", lambda: FakeModel(response))
+    responses = turns(response) if isinstance(response, str) and "schema_version" in response else [response]
+    model = FakeModel(*responses)
+    monkeypatch.setattr("ai_collage.replay.FoundryModel", lambda: model)
     assert main([
         "--sequence", str(path), "--data-dir", str(store.data_dir),
         "--project", "demo",
     ]) == code
     report = json.loads(capsys.readouterr().out)
     assert len(report["executions"]) == 1
+
+
+def test_recorded_clarification_continues_script_and_assesses_as_assisted(store, scenario):
+    from ai_collage.assess import assess
+
+    path, data = scenario
+    model = FakeModel(
+        intent("question", question="Which photo should stand out?"),
+        intent("fresh"), reply(),
+        intent("edit", source="current"), reply(),
+    )
+    first = execute(store, path, model, remaining=True)
+    root = store.project_dir("demo") / "replay"
+    original = (root / "steps" / "0001" / "result.json").read_bytes()
+    resumed = execute(
+        store, path, model, resume=True, remaining=True,
+        answer="Photo 2", answer_origin="copilot",
+    )
+    assert resumed.next_step == 2 and len(model.contexts) == 5
+    assert [entry.status for entry in resumed.executions] == ["question", "proposal", "proposal"]
+    answered = resumed.executions[1]
+    assert answered.answer == "Photo 2" and answered.answer_origin == "copilot"
+    assert answered.answers_execution == 1 and answered.prompt == data["messages"][0]["prompt"]
+    assert read_json(Path(answered.contexts[0]))["user_request"] == "Photo 2"
+    assert (root / "steps" / "0001" / "result.json").read_bytes() == original
+    report = assess(store, "demo")
+    assert report.passed and report.clarification_assisted
+    resumed_again = execute(store, path, model, resume=True)
+    assert resumed_again.next_step == 2 and len(model.contexts) == 5
+
+
+def test_answer_failure_can_be_explicitly_retried_without_resetting_outer_cap(store, scenario, tmp_path):
+    from ai_collage.agent_requests import call_budget
+    from ai_collage.assess import assess
+
+    path, _ = scenario
+    budget = tmp_path / "budget.json"
+    model = FakeModel(
+        intent("question", question="Which photo?"),
+        CollageError("Connection failed"),
+        *turns(reply(), reply()),
+    )
+    with call_budget(budget, 6):
+        execute(store, path, model)
+    with call_budget(budget, 6):
+        failed = execute(store, path, model, resume=True, answer="Photo 2", answer_origin="user")
+    assert failed.executions[-1].status == "failed"
+    with call_budget(budget, 6):
+        result = execute(store, path, model, resume=True, retry=True, remaining=True)
+    assert result.next_step == 2
+    assert read_json(budget)["used"] == 6
+    assert result.executions[2].answer == "Photo 2"
+    assert result.executions[2].answers_execution == 1
+    assert assess(store, "demo").passed
+    with call_budget(budget, 6):
+        with pytest.raises(CollageError, match="exhausted"):
+            RequestLog(store, "another-project").reserve("must not dispatch", 10)
+
+
+def test_clarification_limit_blocks_third_answer_without_calls(store, scenario):
+    path, _ = scenario
+    model = FakeModel(*(intent("question", question="Which one?") for _ in range(3)))
+    execute(store, path, model)
+    for answer in ("Photo 1", "The first photo"):
+        execute(store, path, model, resume=True, answer=answer, answer_origin="copilot")
+    with pytest.raises(CollageError, match="Two clarification answers"):
+        execute(store, path, model, resume=True, answer="Photo 1 again", answer_origin="copilot")
+    assert len(model.contexts) == len(RequestLog(store, "demo").attempts()) == 3
+
+
+def test_selection_fresh_and_older_source_edits_are_not_linearized(store, scenario):
+    from ai_collage.assess import assess
+
+    path, data = scenario
+    data["messages"].extend([
+        {"name": "return", "prompt": "Go back to first"},
+        {"name": "compound", "prompt": "Go back to second and change the background"},
+        {"name": "fresh", "prompt": "Start over"},
+    ])
+    path.write_text(json.dumps(data), encoding="utf-8")
+    changed = layout_data()
+    changed["canvas"]["background"] = "#202020"
+    model = FakeModel(
+        *turns(reply(), reply(changed)), intent("select", proposal_id="P001"),
+        intent("edit", source="P002"), reply(), intent("fresh"), reply(),
+    )
+    report = execute(store, path, model, remaining=True)
+    assert report.next_step == 5
+    selection, compound, fresh = report.executions[2:]
+    assert selection.status == "selection" and selection.changes == [] and selection.attempts == 1
+    assert compound.baseline_before == "P001" and compound.source.proposal_id == "P002"
+    assert [change.field for change in compound.changes] == ["recipe.canvas.background"]
+    assert fresh.source is None and fresh.changes == []
+    assert assess(store, "demo").passed
+    assert len(list((store.project_dir("demo") / "conversation" / "proposals").iterdir())) == 4
+
+
+def test_only_intent_prompt_change_also_blocks_resume(store, scenario, monkeypatch):
+    from ai_collage import agent_provider
+
+    path, _ = scenario
+    model = FakeModel(*turns(reply()))
+    execute(store, path, model)
+    original = agent_provider.instructions
+    monkeypatch.setattr(
+        agent_provider, "instructions",
+        lambda stage="generation": original(stage) + (" changed" if stage == "interpretation" else ""),
+    )
+    with pytest.raises(CollageError, match="instructions changed"):
+        execute(store, path, model, resume=True)
+    assert len(model.contexts) == 2
+
+
+def test_shipped_landscape_sequence_runs_all_four_messages_with_controlled_two_stage_responses(store):
+    import copy
+    pytest.importorskip("agent_framework")
+    import httpx
+    from openai import AsyncOpenAI
+    from ai_collage.agent_provider import ENDPOINT, guarded_transport, run_agent
+    from ai_collage.assess import assess
+    from .test_agent import response_envelope
+
+    path = REPO / "examples" / "sequences" / "02_landscape_staggered_adjustments.json"
+    initial = {
+        "schema_version": 3,
+        "canvas": {"width": 1600, "height": 900, "background": "#EEEEEE"},
+        "layers": [
+            {"photo_id": number, "mode": "whole",
+             "box": {"center_x": x, "center_y": y, "width": width}, "corner_radius_px": 8}
+            for number, x, y, width in (
+                (1, 0.14, 0.18, 0.13), (2, 0.18, 0.5, 0.13),
+                (3, 0.72, 0.5, 0.4), (4, 0.2, 0.82, 0.13),
+            )
+        ],
+    }
+    swapped = copy.deepcopy(initial)
+    for axis in ("center_x", "center_y"):
+        swapped["layers"][0]["box"][axis], swapped["layers"][3]["box"][axis] = (
+            initial["layers"][3]["box"][axis], initial["layers"][0]["box"][axis],
+        )
+    smaller = copy.deepcopy(swapped)
+    smaller["layers"][1]["box"].update(center_x=0.4, width=0.1)
+    square = copy.deepcopy(smaller)
+    square["layers"][2]["corner_radius_px"] = 0
+    responses = iter(turns(*(reply(value) for value in (initial, swapped, smaller, square))))
+
+    class TransportModel:
+        def __init__(self):
+            self.contexts = []
+
+        async def complete(self, context, requests, purpose):
+            self.contexts.append(context)
+
+            async def handler(request):
+                return httpx.Response(200, json=response_envelope(next(responses)))
+
+            gate = guarded_transport(requests, purpose, httpx.MockTransport(handler))
+            async with AsyncOpenAI(
+                base_url=ENDPOINT, api_key="offline-not-a-real-credential", max_retries=0,
+                http_client=httpx.AsyncClient(transport=gate),
+            ) as sdk:
+                return await run_agent(context, sdk, requests)
+
+    model = TransportModel()
+    report = execute(store, path, model, remaining=True)
+    assert report.next_step == 4 and len(model.contexts) == 8
+    assert all(result.attempts == 2 and result.validation_corrections == 0 for result in report.executions)
+    assert all(attempt.input_bound <= 50_000 for attempt in RequestLog(store, "demo").attempts())
+    assert assess(store, "demo").passed

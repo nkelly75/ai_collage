@@ -1,6 +1,6 @@
 # AI Collage Builder
 
-Build photo collages from explicit, editable layouts. The longer-term goal is
+Build photo collages from explicit, editable layouts. The goal is
 to describe a layout in natural language and refine it conversationally, while
 keeping geometry, validation, and rendering deterministic.
 
@@ -15,17 +15,12 @@ required to fit on the canvas. A full-canvas image layer can serve as a photo
 background. Captions are not implemented yet.
 
 The deterministic engine runs offline without credentials or model calls.
-An optional metadata-only conversational agent now has a terminal entry point,
-durable proposals, and explicit acceptance. **The format 2 checkpoint A pass
-completed all four scripted live cases**, including shrinking a photo without moving its centre,
-border removal, resume/straightening, and exact acceptance. Numeric geometry
-feedback and high reasoning effort resolved the earlier failures. This is
-trial-ready under the bounded checks, not user sign-off or a reliability claim.
-The user-led checkpoint B still needs separate approval. See the
-[conversation guide](docs/cli-guide.md#conversational-proposals-optional)
-and [checkpoint A results](planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff).
-A graphical UI and Azure hosting remain future work. Separate Foundry
-experiments are not part of the application workflow.
+An optional metadata-only conversational agent supports natural-language layout
+creation and refinement, fresh arrangements, retries, and returning to earlier
+proposals. Proposals are preserved separately from explicitly accepted versions.
+See the [conversation guide](docs/cli-guide.md#conversational-proposals-optional).
+Live model requests require explicit bounded authorization. A graphical UI,
+image understanding, and cloud hosting remain future work.
 
 **Layout format 3** uses centre-anchored `center_x`/`center_y` positions,
 explicit whole/cover modes, stable `photo_id` values, and a back-to-front
@@ -34,19 +29,6 @@ explicit whole/cover modes, stable `photo_id` values, and a back-to-front
 [JSON Schema](docs/layout.schema.json). Format 1 and 2 projects remain
 untouched archives: their PNGs are viewable, but the new CLI does not load or
 migrate their histories. Use a fresh data root for the updated examples.
-The agent prompt and context now use format 3, with offline coverage. One
-four-message format 3 replay completed without corrections or acceptance;
-this is exploratory evidence, not a repeated reliability assessment.
-A [JSON-driven replay runner](docs/cli-guide.md#repeatable-prompt-sequences)
-captures individual steps or explicitly requested batches. Live requests still
-require bounded authorization. [006](planning/006-simplification-and-repeatability.md)
-added an optional batch-wide call cap, then stopped at a fresh baseline's
-incorrect position swap, before prompt simplification. The revised bounded pass
-completed the swap fix, 8.84% shorter assembled instructions and eight replays
-using 33 calls, including one explicitly retried timeout. Targeted edits passed;
-visual composition/overlap still varies. This is not a general reliability or
-design-quality claim.
-See the [006 results](planning/006_results.md).
 
 ## Where the idea came from
 

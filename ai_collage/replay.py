@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field, RootModel, ValidationError, model_validat
 
 from .agent_requests import RequestLog, call_budget
 from .agent_files import canonical, child, digest, save
-from .agent_models import Controls, Digest, Exchange, Record
-from .agent_provider import FoundryModel, instructions
+from .agent_models import Controls, Digest, Exchange, LayoutSource, Record, ResolvedIntent
+from .agent_provider import FoundryModel, instruction_bundle
 from .conversation import Conversation, ModelClient
 from .models import MAX_FILE_BYTES, CollageError
 from .projects import ProjectStore, read_json
@@ -54,11 +54,19 @@ class Change(BaseModel):
 
 class StepResult(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
+    record_version: Literal[2] = 2
     step: int
     name: str
     prompt: str
     reopened: bool
-    status: Literal["pending", "proposal", "question", "failed"] = "pending"
+    status: Literal["pending", "proposal", "selection", "question", "failed"] = "pending"
+    baseline_before: str | None = None
+    source: LayoutSource | None = None
+    intent: ResolvedIntent | None = None
+    event_id: int | None = None
+    answer: str | None = None
+    answer_origin: Literal["user", "copilot"] | None = None
+    answers_execution: int | None = None
     proposal_id: str | None = None
     proposal_path: str | None = None
     preview_path: str | None = None
@@ -75,12 +83,10 @@ class StepResult(BaseModel):
 
 class ReplayReport(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[1] = 1
+    record_version: Literal[2] = 2
     project_id: str
     sequence: Sequence
     sources: list[Source]
-    # Historical evidence only; resuming never opens this path.
-    ledger_path: str | None = None
     requests_path: str | None = None
     instructions_sha256: Digest
     conversation_sha256: Digest
@@ -118,16 +124,23 @@ def load_sequence(path: Path) -> tuple[Sequence, list[Source]]:
 async def replay(
     store: ProjectStore, project_id: str, sequence_path: Path, *,
     resume: bool = False, remaining: bool = False, retry: bool = False,
+    answer: str | None = None, answer_origin: Literal["user", "copilot"] | None = None,
     client: ModelClient | None = None,
 ) -> ReplayReport:
     sequence, sources = load_sequence(sequence_path)
-    assembled = instructions()
+    assembled = instruction_bundle()
     instruction_hash = digest(assembled.encode("utf-8"))
     root = child(store.project_dir(project_id), "replay")
     requests = RequestLog(store, project_id)
     report_path = child(root, "report.json")
     if retry and not resume:
         raise CollageError("--retry requires --resume.")
+    if answer is not None:
+        if not resume or retry or not answer.strip() or answer_origin is None:
+            raise CollageError("An answer requires --resume and an explicit origin, without --retry.")
+    elif answer_origin is not None:
+        raise CollageError("An answer origin requires an answer.")
+    answers_execution = None
     if resume:
         report = ReplayReport.model_validate(read_json(report_path))
         if (
@@ -141,25 +154,35 @@ async def replay(
             raise CollageError("Previously attempted messages changed; use a fresh replay project.")
         if (
             not 0 <= report.next_step <= len(sequence.messages)
-            or report.next_step != sum(item.status == "proposal" for item in report.executions)
+            or report.next_step != sum(
+                item.status in {"proposal", "selection"} for item in report.executions
+            )
         ):
             raise CollageError("Replay cursor is inconsistent.")
         conversation = Conversation(store, project_id)
         if digest(canonical(conversation.state)) != report.conversation_sha256:
             raise CollageError("Conversation changed outside the replay; inspect before continuing.")
-        if report.executions and report.executions[-1].status != "proposal":
+        if report.executions and report.executions[-1].status not in {"proposal", "selection"}:
             last = report.executions[-1]
             if last.status == "question":
-                raise CollageError(
-                    "Replay paused for a question. Continue manually with chat; "
-                    "the runner cannot answer or skip it."
-                )
-            if last.status == "pending":
+                if answer is None:
+                    raise CollageError("Replay paused for a question; supply --answer and --answer-origin.")
+                answered = {
+                    item.answers_execution for item in report.executions
+                    if item.step == report.next_step and item.answer is not None
+                }
+                if len(answered) >= 2:
+                    raise CollageError("Two clarification answers already attempted for this step.")
+                answers_execution = len(report.executions)
+            elif last.status == "pending":
                 raise CollageError("Interrupted replay step; inspect evidence before any further calls.")
-            if not retry:
-                raise CollageError("Previous step failed; an explicit --resume --retry is required.")
-        elif retry:
-            raise CollageError("There is no failed step to retry.")
+            else:
+                if answer is not None or not retry:
+                    raise CollageError("Previous step failed; an explicit --resume --retry is required.")
+                answer, answer_origin = last.answer, last.answer_origin
+                answers_execution = last.answers_execution
+        elif retry or answer is not None:
+            raise CollageError("There is no failed step to retry or question to answer.")
         report.sequence = sequence
     else:
         if store.project_dir(project_id).exists():
@@ -183,12 +206,14 @@ async def replay(
         message = sequence.messages[report.next_step]
         if message.reopen_before:
             conversation = Conversation(store, project_id)
-        baseline = conversation.baseline()
+        baseline_before = conversation.state.baseline
         history_start = len(conversation.history())
         before_attempts = len(requests.attempts())
         result = StepResult(
             step=report.next_step, name=message.name, prompt=message.prompt,
             reopened=message.reopen_before, usage_before=requests.summary(),
+            baseline_before=baseline_before, answer=answer, answer_origin=answer_origin,
+            answers_execution=answers_execution,
         )
         directory = child(root, "steps", f"{len(report.executions) + 1:04d}")
         directory.mkdir(parents=True, exist_ok=False)
@@ -201,7 +226,7 @@ async def replay(
             async def complete(
                 self, context: dict[str, object], current_requests: RequestLog, purpose: str,
             ) -> str:
-                if digest(instructions().encode("utf-8")) != report.instructions_sha256:
+                if digest(instruction_bundle().encode("utf-8")) != report.instructions_sha256:
                     raise CollageError("Instructions changed; no further model request was sent.")
                 path = child(directory, f"context-{len(result.contexts) + 1:04d}.json")
                 save(path, RootModel[dict[str, object]](context))
@@ -211,23 +236,34 @@ async def replay(
 
         started = time.monotonic()
         try:
-            reply = await conversation.request(message.prompt, RecordedModel(), requests)
+            reply = await conversation.request(
+                answer if answer is not None else message.prompt, RecordedModel(), requests,
+            )
             event = conversation.history()[-1]
-            if isinstance(event, Exchange) and event.outcome == "question":
+            if not isinstance(event, Exchange) or conversation.state.history[-1] != reply.event_id:
+                raise CollageError("Request outcome does not match the recorded conversation event.")
+            result.event_id = reply.event_id
+            result.intent = event.intent
+            result.source = event.intent.source if event.intent else None
+            if reply.kind == "question" and event.outcome == "question":
                 result.status = "question"
-                result.question = reply
+                result.question = reply.question
             elif (
-                isinstance(event, Exchange) and event.outcome == "proposal"
-                and event.proposal_id == reply
+                event.outcome in {"proposal", "selection"} and event.outcome == reply.kind
+                and event.proposal_id == reply.proposal_id
             ):
-                proposal = conversation.proposal(reply)
-                result.status = "proposal"
-                result.proposal_id = reply
-                result.preview_path = str(conversation.preview_path(reply))
-                result.proposal_path = str(child(conversation.preview_path(reply).parent, "proposal.json"))
-                if baseline is not None:
+                assert reply.proposal_id is not None
+                proposal = conversation.proposal(reply.proposal_id)
+                result.status = reply.kind
+                result.proposal_id = reply.proposal_id
+                result.preview_path = str(conversation.preview_path(reply.proposal_id))
+                result.proposal_path = str(child(
+                    conversation.preview_path(reply.proposal_id).parent, "proposal.json",
+                ))
+                source_recipe = conversation.source_recipe(result.source)
+                if result.status == "proposal" and source_recipe is not None:
                     result.changes = authored_changes(
-                        baseline.model_dump(mode="json"), proposal.recipe.model_dump(mode="json")
+                        source_recipe.model_dump(mode="json"), proposal.recipe.model_dump(mode="json")
                     )
             else:
                 raise CollageError("Request outcome does not match the recorded conversation event.")
@@ -236,24 +272,31 @@ async def replay(
                 or conversation.state.accepted_proposal is not None
             ):
                 raise CollageError("Replay unexpectedly changed acceptance; stop and inspect.")
-            if result.status == "proposal":
+            if result.status in {"proposal", "selection"}:
                 report.next_step += 1
         except (CollageError, ValidationError, OSError) as exc:
             result.status = "failed"
             result.error = f"{type(exc).__name__}: {exc}"
         finally:
+            new_events = conversation.history()[history_start:]
+            if new_events and isinstance(new_events[-1], Exchange):
+                last_event = new_events[-1]
+                result.event_id = conversation.state.history[-1]
+                result.intent = last_event.intent
+                result.source = last_event.intent.source if last_event.intent else None
             result.duration_seconds = time.monotonic() - started
             result.usage_after = requests.summary()
             result.attempts = len(requests.attempts()) - before_attempts
             result.validation_corrections = sum(
                 isinstance(event, Exchange) and event.outcome == "invalid"
-                for event in conversation.history()[history_start:]
+                for event in new_events
             )
             report.conversation_sha256 = digest(canonical(conversation.state))
             save(child(directory, "result.json"), result)
             save(report_path, report)
-        if result.status != "proposal":
+        if result.status not in {"proposal", "selection"}:
             break
+        answer = answer_origin = answers_execution = None
     return report
 
 
@@ -268,6 +311,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--retry", action="store_true")
     parser.add_argument("--remaining", action="store_true", help="Run all remaining messages, not just one.")
+    parser.add_argument("--answer", help="Supplement the pending question; do not replace the script.")
+    parser.add_argument("--answer-origin", choices=["user", "copilot"])
     args = parser.parse_args(argv)
     if not args.check and not args.project:
         parser.error("--project is required for live execution.")
@@ -284,9 +329,10 @@ def main(argv: list[str] | None = None) -> int:
             report = asyncio.run(replay(
                 store, args.project, args.sequence,
                 resume=args.resume, remaining=args.remaining, retry=args.retry,
+                answer=args.answer, answer_origin=args.answer_origin,
             ))
         print(report.model_dump_json(indent=2))
-        return 0 if report.executions[-1].status == "proposal" else 1
+        return 0 if report.executions[-1].status in {"proposal", "selection"} else 1
     except (CollageError, ValidationError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

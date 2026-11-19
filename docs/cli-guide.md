@@ -117,6 +117,24 @@ it after intentionally changing a contract, run from the repository root:
 
 ## Conversational proposals (optional)
 
+Natural-language requests now use two stages through the same provider/model:
+interpret the requested action/source, then generate a recipe only when needed.
+Ordinary edits use the selected working proposal. Rejecting a composition can
+request a fresh arrangement; rejecting a targeted edit can retry its original
+task/source. "Go back to the first one" selects its exact preserved PNG without
+generation or acceptance; "go back ... and make photo 2 smaller" edits that
+source directly. Essential ambiguity produces an interpretation-stage question.
+All lifecycle branches have offline coverage. The separately authorized
+[008 landscape smoke check](../planning/008_results.md#authorized-live-landscape-smoke-check)
+also completed initial composition and three targeted edits with the live model;
+return/retry and clarification-answer behaviours still need user-led exploration.
+
+Conversation, proposal, event and replay records now use **record version 2**.
+Layout/project format remains **3**; sequence definitions, preferences and
+request accounting retain their own unchanged versions. Old conversation/replay
+records are untouched archives: use fresh projects, not a legacy loader or
+migration. Existing supported deterministic recipes/snapshots remain usable.
+
 **Format 3 prompt/context adaptation is covered offline.** The agent now edits
 authored centres directly instead of calculating resize position offsets.
 A single authorized four-message format 3 replay completed without corrections
@@ -139,14 +157,17 @@ OpenAI SDK 2.54.0, and HTTPX 0.28.1. The manifest pins the provider and constrai
 the compatible SDK major version. Do not reuse or run the separate
 `temp-foundry-test` environment/scripts.
 
-Agent instructions live in `ai_collage\prompts\layout-agent.md`. The provider
-loads that Markdown and appends the shared [layout field guide](layout-format.md)
-on each request; controls, baseline, history, and feedback are supplied separately.
-To print the assembled instructions offline from the repository root, without
+Interpretation instructions live in `ai_collage\prompts\request-intent.md`.
+Generation loads `ai_collage\prompts\layout-agent.md` plus the shared
+[layout field guide](layout-format.md); questions and lifecycle actions are
+not generation responses. Controls, resolved source/task, history and validation
+feedback are supplied separately. Fresh layouts retain the previous recipe as
+a reference to avoid repeating, not an editing baseline.
+To print both stages' instructions offline from the repository root, without
 credentials or model calls:
 
 ```powershell
-.\.venv\Scripts\python.exe -c "from ai_collage.agent_provider import instructions; print(instructions())"
+.\.venv\Scripts\python.exe -c "from ai_collage.agent_provider import instruction_bundle; print(instruction_bundle())"
 ```
 
 Create a fresh format 3 project with `create`, using `.collage-data-v3`.
@@ -256,7 +277,9 @@ project. Add `--remaining` only when authorized to run all remaining messages
 without pausing after each proposal. A completed replay sends no further calls.
 No `--run`, `--ledger-data-dir`, or allowance provisioning is needed. There are
 at most four model calls per message, including validation corrections: a
-four-message batch makes at most 16 calls, usually four. Every explicit retry
+four-message batch makes at most 16 calls, normally eight with the two-stage
+flow. Interpretation gets at most two attempts; generation and its corrections
+share the remaining four-call allowance. Every explicit retry
 is a new bounded attempt at that message; accounting persists across invocations
 without imposing a lifetime cap.
 
@@ -266,15 +289,27 @@ messages may be edited, appended or removed; each execution preserves its
 own complete sequence snapshot. Manual chat/control/acceptance changes cause
 resume to stop rather than silently adopt a different baseline.
 
-A question stops without advancing the sequence or answering on your behalf;
-continue manually with chat if needed. That manual conversation change prevents
-subsequent automatic replay resume. A service failure stops immediately;
+A question pauses without advancing the sequence or answering on your behalf.
+After reviewing it, supply a recorded supplemental answer:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --resume --answer "Photo 2" --answer-origin user
+```
+
+Use `--answer-origin copilot` only for an answer actually authored by Copilot.
+The answer, origin and preceding question execution are captured separately;
+the original scripted message is not replaced. Each answer has a new four-call
+attempt limit and consumes the same optional outer allowance. At most two
+clarification-answer turns are allowed per scripted step. `--remaining` may
+continue subsequent scripted messages after successful completion. The runner
+never invents an answer. Manual chat/control changes still block replay resume;
+do not bypass that check to answer a question.
+A service failure stops immediately;
 an explicitly authorized retry requires `--resume --retry`. The existing
 bounded validation-correction loop still applies within a message. An
 interrupted, pending execution requires evidence inspection, not blind retry.
-Old replay reports remain readable/resumable without their former allowance
-files. Their historical ledger references and completed execution artifacts
-are preserved; new requests are recorded locally within the project.
+Retrying a failed answer preserves its recorded answer and origin. Unsupported
+old replay versions cannot resume; their evidence remains unchanged.
 
 Under the project's normal data directory, inspect:
 
@@ -291,12 +326,14 @@ conversation\requests\attempt-0001.json
 
 The report records the next-message cursor and every execution, including
 failures/retries/questions. Per-execution results contain proposal/preview
-paths, authored-field differences from the previous proposal, each request
-context path, attempt/correction counts, cumulative project request usage before/after,
+paths, resolved source/task, previous working baseline, authored-field differences
+from the actual edit source, each stage's request context path,
+attempt/correction counts, cumulative project request usage before/after,
 and elapsed stage time including validation/rendering. Raw model responses
 remain in the normal conversation events; individual request usage remains
-in the project's request records. Historical executions retain their original
-shared-run usage summaries; those are not combined with new project-local counts.
+in the project's request records. Selection is a completed step, not a new
+proposal; it has no authored changes or generation call. Both prompts are
+captured in the instruction bundle and checked on resume.
 No photos or local paths are added to the
 model context by the runner. Existing executions and proposal files are
 preserved when resuming.
@@ -318,9 +355,10 @@ guard does not add fields to model context or bind a replay to a budget path.
 
 ### Assess saved replay evidence offline
 
-The assessment command needs no request log, historical ledger, credentials, original input sequence
-file, or original source-photo paths. It reads the saved replay, imported
-photos and immutable proposals without starting/recovering a conversation,
+The assessment command needs no historical ledger, credentials, original input
+sequence file, or original source-photo paths. It reads the current-format saved
+replay, captured contexts, local request/event records, imported photos and
+immutable proposals without starting/recovering a conversation,
 rendering new previews, accepting anything, or making model requests.
 
 ```powershell
@@ -332,7 +370,7 @@ rendering new previews, accepting anything, or making model requests.
 ```
 
 The default `integrity` profile checks source/instruction hashes, proposal
-identity/parent chains, schema/controls/recomputed geometry, saved recipe/PNG
+identity/actual source relationships, schema/controls/recomputed geometry, saved recipe/PNG
 digests, per-execution result consistency and sequence completion. It does
 **not** check whether a move, swap or styling change followed the user's intent.
 
@@ -352,7 +390,10 @@ means a complete replay whose applicable mechanical checks passed; failures
 or incomplete sequences return 1. Questions, interruptions and service failures
 have no proposal to assess and remain visible as `not_assessed`. A subsequent
 explicit retry may yield an eventual pass; that is not a first-attempt success
-claim, and the original failure remains recorded.
+claim, and the original failure remains recorded. Recorded clarification answers
+can continue a pending step; the assessment reports `clarification_assisted: true`
+rather than presenting that as an uninterrupted scripted success. Stage order,
+call accounting and captured source-relative changes are checked as evidence.
 
 Acceptance fidelity remains covered by offline conversation tests, not by an
 assessment that changes the project. Composition and subjective request quality

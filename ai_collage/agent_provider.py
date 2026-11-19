@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 
 from .agent_requests import RequestLog
-from .agent_models import REPLY
-from .models import CollageError
+from .agent_models import INTENT
+from .models import CollageError, InputLayout
 from .projects import parse_json
 
 ENDPOINT = "https://nkfoundry26.openai.azure.com/openai/v1/"
@@ -15,8 +15,12 @@ DEPLOYMENT = "gpt-5.4-mini"
 AUDIENCE = "https://ai.azure.com/.default"
 
 
-def instructions() -> str:
+def instructions(stage: str = "generation") -> str:
     package = Path(__file__).resolve().parent
+    if stage == "interpretation":
+        return (package / "prompts" / "request-intent.md").read_text(encoding="utf-8")
+    if stage != "generation":
+        raise CollageError("Unknown model stage.")
     prompt = package / "prompts" / "layout-agent.md"
     guide = package.parent / "docs" / "layout-format.md"
     return (
@@ -26,21 +30,32 @@ def instructions() -> str:
     )
 
 
-def response_format() -> dict[str, object]:
-    definitions = REPLY.json_schema()["$defs"]
-    # Responses requires an object root, not a root union. The local REPLY
-    # validator still enforces the exact kind-dependent fields and rejects mixes.
-    schema = {
-        "$defs": definitions,
-        "type": "object",
-        "properties": {
-            "kind": {"type": "string", "enum": ["proposal", "question"]},
-            "recipe": definitions["ProposalReply"]["properties"]["recipe"],
-            "question": definitions["QuestionReply"]["properties"]["question"],
-        },
-        "required": ["kind"],
-        "additionalProperties": False,
-    }
+def instruction_bundle() -> str:
+    return (
+        "# Interpretation instructions\n\n" + instructions("interpretation")
+        + "\n\n# Generation instructions\n\n" + instructions("generation")
+    )
+
+
+def response_format(stage: str = "generation") -> dict[str, object]:
+    if stage == "interpretation":
+        # Provider requires an object root. The local discriminated union
+        # enforces the stricter action-dependent fields.
+        definitions = INTENT.json_schema()["$defs"]
+        properties = {}
+        for definition in definitions.values():
+            properties.update(definition["properties"])
+        properties["action"] = {
+            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question"],
+        }
+        schema = {
+            "$defs": definitions, "type": "object", "properties": properties,
+            "required": ["action"], "additionalProperties": False,
+        }
+    elif stage == "generation":
+        schema = InputLayout.model_json_schema()
+    else:
+        raise CollageError("Unknown model stage.")
 
     def adapt(value: object) -> object:
         if isinstance(value, dict):
@@ -56,7 +71,7 @@ def response_format() -> dict[str, object]:
 
     return {
         "type": "json_schema",
-        "json_schema": {"name": "collage_reply", "schema": adapt(schema), "strict": False},
+        "json_schema": {"name": f"collage_{stage}", "schema": adapt(schema), "strict": False},
     }
 
 
@@ -92,13 +107,16 @@ async def run_agent(context: dict[str, object], sdk: object, requests: RequestLo
     from agent_framework import Agent
     from agent_framework.openai import OpenAIChatClient
 
+    stage = context.get("stage")
+    if not isinstance(stage, str) or stage not in {"interpretation", "generation"}:
+        raise CollageError("A model request requires an explicit stage.")
     agent = Agent(
         client=OpenAIChatClient(model=DEPLOYMENT, async_client=sdk),
-        name="CollageDesigner", instructions=instructions(),
+        name="CollageDesigner", instructions=instructions(stage),
         default_options={
             "store": False, "max_tokens": requests.limits.output_tokens,
             "reasoning": {"effort": "high"},
-            "response_format": response_format(),
+            "response_format": response_format(stage),
         },
     )
     response = await agent.run(json.dumps(context, ensure_ascii=False))
