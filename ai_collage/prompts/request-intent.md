@@ -19,8 +19,20 @@ Actions:
 - `question`, with one short `question` of at most 1,000 characters: resolve
   essential ambiguity rather than inventing an unknown photo or proposal.
 
-Use the real history, current baseline and application-validated proposal
-catalogue to resolve references. A proposal ID that merely looks valid is not
+Context retains the original request, current layout and up to three recent
+user-message exchanges, not the full transcript. `history_omitted` counts older
+or size-trimmed exchanges; their wording is not available as standing instructions.
+`pending_question` retains an outstanding clarification even if recent history
+is size-trimmed. `failed_candidate` and `validation_feedback` describe the latest
+invalid action when correcting interpretation.
+
+Use the real recent history, current baseline and application-validated proposal
+catalogue to resolve references. The catalogue includes first/latest, current,
+recent and explicitly referenced IDs/ordinals; `ordinal` is creation order,
+not photo numbering. It is not a full list of old designs. Ask when an older
+descriptive reference cannot be resolved from this context; do not invent its
+contents. The application loads and validates the selected old source/task
+after your action. A proposal ID that merely looks valid is not
 proof that a vague reference was understood. Prefer `retry` for "I hate that,
 try again" after a proposal; the application resolves its source/task.
 If there is no edit source, use `fresh`, not an edit of an imaginary baseline.

@@ -201,26 +201,75 @@ class Conversation:
     def context(
         self, prompt: str, feedback: str | None = None, *,
         stage: str = "interpretation", intent: ResolvedIntent | None = None,
+        request_start: int | None = None,
     ) -> dict[str, object]:
         self._fresh()
         project = self.store.load(self.project_id)
-        history = []
-        catalogue = []
-        for event in self.history():
-            if isinstance(event, LocalEvent) and event.kind == "rating":
+        exchanges = [
+            (number, event)
+            for number, event in zip(self.state.history, self.history(), strict=True)
+            if isinstance(event, Exchange)
+        ]
+        groups: list[list[tuple[int, Exchange]]] = []
+        active: list[Exchange] = []
+        for number, event in exchanges:
+            if request_start is not None and number >= request_start:
+                active.append(event)
                 continue
-            history.append(event.model_dump(mode="json"))
-            if isinstance(event, Exchange) and event.outcome == "proposal":
-                assert event.proposal_id is not None
-                proposal = self.proposal(event.proposal_id)
-                catalogue.append({
-                    "proposal_id": proposal.proposal_id, "request": event.prompt,
-                    "source": proposal.intent.source.model_dump(mode="json")
-                    if proposal.intent.source else None,
-                    "task_request": proposal.intent.task_request,
-                    "action": proposal.intent.action,
-                    "controls": proposal.controls.model_dump(mode="json"),
-                })
+            if not groups or (
+                groups[-1][-1][1].outcome in {"proposal", "selection", "question", "error"}
+                or len(groups[-1]) >= 4
+                or (
+                    event.stage == "interpretation" and len(groups[-1]) >= 2
+                    and all(item.stage == "interpretation" for _, item in groups[-1])
+                )
+            ):
+                groups.append([])
+            groups[-1].append((number, event))
+        recent = groups[-3:]
+        history = [
+            {
+                "kind": "turn", "turn": group[0][0], "prompt": group[0][1].prompt,
+                "outcome": group[-1][1].outcome, "proposal_id": group[-1][1].proposal_id,
+                "response": group[-1][1].response if group[-1][1].outcome == "question" else None,
+            }
+            for group in recent
+        ]
+        published = [event.proposal_id for _, event in exchanges if event.outcome == "proposal"]
+        selected = {self.state.baseline}
+        if published:
+            selected.update((published[0], published[-1]))
+        selected.update(event.proposal_id for group in recent for _, event in group)
+        selected.update(re.findall(r"\bP[0-9]{3,}\b", prompt))
+        ordinals = {
+            "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+            "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+        }
+        positions = [
+            ordinals[word] for word in re.findall(r"\b[a-z]+\b", prompt.lower())
+            if word in ordinals
+        ]
+        positions.extend(
+            int(value) for value in re.findall(r"\b([0-9]{1,9})(?:st|nd|rd|th)\b", prompt.lower())
+        )
+        selected.update(published[position - 1] for position in positions if 1 <= position <= len(published))
+        if intent is not None:
+            selected.update(
+                source.proposal_id for source in (intent.source, intent.reference) if source is not None
+            )
+        catalogue = []
+        for ordinal, proposal_id in enumerate(published, 1):
+            if proposal_id not in selected:
+                continue
+            assert proposal_id is not None
+            proposal = self.proposal(proposal_id)
+            catalogue.append({
+                "proposal_id": proposal_id, "ordinal": ordinal,
+                "action": proposal.intent.action,
+                "source": proposal.intent.source.model_dump(mode="json") if proposal.intent.source else None,
+                "controls": proposal.controls.model_dump(mode="json"),
+            })
+        previous = groups[-1][-1][1] if groups else None
         context: dict[str, object] = {
             "stage": stage,
             "photos": [
@@ -231,7 +280,14 @@ class Conversation:
             "trusted_controls": self.state.controls.model_dump(),
             "current_baseline": self._current_source().model_dump(mode="json")
             if self._current_source() else None,
-            "proposals": catalogue,
+            "original_request": exchanges[0][1].prompt if exchanges else prompt,
+            "history_omitted": len(groups) - len(recent),
+            "proposal_count": len(published), "proposals": catalogue,
+            "pending_question": (
+                {"prompt": previous.prompt, "response": previous.response}
+                if previous is not None and previous.outcome == "question" else None
+            ),
+            "failed_candidate": active[-1].response if active and active[-1].outcome == "invalid" else None,
             "history": history, "user_request": prompt, "validation_feedback": feedback,
         }
         if stage == "generation":
@@ -250,6 +306,9 @@ class Conversation:
                 ),
                 "reference_to_avoid": reference.model_dump(mode="json") if reference else None,
             })
+        else:
+            baseline = self.baseline()
+            context["current_layout"] = baseline.model_dump(mode="json") if baseline else None
         return context
 
     def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
@@ -318,9 +377,12 @@ class Conversation:
             raise CollageError("Request accounting belongs to a different project.")
         feedback = None
         intent = None
+        request_start = self._next_event()
         for call in range(4):
             stage = "interpretation" if intent is None else "generation"
-            context = self.context(prompt, feedback, stage=stage, intent=intent)
+            context = self.context(
+                prompt, feedback, stage=stage, intent=intent, request_start=request_start,
+            )
             attempts_before = len(requests.attempts())
             try:
                 raw = await client.complete(context, requests, f"{self.project_id}: {stage}")
@@ -333,7 +395,7 @@ class Conversation:
                         len(requests.attempts())
                         if len(requests.attempts()) > attempts_before else None
                     ),
-                    error=f"Request stopped: {type(exc).__name__}.",
+                    error=str(exc) if isinstance(exc, CollageError) else f"Request stopped: {type(exc).__name__}.",
                 ))
                 raise
             try:

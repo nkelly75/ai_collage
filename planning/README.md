@@ -16,11 +16,14 @@ for current behavior and contracts.
 [008](008-project-lifecycle-and-interactive-iteration.md) is complete and closed;
 see [008 results](008_results.md) for evidence and limitations. Records 005,
 006, and the 008 smoke-check allowance are closed, not permission for more calls.
-Human trials remain unstarted and separately gated; scripted success is not
-user sign-off. [007](007-image-understanding-and-interactive-design.md) remains
+Scripted success is not user sign-off.
+[007](007-image-understanding-and-interactive-design.md) remains
 exploratory; vision, UI, and cloud hosting are not authorized by these records.
-[009](009-user-led-natural-language-trial.md) records the next user-led trial
-and its simple usage approach; it has not started.
+[009](009-user-led-natural-language-trial.md) is complete and closed as a learning
+iteration; see [009 results](009_results.md).
+[010](010-grounded-interpretation-and-human-trials.md) proposes grounded
+interpretation, compact memory/navigation and timeout recovery with continued
+human-led trials. Implementation and live evaluation are not yet authorized.
 The blueprint's broader Phase 1 is not complete.
 
 ## Planning records
@@ -39,7 +42,8 @@ and record 003 spans several feature increments.
 | [006: Simplification and repeatability](006-simplification-and-repeatability.md) | Closed revised pass: swap fix and prompt simplification. See [006 results](006_results.md) for replay evidence and limitations. | New planning record. |
 | [007: Vision for photos and collage feedback](007-image-understanding-and-interactive-design.md) | Exploratory vision ideas: preview understanding plus human feedback, photo descriptions and subjects; colour/contrast analysis lower priority. No implementation authorized. | New discussion record. |
 | [008: Project lifecycle and interactive iteration](008-project-lifecycle-and-interactive-iteration.md) | Complete and closed. See [008 results](008_results.md) for implementation and verification evidence. | New planning record. |
-| [009: User-led natural-language trial](009-user-led-natural-language-trial.md) | Not started. User drives continuation; no fixed trial-wide call allowance. | New planning record. |
+| [009: User-led natural-language trial](009-user-led-natural-language-trial.md) | Complete and closed as a learning iteration; see [009 results](009_results.md). Follow-up proposed in 010. | New planning record. |
+| [010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md) | Initial proposed spec; implementation and live evaluation require separate approvals. | New planning record. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
@@ -57,7 +61,7 @@ since that proposal are:
 | One master layout JSON with element IDs, `source_image_id`, `src`, `z_index`, and reserved `crop_pan`. | Format 3 recipes use centre coordinates, stable `photo_id`, back-to-front `layers`, explicit whole/cover modes, and cover-only `crop`. Saved snapshots separate authored `recipe` from derived `geometry`; asset paths belong to project metadata. |
 | Independently shaped frames and pan/zoom waited for a future graphical UI. | Cover frames and pan/zoom already work through JSON recipes. Graphical controls remain future work; outside borders and rounded corners are also implemented. |
 | Image-background fitting was unresolved, and the draft used `expand=True` for rotation. | An ordinary lowest photo layer supplies an image background. Tilt uses centre-preserving rotation and validated sampled footprints; angles are -10 to +10 degrees, not the draft schema's -15 to +15. |
-| Phase 1 included model-generated layouts and durable conversations. | Offline foundation, durable conversations, and fixed checkpoint A layout/refinement/acceptance cases now pass. The user-led trial and subjective sign-off remain outstanding. |
+| Phase 1 included model-generated layouts and durable conversations. | Offline foundation, durable conversations, and fixed checkpoint A layout/refinement/acceptance cases now pass. User-led trials have taken place; reliability improvements and subjective sign-off remain outstanding. |
 | Captions, shadows, UI, and authenticated cloud deployment were envisioned. | These remain unimplemented; historical model names, hosting details, and cost estimates are not verified current selections or prices. |
 
 Format 1 and 2 saved projects remain untouched archives, not loadable or migrated by

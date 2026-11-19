@@ -202,7 +202,7 @@ def test_fourth_attempt_succeeds_with_latest_candidate_feedback(agent_project):
             feedback["safe_box_center_normalized"]["center_y"][1]
             < candidate["layers"][1]["box"]["center_y"]
         )
-        assert context["history"][-1]["response"] == reply(candidate)
+        assert context["failed_candidate"] == reply(candidate)
         assert context["editing_baseline"] is None
         assert len(context["validation_feedback"].encode("utf-8")) <= 8192
     assert (
@@ -261,6 +261,50 @@ def test_defaults_snapshot_and_ratings_stay_local(agent_project):
     assert len(requests.attempts()) == 2
     with pytest.raises(CollageError, match="captured"):
         Conversation(conversation.store, "demo", preferences=conversation.state_path)
+
+
+def test_compact_context_bounds_history_and_loads_old_sources_on_demand(agent_project):
+    conversation, requests = agent_project
+    earlier_size = None
+    for number in range(10):
+        ask(conversation, requests, reply(), prompt=f"Design request {number}")
+        if number == 4:
+            earlier_size = len(json.dumps(conversation.context("Make another edit")))
+    assert earlier_size is not None
+    assert len(json.dumps(conversation.context("Make another edit"))) <= earlier_size + 256
+    before = {path: path.read_bytes() for path in conversation.root.rglob("*") if path.is_file()}
+    context = conversation.context("Go back to the second one")
+    assert context["original_request"] == "Design request 0"
+    assert [entry["prompt"] for entry in context["history"]] == [
+        "Design request 7", "Design request 8", "Design request 9",
+    ]
+    assert context["history_omitted"] == 7
+    assert "schema_version" not in json.dumps(context["history"])
+    assert all(entry["response"] is None for entry in context["history"])
+    ids = {entry["proposal_id"] for entry in context["proposals"]}
+    assert ids == {"P001", "P002", "P008", "P009", "P010"}
+    assert context["proposal_count"] == 10
+    assert context["current_layout"] == conversation.proposal("P010").recipe.model_dump(mode="json")
+    assert before == {path: path.read_bytes() for path in conversation.root.rglob("*") if path.is_file()}
+    for prompt in ("Return to P004", "Return to the 4th one"):
+        assert "P004" in {
+            entry["proposal_id"] for entry in conversation.context(prompt)["proposals"]
+        }
+
+    proposal_id, model = ask(
+        conversation, requests, reply(), prompt="Retry that old edit",
+        action=intent("retry", proposal_id="P002"),
+    )
+    generation = model.contexts[-1]
+    assert generation["original_task"] == "Design request 1"
+    assert generation["editing_baseline"] == conversation.proposal("P001").recipe.model_dump(mode="json")
+    assert generation["reference_to_avoid"] == conversation.proposal("P002").recipe.model_dump(mode="json")
+    assert conversation.proposal(proposal_id).parent == "P001"
+    assert len(conversation.history()) == 22
+    selected, _ = ask(conversation, requests, action=intent("select", proposal_id="P004"))
+    assert selected == "P004"
+    assert conversation.state.baseline == "P004"
+    assert conversation.preview_path("P004").read_bytes() == before[conversation.preview_path("P004")]
 
 
 @pytest.mark.parametrize("proposal_id", ["../outside", "P001/../state", "P999"])
@@ -573,6 +617,96 @@ def test_gate_rejects_an_extra_dispatch(store):
     assert len(dispatched) == len(requests.attempts()) == 1
 
 
+@pytest.mark.parametrize("essential_oversize", [False, True])
+def test_actual_payload_trims_only_recent_history_before_reserving(store, essential_oversize):
+    pytest.importorskip("agent_framework")
+    import httpx
+    from openai import AsyncOpenAI
+    from agent_framework.exceptions import AgentFrameworkException
+    from ai_collage.agent_provider import ENDPOINT, guarded_transport, run_agent
+
+    context = {
+        "stage": "generation", "original_request": "Keep the original design",
+        "history": [{"prompt": str(i) + "x" * 16_000} for i in range(3)],
+        "history_omitted": 4,
+        "user_request": "x" * 60_000 if essential_oversize else "Make photo 2 smaller",
+        "editing_baseline": layout_data(), "original_task": "Make photo 2 smaller",
+        "pending_question": {"prompt": "Make one smaller", "response": "Which photo?"},
+        "failed_candidate": reply(), "validation_feedback": "The box is outside the canvas",
+    }
+    original = copy.deepcopy(context)
+    requests = RequestLog(store, "trim")
+    captured = []
+
+    async def handler(request):
+        captured.append(request)
+        return httpx.Response(200, json=response_envelope(reply()))
+
+    gate = guarded_transport(requests, "trim: generation", httpx.MockTransport(handler), context=context)
+
+    async def execute():
+        async with AsyncOpenAI(
+            base_url=ENDPOINT, api_key="offline", max_retries=0,
+            http_client=httpx.AsyncClient(transport=gate),
+        ) as sdk:
+            return await run_agent(context, sdk, requests)
+
+    if essential_oversize:
+        with pytest.raises(AgentFrameworkException):
+            asyncio.run(execute())
+        assert captured == [] and requests.attempts() == []
+        assert context["history"] == []
+        assert "no request was dispatched" in str(gate.local_error)
+        assert "50,000" in str(gate.local_error)
+    else:
+        assert asyncio.run(execute()) == reply()
+        assert len(captured) == len(requests.attempts()) == 1
+        assert requests.attempts()[0].input_bound == len(captured[0].content) + 4096 <= 50_000
+        body = json.loads(captured[0].content)
+        assert str(len(captured[0].content)) == captured[0].headers["content-length"]
+        texts = [
+            part["text"] for message in body["input"] for part in message["content"]
+            if part.get("type") == "input_text"
+        ]
+        assert json.dumps(context, ensure_ascii=False) in texts
+    removed = len(original["history"]) - len(context["history"])
+    assert removed > 0
+    assert context["history"] == original["history"][removed:]
+    assert context["history_omitted"] == original["history_omitted"] + removed
+    assert {key: value for key, value in context.items() if key not in {"history", "history_omitted"}} == {
+        key: value for key, value in original.items() if key not in {"history", "history_omitted"}
+    }
+
+
+def test_foundry_preserves_local_input_limit_error_without_credentials_or_dispatch(store, monkeypatch):
+    pytest.importorskip("agent_framework")
+    import httpx
+    from ai_collage.agent_provider import FoundryModel
+
+    class OfflineCredential:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    async def no_dispatch(request):
+        raise AssertionError("Oversized input must not reach HTTP dispatch")
+
+    monkeypatch.setattr("azure.identity.aio.DefaultAzureCredential", lambda **kwargs: OfflineCredential())
+    monkeypatch.setattr("azure.identity.aio.get_bearer_token_provider", lambda *args: "offline")
+    monkeypatch.setattr("httpx.AsyncHTTPTransport", lambda **kwargs: httpx.MockTransport(no_dispatch))
+    requests = RequestLog(store, "limit")
+    with pytest.raises(CollageError, match="conservative token bound") as failure:
+        asyncio.run(FoundryModel().complete(
+            {"stage": "generation", "user_request": "x" * 60_000}, requests, "limit: generation",
+        ))
+    assert "ChatClientException" not in str(failure.value)
+    assert "50,000" in str(failure.value)
+    assert "Saved proposals are unchanged" in str(failure.value)
+    assert requests.attempts() == []
+
+
 def test_response_union_strictness_and_size():
     with pytest.raises(ValidationError):
         INTENT.validate_python({"action": "question", "question": " "})
@@ -740,6 +874,7 @@ def test_two_interpretations_leave_only_two_generation_calls(agent_project):
     assert [context["stage"] for context in client.contexts] == [
         "interpretation", "interpretation", "generation", "generation",
     ]
+    assert len(conversation.context("Next request")["history"]) == 1
 
 
 def test_clarification_task_survives_interpretation_correction_and_restart(agent_project):

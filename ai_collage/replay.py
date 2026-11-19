@@ -232,7 +232,10 @@ async def replay(
                 save(path, RootModel[dict[str, object]](context))
                 result.contexts.append(str(path))
                 provider = client if client is not None else FoundryModel()
-                return await provider.complete(context, current_requests, purpose)
+                try:
+                    return await provider.complete(context, current_requests, purpose)
+                finally:
+                    save(path, RootModel[dict[str, object]](context))
 
         started = time.monotonic()
         try:

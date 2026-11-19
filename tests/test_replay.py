@@ -126,6 +126,24 @@ def test_pre_dispatch_failure_is_preserved_without_spending_an_attempt(store, sc
         execute(store, path, FakeModel(reply()), resume=True)
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_context_capture_retains_provider_side_size_trimming(store, scenario, failed):
+    path, _ = scenario
+
+    class TrimmedModel(FakeModel):
+        async def complete(self, context, requests, purpose):
+            context["history"] = []
+            context["history_omitted"] += 1
+            return await super().complete(context, requests, purpose)
+
+    model = TrimmedModel(CollageError("essential context too large")) if failed else TrimmedModel(*turns(reply()))
+    report = execute(store, path, model)
+    for captured, actual in zip(report.executions[0].contexts, model.contexts, strict=True):
+        assert read_json(Path(captured)) == actual
+        assert actual["history_omitted"] == 1
+    assert report.executions[0].status == ("failed" if failed else "proposal")
+
+
 def test_question_stops_without_advancing_or_answering(store, scenario):
     path, _ = scenario
     model = FakeModel(intent("question", question="Which photo?"), reply())

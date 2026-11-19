@@ -84,7 +84,7 @@ class FoundryModel:
         from openai import APIError, AsyncOpenAI
         import httpx
 
-        gate = guarded_transport(requests, purpose, httpx.AsyncHTTPTransport(retries=0))
+        gate = guarded_transport(requests, purpose, httpx.AsyncHTTPTransport(retries=0), context=context)
         try:
             async with DefaultAzureCredential(exclude_interactive_browser_credential=True) as credential:
                 token = get_bearer_token_provider(credential, AUDIENCE)
@@ -96,6 +96,8 @@ class FoundryModel:
                     async with asyncio.timeout(requests.limits.timeout_seconds):
                         return await run_agent(context, sdk, requests)
         except (APIError, ClientAuthenticationError, AgentFrameworkException, TimeoutError) as exc:
+            if gate.local_error is not None:
+                raise gate.local_error from exc
             status = getattr(exc, "status_code", None)
             raise CollageError(
                 f"Foundry request stopped ({type(exc).__name__}"
@@ -125,7 +127,10 @@ async def run_agent(context: dict[str, object], sdk: object, requests: RequestLo
     return response.text
 
 
-def guarded_transport(requests: RequestLog, purpose: str, transport: object):
+def guarded_transport(
+    requests: RequestLog, purpose: str, transport: object, *,
+    context: dict[str, object] | None = None,
+):
     import httpx
     import tiktoken
 
@@ -134,8 +139,16 @@ def guarded_transport(requests: RequestLog, purpose: str, transport: object):
 
     class Guard(httpx.AsyncBaseTransport):
         used = False
+        local_error: CollageError | None = None
 
         async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            try:
+                return await self.dispatch(request)
+            except CollageError as exc:
+                self.local_error = exc
+                raise
+
+        async def dispatch(self, request: httpx.Request) -> httpx.Response:
             if self.used:
                 raise CollageError("Unexpected extra inference within one agent request.")
             if (
@@ -162,6 +175,34 @@ def guarded_transport(requests: RequestLog, purpose: str, transport: object):
             if not isinstance(body.get("input"), list) or len(body["input"]) > 4:
                 raise CollageError("Unexpected provider message framing.")
             input_bound = len(request.content) + 4096
+            history = context.get("history") if context is not None else None
+            if (
+                input_bound > limits.input_tokens and context is not None
+                and isinstance(history, list) and history
+            ):
+                omitted = context.get("history_omitted")
+                if type(omitted) is not int or omitted < 0:
+                    raise CollageError("Invalid compact-history accounting; no request dispatched.")
+                text = json.dumps(context, ensure_ascii=False)
+                parts = [
+                    part for message in body["input"] if isinstance(message, dict)
+                    for part in message.get("content", []) if isinstance(part, dict)
+                    and part.get("type") == "input_text" and part.get("text") == text
+                ]
+                if len(parts) != 1:
+                    raise CollageError("Cannot identify context for input-size trimming; no request dispatched.")
+                while input_bound > limits.input_tokens and history:
+                    history.pop(0)
+                    omitted += 1
+                    context["history_omitted"] = omitted
+                    parts[0]["text"] = json.dumps(context, ensure_ascii=False)
+                    content = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                    request = httpx.Request(
+                        request.method, request.url,
+                        headers={key: value for key, value in request.headers.items() if key != "content-length"},
+                        content=content, extensions=request.extensions,
+                    )
+                    input_bound = len(content) + 4096
             attempt = requests.reserve(purpose, input_bound)
             self.used = True
             started = time.monotonic()

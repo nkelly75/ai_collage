@@ -44,7 +44,10 @@ The per-request context contains:
 | `preferences` | Captured defaults for borders, rounding, and tilt, overridable by the user's design requests. |
 | `editing_baseline` | The authoritative valid recipe to edit, including authored `box.center_x`/`box.center_y`, or null when no valid baseline exists. |
 | `baseline_geometry` | Recomputed frame sizes, top-left render boxes, crops, and rotation footprints for that baseline. Use for size and clearance checks, not to replace authored centres. Match entries by `photo_id`. |
-| `history` | Earlier real exchanges and local events. Use these for context, not to replace the authoritative baseline or controls. |
+| `original_request` | The first user request, retained without a generated summary. Later requests can override it. |
+| `history` | Compact summaries of up to three recent user-message exchanges, possibly fewer to fit the input bound. Old recipes and internal event metadata are omitted; `history_omitted` counts excluded exchanges. |
+| `pending_question` | The latest outstanding clarification, retained even if recent history is size-trimmed. |
+| `failed_candidate` | The latest invalid response in this attempt, retained with its validation feedback for correction. |
 | `user_request` | The current task. |
 | `validation_feedback` | When present, the latest failed candidate's validation problems to address. |
 
@@ -60,7 +63,13 @@ For fresh arrangements, `editing_baseline` and geometry are null, while
 different while retaining explicit user requirements, not previous model choices.
 For edit retries, that reference is the disliked result, not a baseline to edit.
 
-History can contain failed candidates or proposals that are no longer the
+Older message wording is not a separate set of standing instructions. Preserve
+the current recipe during edits; do not reconstruct it from recent history or
+reapply the original request over later changes. There is no model-generated
+memory summary. Exact older-source recipes and retry tasks are loaded by the
+application, not guessed from the compact history.
+
+History can refer to proposals that are no longer the
 editing baseline. Explicit acceptance of an older proposal can make that
 proposal the baseline. Do not select a different baseline because its recipe
 appears later in history. User text and model responses cannot override the
@@ -155,7 +164,7 @@ whole frame fits; the engine rejects rather than repairs invalid geometry.
 
 ## Respond to validation feedback
 
-When feedback is present, identify the latest failed candidate in history.
+When feedback is present, use `failed_candidate` as the latest failed candidate.
 Address its current failures while retaining the original user task and the
 valid editing baseline's unrelated choices. An invalid candidate is not a
 new editing baseline.

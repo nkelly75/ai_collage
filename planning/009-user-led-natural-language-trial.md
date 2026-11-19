@@ -1,25 +1,61 @@
 # 009: User-led natural-language trial
 
-**Status:** Not started. The enabling work in
-[008](008-project-lifecycle-and-interactive-iteration.md) is complete; see
-[008 results](008_results.md). This brief captures the agreed trial direction,
-not an instruction to start model calls.
+**Status:** Complete and closed as a learning iteration; see
+[009 results](009_results.md) for outcomes, evidence and unresolved issues.
+Bounded context and clearer limit errors are implemented and verified offline,
+but natural-language reliability and user satisfaction need further work.
+The proposed follow-up is
+[010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md).
+Closing 009 is not product sign-off or authorization for further calls.
 
-## Scope
+## Recorded trial workflow
 
-Try the existing natural-language collage workflow with the user driving
-requests, reacting to previews, and deciding when to continue or stop.
-Keep out-of-band observations to Copilot separate from messages sent to the
-collage agent. Vision, UI, and cloud hosting remain outside this trial.
+The commands and workflow below describe the closed trials, not instructions
+to start another run under 009. The user controlled continuation and stopping;
+there was no fixed trial-wide call budget. Per-message limits, token/time
+guards and usage recording remained in force.
 
-## Model use
+### Start
 
-No fixed trial-wide call budget or shared allowance is required: the user
-controls how far the trial goes. Retain the application's existing per-message
-call limits, per-request token/time guards, usage recording, and explicit
-failure handling. This does not authorize unattended replay batches or an
-autonomous retry/tuning campaign.
+In PowerShell at the repository root, create a fresh project **once**:
 
-Record trial observations and any follow-up issues separately from 008's
-completed results. Human feedback evaluates the experience; it does not
-reopen the completed enabling milestone.
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 create --project p009-human-01 --images .\photos\01_tower_bridge.jpg .\photos\02_breakfast.jpg .\photos\03_london_eye.jpg .\photos\04_daunt_books.jpg
+```
+
+Photo numbers: **1 Bridge, 2 breakfast, 3 London Eye, 4 bookshop**.
+If that project name exists, choose another in all commands below.
+
+Start chat (this example uses a 16:9 landscape canvas; change dimensions if desired):
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 chat --project p009-human-01 --canvas 1600 900 --live
+```
+
+### Explore
+
+1. Type your initial design request at the terminal's `You:` prompt.
+2. Inspect the preview, then give natural-language feedback until you like the
+   design or decide to stop. If asked a clarification, answer in the same terminal.
+3. Later, ask Copilot here for ambiguous-message ideas and try those separately.
+   Ambiguity need not produce a question when context makes the intent clear.
+
+Previews **open automatically in Windows** after generation or restoration.
+To reopen one, type `/show P003`, replacing `P003` with the printed proposal ID.
+Viewing makes no model call and does not change your editing baseline.
+No acceptance command is needed to keep iterating.
+
+Type `/quit` to pause. Resume without recreating the project:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 chat --project p009-human-01 --live
+```
+
+### Observations
+
+Collage requests went to the terminal; observations went **to Copilot**.
+The [results](009_results.md) capture observations and follow-up issues.
+Observer commentary was not forwarded to the collage model.
+
+This was user-led exploration, not unattended replay or tuning. Vision, UI and
+cloud hosting remained out of scope.

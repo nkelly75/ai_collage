@@ -129,6 +129,14 @@ All lifecycle branches have offline coverage. The separately authorized
 also completed initial composition and three targeted edits with the live model;
 return/retry and clarification-answer behaviours still need user-led exploration.
 
+Model context keeps the original request, current layout/source, current task,
+and up to three recent user-message exchanges, not the full event log. Older
+wording is not maintained as standing instructions; its layout effects remain
+in the current recipe. Full history and proposals stay on disk. Explicit older
+proposal IDs and ordinals can retrieve preserved sources/tasks; unclear older
+descriptions may require clarification. No model-generated memory summary or
+extra compaction call is used.
+
 Conversation, proposal, event and replay records now use **record version 2**.
 Layout/project format remains **3**; sequence definitions, preferences and
 request accounting retain their own unchanged versions. Old conversation/replay
@@ -422,8 +430,14 @@ active limits, and this simplification grants no new service-call authorization.
 The transport durably records each actual outbound inference before dispatch.
 The per-request limits are 50,000 input
 tokens, 25,000 output tokens including reasoning, and 120 seconds. Input
-preflight uses a conservative token bound; actual provider usage is recorded
-separately. Oversize context fails without truncation. SDK/transport retries,
+preflight uses serialized UTF-8 bytes plus a reserve as a conservative token
+bound; actual provider usage is recorded separately. If needed, it removes
+the oldest recent exchange first until the complete outgoing request fits.
+It never cuts the original/current request, required source/task, pending
+question, or latest correction candidate/feedback. If essential input still
+exceeds the bound, a local error reports the measured bound and limit before
+dispatch, without using a call allowance or changing the baseline. Replay
+captures retain the effective context after size trimming. SDK/transport retries,
 tools, hosted history, response storage, and unexpected extra inference are
 disabled/rejected. High reasoning effort is explicitly requested and checked
 on the outbound request; reasoning tokens share the 25,000-token output cap.

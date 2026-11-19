@@ -74,7 +74,11 @@ class RequestLog:
 
     def reserve(self, purpose: str, input_bound: int) -> Attempt:
         if input_bound > self.limits.input_tokens:
-            raise CollageError("Input exceeds the conservative token bound; history was not truncated.")
+            raise CollageError(
+                f"Input exceeds the conservative token bound ({input_bound:,} > "
+                f"{self.limits.input_tokens:,}); no request was dispatched or allowance used. "
+                "Shorten the request or start a fresh project. Saved proposals are unchanged."
+            )
         records = self.attempts()
         attempt = Attempt(
             number=len(records) + 1, purpose=purpose, input_bound=input_bound,
