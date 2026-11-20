@@ -12,7 +12,7 @@ from ai_collage.projects import read_json
 from ai_collage.replay import ReplayReport, main, replay
 
 from .helpers import REPO, layout_data
-from .test_agent import FakeModel, asyncio_wakeup_pair, intent, reply, turns
+from .test_agent import FakeModel, asyncio_wakeup_pair, intent, photo_name, photo_reference, reply, turns
 
 
 @pytest.fixture
@@ -33,6 +33,44 @@ def scenario(tmp_path, sources):
 
 def execute(store, path, model, **options):
     return asyncio.run(replay(store, "demo", path, client=model, **options))
+
+
+@pytest.mark.parametrize("naming_first", [False, True])
+def test_naming_acknowledgement_advances_replay_without_proposal_or_baseline_change(
+    store, scenario, naming_first,
+):
+    from ai_collage.assess import assess
+
+    path, data = scenario
+    naming_prompt = "Photo 2 is breakfast"
+    messages = [
+        {"name": "name-photo", "prompt": naming_prompt},
+        {"name": "initial", "prompt": "Make a collage.", "reopen_before": True},
+    ]
+    naming = intent("remember", name_updates=[photo_name("breakfast", 2, naming_prompt)])
+    if naming_first:
+        responses = [naming, intent("fresh"), reply()]
+    else:
+        messages.reverse()
+        responses = [intent("fresh"), reply(), naming]
+    data["messages"] = messages
+    path.write_text(json.dumps(data), encoding="utf-8")
+    first = execute(store, path, FakeModel(*responses[:1 if naming_first else 2]))
+    assert first.next_step == 1
+    client = FakeModel(*responses[1 if naming_first else 2:])
+    report = execute(store, path, client, resume=True)
+    acknowledged = next(item for item in report.executions if item.status == "acknowledgement")
+    assert report.next_step == 2 and acknowledged.attempts == 1
+    assert acknowledged.proposal_id is None and acknowledged.source is None
+    assert acknowledged.intent is None and acknowledged.preview_path is None
+    assert acknowledged.changes == [] and "breakfast = photo 2" in acknowledged.acknowledgement
+    conversation = Conversation(store, "demo")
+    assert conversation.state.baseline == "P001" and conversation.state.photo_names[0].photo_id == 2
+    assert len(list((conversation.root / "proposals").iterdir())) == 1
+    assert assess(store, "demo").passed
+    assert [item.name for item in conversation.state.photo_names] == ["breakfast"]
+    if naming_first:
+        assert client.contexts[0]["photo_names"][0]["name"] == "breakfast"
 
 
 def test_stepwise_resume_allows_only_future_edits_and_captures_evidence(store, scenario, tmp_path):

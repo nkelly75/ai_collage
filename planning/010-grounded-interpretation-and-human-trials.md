@@ -1,9 +1,11 @@
 # 010: Grounded interpretation and continued human trials
 
-**Status:** Initial proposed specification. The user approved writing this
-brief and closing 009, not implementing 010 or making live calls.
-Review the open choices and approve implementation before changing application
-code, prompts, contracts or runtime settings. Live evaluation is a separate gate.
+**Status:** Agreed high-level direction; umbrella for three proposed sequential
+autopilot specs, **010a, 010b and 010c**.
+[010a](010a-grounded-photo-references.md) is implemented and verified offline,
+with a separately authorized live replay sanity follow-up;
+see [010a results](010a_results.md). 010b and 010c still need detailed specs and
+approval. No further live calls are authorized. Next: review the 010a handoff.
 
 ## Purpose and prerequisites
 
@@ -17,180 +19,154 @@ projects, trial evidence and accepted versions. The current CLI and layout
 contracts remain documented in the [CLI guide](../docs/cli-guide.md) and
 [layout field guide](../docs/layout-format.md).
 
-## Agreed scope and behaviour
+## Three implementation stages
 
-### 1. Grounded interpretation, not just action classification
+Each stage should be useful and verifiable on its own, build on the preceding
+stage, and stop after an offline handoff. Do not require human trials between
+stages. After all three, review the integrated result before separately
+authorizing another round of exploratory human trials.
 
-Before generation, establish the requested lifecycle action, the source proposal
-where applicable, and the identities of referenced photos. Resolve references
-from user-established names, stable numbers and available layout/history
-evidence; do not infer unseen image contents.
+### 010a: Grounded photo references
 
-- Ask when consequential ambiguity remains about the target, source or action.
-- Do not ask for unnecessary precision: "move photo 2 a bit right" identifies
-  the target and direction; generation can choose a reasonable distance.
-- If breakfast is known but bookshop is not, ask only for bookshop's number.
-- Keep interpretation concise and structured. It resolves meaning, not layout
-  geometry. A confidence score alone is not evidence that a reference is grounded.
-- Supply resolved identities to generation rather than leaving it to reinterpret
-  unknown names. Validate IDs and bindings in ordinary code where possible;
-  deterministic geometry validation cannot prove semantic understanding.
+Implemented scope and guardrails: [010a](010a-grounded-photo-references.md);
+evidence and limitations: [010a results](010a_results.md).
 
-### 2. Compact, evidence-backed memory
+Combine structured photo-reference resolution with compact, durable
+user-established names. Resolve references using stable photo numbers, user
+statements and available evidence, not guesses about unseen image contents.
+Pass resolved identities to generation and validate bindings in ordinary code
+where possible. Keep interpretation concise; it is not another geometry stage.
 
-Replace abrupt loss of useful meaning with a small memory structure alongside
-recent conversational detail. Proposed components:
+Clarify consequential uncertainty, not creative latitude. "Move photo 2 a bit
+right" needs no exact distance. If breakfast is known but bookshop is not, ask
+only for bookshop's number. Support explicit corrections to learned names and
+retain their origin. Proposal-navigation redesign belongs to 010b.
 
-- Durable project-local bindings learned from explicit user statements or
-  clarification answers, such as `breakfast -> photo 2`. Keep their origin
-  distinguishable and support explicit user corrections.
-- A compact task/proposal navigation ledger: originating request, action,
-  source, result or failure, and links to clarification questions/answers.
-  Distinguish what the user requested from what the application actually did.
-- Recent fuller wording, current task/layout, outstanding clarification and
-  correction evidence; retrieve exact older source recipes and relevant
-  conversational detail when needed.
+**Offline gate:** Exercise reference/binding contracts, invalid or inconsistent
+interpretation responses, unknown names, user corrections and clarification
+continuation. Verify names survive recent-history compaction and restarts, and
+resolved identities reach generation. Controlled responses test application
+behaviour, not whether the live model will interpret every request correctly.
 
-Keep the complete audit record on disk. A low-fidelity entry for each message is
-an option, not a requirement to send the entire growing ledger on every request.
-Group clarification answers with their originating task for navigation purposes.
-Do not treat questions, failed attempts or exact selections as generated edits.
-Retain enough selection/source history to distinguish navigation from creation
-order after returning to an older proposal and branching from it.
+### 010b: Compact history and reliable returns
 
-Prefer structured interpretation output and deterministic recipe differences
-over an extra summarization call after every message. Descriptions of requested
-changes must not be stored as proof that those changes happened.
+Build on 010a with a compact task/proposal navigation ledger, recent detail and
+retrieval of relevant older evidence. Preserve the full audit record on disk.
+Distinguish requested changes from actual outcomes; link clarification answers
+to their originating task. Questions, failed attempts and exact selections are
+not generated edits. Track navigation and branching, not just creation order.
 
-### 3. Reliable returns
+A pure return selects the exact preserved proposal/PNG without generation,
+rerendering or acceptance; return-and-edit uses the selected older source.
+Resolve clear returns directly. If "undo the last two edits" has plausible
+alternatives, confirm a supported candidate with a useful description, for
+example: "Do you mean P007, before the thicker borders and bringing breakfast
+forward?" Subsequent edits use the selected baseline.
 
-- A pure return selects the exact preserved proposal/PNG; it does not generate,
-  rerender or accept a replacement.
-- Return-and-edit selects an explicit older source for the new edit.
-- Resolve "undo the last two edits" from meaningful task/navigation history,
-  not raw message count or proposal numbering alone.
-- When one destination is clear, return directly. When plausible alternatives
-  remain, confirm a candidate with its distinguishing description, for example:
-  "Do you mean P007, before the thicker borders and bringing breakfast forward?"
-  Do not claim certainty from an ID that merely exists.
-- Subsequent edits start from the selected baseline.
+Review context selection separately from final request-size accounting. Keep
+model-facing history bounded and retrieve older detail when needed; sending a
+tiny entry for every message still grows indefinitely. Prefer structured records
+and deterministic recipe differences over extra summarization calls. Do not
+silently discard essential bindings or resolve missing evidence by guessing.
 
-### 4. Responsiveness and timeout recovery
+**Offline gate:** Exercise grouped tasks, bounded history/retrieval, ambiguous
+return confirmations, exact selection and edits from restored/branched sources.
+Include integrated cases using 010a's learned names and cases where requested
+and actual outcomes differ.
 
-The agreed target is **180 seconds for a generation invocation**, replacing
-the current 120-second deadline. This is patience, not a speed improvement.
-Keep the complete invocation bounded; do not accidentally add multiple separate
-180-second waits through nested provider/transport settings. Interpretation
-deadline handling remains an implementation choice below.
+### 010c: Timeout recovery and reasoning-trial preparation
 
-For a confirmed generation timeout before publication, report that no proposal
-was saved, identify the unchanged baseline where available, and advise that it
-is OK to repeat the previous prompt. Preserve the failed task's source and
-clarification context so repeating a short answer remains meaningful.
-Do not promise identical model output, free retries or zero timed-out usage.
-Do not give a blanket unchanged-state assurance for unrelated publication or
-I/O failures whose outcome needs reconciliation.
+Set a **180-second total deadline for a generation invocation**, rather than
+stacking separate waits through provider/transport layers. This adds patience,
+not speed. For a confirmed generation timeout before publication, report the
+unchanged baseline and advise that it is OK to repeat the previous prompt.
+Retain the task's source and clarification context, including for short answers.
+Do not promise identical output, free retries or zero timed-out usage, or give
+unchanged-state assurances for unrelated publication/I/O failures.
 
-Retain explicit user-driven retries, no automatic service retries, durable
-request accounting, and at most four actual calls per message attempt, with
-at most two interpretation attempts.
+Prepare an explicitly selected and recorded generation-only low-reasoning
+candidate for a later trial. **High reasoning remains the default** and
+interpretation reasoning stays unchanged. No model switch, automatic tuning or
+live reasoning experiment is part of this implementation stage.
 
-## Context limits: review separately from memory selection
+**Offline gate:** Simulate timeouts without real waits; verify deadline settings,
+unchanged baseline, repeat-prompt guidance, failed-task continuation and honest
+usage accounting. Check the explicitly selected reasoning settings and run
+accumulated integration cases from 010a and 010b.
 
-The current three-exchange window is a selection policy, not provider capacity.
-The final preflight uses serialized UTF-8 bytes plus a reserve as a conservative
-token bound against an application-chosen limit; that limit is not a verified
-provider context-window ceiling.
+## Verification across stages
 
-Review whether this accounting and its threshold remain appropriate. Keep a
-final bounded request-size check, preserve essential task/reference evidence,
-and report explicit no-dispatch errors if essential input cannot fit.
-Do not solve lost meaning solely by raising the threshold or silently truncating
-essential facts. Any accounting change needs a documented safety basis covering
-instructions, schemas, framing and context, with offline boundary checks.
-The existing input/output limits stay unchanged until a specific revision is
-reviewed and approved.
+Capture a deterministic baseline before 010a using
+[`emma_tilted_2x3.json`](../examples/emma_tilted_2x3.json). After each stage,
+repeat it in a fresh isolated project and compare the recipe, geometry and
+decoded pixels with that baseline. This covers whole/cover framing, crop/pan/
+zoom, borders, rounded corners, tilt and stacking without altering old projects.
 
-## Low-reasoning experiment: candidate, not default
+For each stage, run focused regression checks and preserve current lifecycle,
+replay/integrity, rendering and request-accounting behaviour. Use malformed and
+inconsistent model responses as well as successful controlled responses.
+After all three stages, run the full offline suite and review the combined
+handoff before any live evaluation.
 
-The user is interested in one small exploratory low-reasoning trial to see
-whether faster generation is worth any change in reliability. This is not a
-decision to lower the production default, switch models or start a tuning sweep.
-Initially leave interpretation's reasoning setting unchanged so the generation
-change can be examined separately.
+Offline tests establish orchestration, contracts and invariants, not live
+language understanding, real latency, or user satisfaction. Rendering equivalence
+does not validate photo-reference understanding. Human trials assess whether
+clarification is helpful rather than pedantic and whether the integrated
+experience is useful.
 
-Before any service call, agree the candidate settings and a bounded live scope.
-Record timings, reasoning/output usage, corrections, semantic mistakes,
-clarifications and user observations. Compare against high-reasoning evidence
-without claiming different exploratory prompts form a controlled comparison.
-A same-case comparison, if wanted, needs explicit inclusion in that scope.
-Faster output alone is not evidence of an acceptable correctness trade-off.
+## Requirements for each autopilot spec
 
-## Decisions to settle before implementation approval
+Write and approve a detailed spec before implementing that stage. Each should
+state its scope/exclusions, dependencies, concrete acceptance cases, affected
+contracts, offline verification, preservation rules and stop conditions.
+Stop at a documented handoff; do not automatically start the next stage or a
+live trial. Keep outcomes and evidence in a separate results record, not here.
 
-1. The minimal interpretation output and how reference evidence/binding changes
-   are checked and persisted, including conflicting or ambiguous names.
-2. The ledger representation, useful per-task detail, model-facing size bound
-   and retrieval mechanism. Preserve enough evidence to clarify rather than guess.
-3. Whether preflight accounting needs a change at all; if so, its safety basis
-   and exact threshold. No new threshold is selected in this initial brief.
-4. How failed-task continuation and candidate-return confirmations persist across
-   restarts, and whether interpretation retains its current 120-second deadline.
-5. Any affected conversation/replay contract versions. Keep one current
-   implementation, reject unsupported versions explicitly and preserve old
-   evidence without migrations or compatibility shims. Layout format 3 does
-   not change for these conversational improvements.
+Settle consequential choices before autopilot approval, rather than delegating
+an open-ended "better memory system":
 
-## Acceptance and evidence
+- **010a:** Interpretation/reference output, binding evidence and persistence,
+  name conflicts/corrections and clarification continuation.
+- **010b:** Ledger representation, useful detail, model-facing bound, retrieval
+  and persistent return confirmations. Decide any preflight-accounting revision
+  explicitly, with a safety basis and offline boundary checks.
+- **010c:** Failed-task retry semantics, interpretation deadline and how the
+  reasoning candidate is selected and recorded.
 
-Offline checks should cover the introduced behaviour, using 009 failures as
-concrete regression scenarios:
+The current three-exchange window and conservative byte-based preflight are
+application policies, not a verified provider context-window ceiling.
+Keep existing input/output limits unless a specific revision is approved;
+retain a final size guard and explicit errors if essential input cannot fit.
 
-- An unknown photo name leads to clarification without generation; a learned
-  name survives beyond the recent window and a restart. A second unknown name
-  does not cause the known name to be guessed or forgotten.
-- A clear target with a qualitative amount proceeds without a pedantic question.
-- Questions/answers do not count as separate edits. A descriptive return either
-  resolves the intended source or asks a supported confirmation; explicit
-  selection preserves the exact saved recipe/PNG, and the next edit uses it.
-- Compact history distinguishes requested from observed changes, remains bounded
-  as history grows, and can retrieve relevant older evidence. Essential bindings,
-  pending tasks and correction context survive size fitting.
-- A simulated generation timeout exercises the 180-second configuration without
-  a real wait, leaves the baseline unchanged, records unknown usage honestly,
-  gives repeat-prompt guidance and retains clarification/source context.
-- Current offline rendering, lifecycle, replay/integrity and request-accounting
-  behaviour remain intact. Record effective context and relevant instruction/
-  configuration identity so evidence is attributable to the tested candidate.
+## Guardrails and later human trials
 
-Mocked responses establish orchestration and invariants, not live language
-understanding, latency or user satisfaction. Report those limits explicitly.
+Implementation uses **zero live calls**. Preserve original photos, archived
+evidence, accepted versions and the user's Git state. Keep one current
+implementation; version only affected contracts and reject unsupported records
+without migrations or compatibility shims. Layout format 3 does not change.
 
-## Human-led evaluation and approval gates
+Retain durable usage recording, no automatic service retries, and at most four
+actual calls per message attempt, including at most two interpretation attempts.
+Any assistant-run live check/comparison needs separate authorization with one
+explicit call cap, not nested or replenishing allowances. Human-led terminal
+trials have no fixed trial-wide budget; the user controls prompts, continuation
+and stopping, subject to per-message/provider safeguards.
 
-1. Review and approve the implementation scope and outstanding decisions.
-2. Implement and verify offline; update directly affected guides/contracts.
-3. Obtain separate authorization to start live evaluation, specifying any
-   Copilot-executed smoke check or reasoning comparison and its call cap.
-4. Continue exploratory human trials when the user chooses. As in 009, the user
-   controls prompts, continuation and stopping; no fixed trial-wide call budget
-   is proposed for that interactive session. Per-message/provider safeguards and
-   usage logging still apply. Assistant-run campaigns are not covered by this.
+After the three offline handoffs, seek authorization for the integrated human
+trial and any small low-reasoning experiment. Use fresh projects and record the
+tested implementation/settings, exact prompts, timings, usage, corrections,
+semantic mistakes and observations. A low-reasoning trial does not change the
+default automatically; faster output alone does not establish a good trade-off.
+Different exploratory prompts are not a controlled high/low comparison.
 
-The user sends collage prompts to the application and observations to Copilot.
-Observer commentary must not be injected into model context. Label suggested
-prompts as assisted when the user chooses to enter them. Do not silently repair
-trial outputs or change the candidate mid-run; record interventions distinctly.
-Use fresh trial projects and preserve the closed 009 evidence.
-
-Keep outcomes, measurements, exact trial prompts, limitations and accounting in
-a separate 010 results record when work begins. Scripted success is not human
-sign-off, and one exploratory run cannot establish general reliability.
+The user sends collage prompts to the application and observations to Copilot;
+do not inject observer commentary into model context. Mark user-entered suggested
+prompts as assisted. Do not silently repair trial outputs or change candidates
+mid-run; record interventions. Scripted success is not human sign-off.
 
 ## Exclusions
 
-Composition/perceived-edit-strength work and the exploratory ideas in 007 are
-deferred. No vision, image uploads, UI, cloud hosting, renderer redesign,
-automatic critique, hidden summarization calls, model switch or unattended
-tuning campaign is included. This document authorizes no Git staging, commit,
-push, live call, implementation or recovery of an old trial.
+Composition/perceived-edit-strength work and the exploratory ideas in 007 remain
+deferred. No vision, image uploads, UI, cloud hosting, renderer redesign, automatic
+critique, hidden summarization calls, model switch or unattended tuning campaign
+is included. No Git staging, commit, push or old-trial recovery is authorized.

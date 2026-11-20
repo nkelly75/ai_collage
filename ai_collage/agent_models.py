@@ -31,44 +31,76 @@ Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 Question = Annotated[str, Field(min_length=1, max_length=1000, pattern=r"\S")]
 
 
-class EditIntent(BaseModel):
+class PhotoReference(BaseModel):
     model_config = Record.model_config
+    text: Annotated[str, Field(min_length=1, max_length=200)]
+    photo_id: PositiveInt | None
+    source: Literal["number", "name", "history", "unknown"]
+    event_id: PositiveInt | None = None
+
+
+class NameUpdate(BaseModel):
+    model_config = Record.model_config
+    name: Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
+    photo_id: PositiveInt
+    quote: Annotated[str, Field(min_length=1, max_length=1000, pattern=r"\S")]
+    replaces_photo_id: PositiveInt | None = None
+    evidence_event: PositiveInt | None = None
+
+
+class PhotoName(BaseModel):
+    model_config = Record.model_config
+    name: str
+    photo_id: PositiveInt
+    event_id: PositiveInt
+    quote: str
+    question_event: PositiveInt | None = None
+
+
+class GroundedIntent(BaseModel):
+    model_config = Record.model_config
+    references: list[PhotoReference]
+    name_updates: list[NameUpdate]
+
+
+class EditIntent(GroundedIntent):
     action: Literal["edit"]
     source: Literal["current"] | ProposalId
 
 
-class FreshIntent(BaseModel):
-    model_config = Record.model_config
+class FreshIntent(GroundedIntent):
     action: Literal["fresh"]
 
 
-class RetryIntent(BaseModel):
-    model_config = Record.model_config
+class RetryIntent(GroundedIntent):
     action: Literal["retry"]
     proposal_id: ProposalId
 
 
-class SelectIntent(BaseModel):
-    model_config = Record.model_config
+class SelectIntent(GroundedIntent):
     action: Literal["select"]
     proposal_id: ProposalId
 
 
-class QuestionIntent(BaseModel):
-    model_config = Record.model_config
+class QuestionIntent(GroundedIntent):
     action: Literal["question"]
     question: Question
+    confirmation: NameUpdate | None = None
+
+
+class RememberIntent(GroundedIntent):
+    action: Literal["remember"]
 
 
 Intent = Annotated[
-    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent,
+    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent | RememberIntent,
     Field(discriminator="action"),
 ]
 INTENT = TypeAdapter(Intent)
 
 
 class ConversationRecord(Record):
-    record_version: Literal[2] = 2
+    record_version: Literal[3] = 3
 
 
 class LayoutSource(BaseModel):
@@ -90,6 +122,7 @@ class ResolvedIntent(BaseModel):
     task_turn: PositiveInt
     task_request: Annotated[str, Field(min_length=1, pattern=r"\S")]
     reference: LayoutSource | None = None
+    references: list[PhotoReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def matching_action(self) -> "ResolvedIntent":
@@ -110,17 +143,20 @@ class ResolvedIntent(BaseModel):
 
 class RequestResult(BaseModel):
     model_config = Record.model_config
-    kind: Literal["proposal", "selection", "question"]
+    kind: Literal["proposal", "selection", "question", "acknowledgement"]
     event_id: PositiveInt
     proposal_id: ProposalId | None = None
     question: Question | None = None
+    acknowledgement: str | None = None
 
     @model_validator(mode="after")
     def matching_fields(self) -> "RequestResult":
         if self.kind == "question":
-            valid = self.question is not None and self.proposal_id is None
+            valid = self.question is not None and self.proposal_id is None and self.acknowledgement is None
+        elif self.kind == "acknowledgement":
+            valid = self.acknowledgement is not None and self.proposal_id is None and self.question is None
         else:
-            valid = self.proposal_id is not None and self.question is None
+            valid = self.proposal_id is not None and self.question is None and self.acknowledgement is None
         if not valid:
             raise ValueError("Result fields do not match its kind.")
         return self
@@ -136,6 +172,7 @@ class ConversationState(ConversationRecord):
     baseline: ProposalId | None = None
     accepted_proposal: ProposalId | None = None
     history: list[PositiveInt] = Field(default_factory=list)
+    photo_names: list[PhotoName] = Field(default_factory=list)
 
 
 class Proposal(ConversationRecord):
@@ -154,7 +191,7 @@ class Exchange(ConversationRecord):
     kind: Literal["turn"] = "turn"
     prompt: str
     response: str | None = None
-    outcome: Literal["intent", "proposal", "selection", "question", "invalid", "error"]
+    outcome: Literal["intent", "proposal", "selection", "question", "acknowledgement", "invalid", "error"]
     stage: Literal["interpretation", "generation"]
     intent: ResolvedIntent | None = None
     parent: ProposalId | None
@@ -162,6 +199,8 @@ class Exchange(ConversationRecord):
     attempt: int | None = None
     error: str | None = None
     proposal_id: ProposalId | None = None
+    references: list[PhotoReference] = Field(default_factory=list)
+    name_updates: list[PhotoName] = Field(default_factory=list)
 
 
 class LocalEvent(ConversationRecord):

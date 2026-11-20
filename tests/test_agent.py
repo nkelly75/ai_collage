@@ -66,7 +66,7 @@ def reply(data=None):
 
 
 def intent(action, **fields):
-    return json.dumps({"action": action, **fields})
+    return json.dumps({"action": action, "references": [], "name_updates": [], **fields})
 
 
 def turns(*responses):
@@ -529,7 +529,7 @@ def test_real_framework_mocked_http_gate(store, status, stage):
         assert not {"oneOf", "anyOf", "allOf", "enum", "const", "not"}.intersection(schema)
         assert set(schema["properties"]) == (
             {"schema_version", "canvas", "layers"} if stage == "generation"
-            else {"action", "source", "proposal_id", "question"}
+            else {"action", "source", "proposal_id", "question", "references", "name_updates", "confirmation"}
         )
         assert "oneOf" not in json.dumps(schema) and "discriminator" not in json.dumps(schema)
         definitions = schema["$defs"]
@@ -633,6 +633,8 @@ def test_actual_payload_trims_only_recent_history_before_reserving(store, essent
         "editing_baseline": layout_data(), "original_task": "Make photo 2 smaller",
         "pending_question": {"prompt": "Make one smaller", "response": "Which photo?"},
         "failed_candidate": reply(), "validation_feedback": "The box is outside the canvas",
+        "photo_names": [{"name": "breakfast", "photo_id": 2, "event_id": 1, "quote": "photo 2 is breakfast"}],
+        "resolved_intent": {"references": [photo_reference("breakfast", 2)]},
     }
     original = copy.deepcopy(context)
     requests = RequestLog(store, "trim")
@@ -709,9 +711,9 @@ def test_foundry_preserves_local_input_limit_error_without_credentials_or_dispat
 
 def test_response_union_strictness_and_size():
     with pytest.raises(ValidationError):
-        INTENT.validate_python({"action": "question", "question": " "})
+        INTENT.validate_json(intent("question", question=" "))
     with pytest.raises(ValidationError):
-        INTENT.validate_python({"action": "question", "question": "a" * 1001})
+        INTENT.validate_json(intent("question", question="a" * 1001))
 
 
 def test_optional_outer_cap_survives_new_projects_and_context_restarts(store, tmp_path):
@@ -979,10 +981,11 @@ def test_concurrent_state_change_during_inference_is_not_overwritten(agent_proje
     assert len(resumed.history()) == 1 and resumed.state.baseline is None
 
 
-def test_old_conversation_rejected_without_writing(agent_project):
+@pytest.mark.parametrize("old_version", [1, 2])
+def test_old_conversation_rejected_without_writing(agent_project, old_version):
     conversation, requests = agent_project
     state = read_json(conversation.state_path)
-    state["record_version"] = 1
+    state["record_version"] = old_version
     conversation.state_path.write_text(json.dumps(state), encoding="utf-8")
     before = conversation.state_path.read_bytes()
     with pytest.raises(ValidationError, match="record_version"):
@@ -1003,11 +1006,274 @@ def test_intent_prompt_identity_reloads_and_stage_schema_is_strict(tmp_path, mon
     assert agent_provider.instructions("interpretation") == "Updated intent"
     schema = agent_provider.response_format("interpretation")["json_schema"]["schema"]
     assert schema["type"] == "object" and schema["additionalProperties"] is False
-    assert set(schema["properties"]) == {"action", "source", "proposal_id", "question"}
+    assert set(schema["properties"]) == {
+        "action", "source", "proposal_id", "question", "references", "name_updates", "confirmation",
+    }
     for data in (
         {"action": "fresh", "source": "current"},
         {"action": "select", "proposal_id": "P001", "recipe": {}},
         {"action": "edit"},
     ):
         with pytest.raises(ValidationError):
-            INTENT.validate_python(data)
+            INTENT.validate_python({"references": [], "name_updates": [], **data})
+
+
+def photo_reference(text, photo_id, source="name", **fields):
+    return {"text": text, "photo_id": photo_id, "source": source, **fields}
+
+
+def photo_name(name, photo_id, quote, **fields):
+    return {"name": name, "photo_id": photo_id, "quote": quote, **fields}
+
+
+def remember(conversation, requests, name="breakfast", photo_id=2):
+    prompt = f"Photo {photo_id} is {name}"
+    client = FakeModel(intent(
+        "remember", name_updates=[photo_name(name, photo_id, prompt)],
+    ))
+    return asyncio.run(conversation.request(prompt, client, requests))
+
+
+def test_names_survive_compaction_restart_selection_and_ground_generation(agent_project):
+    conversation, requests = agent_project
+    result = remember(conversation, requests)
+    assert result.kind == "acknowledgement" and "breakfast = photo 2" in result.acknowledgement
+    assert conversation.state.baseline is None and not (conversation.root / "proposals").exists()
+    remember(conversation, requests, "croissant")
+    p1, _ = ask(conversation, requests, reply())
+    for _ in range(4):
+        ask(conversation, requests, reply(), prompt="Keep the dark background")
+    conversation = Conversation(conversation.store, "demo")
+    refs = [photo_reference("BREAKFAST", 2)]
+    _, model = ask(
+        conversation, requests, reply(), prompt="Move BREAKFAST a bit right",
+        action=intent("edit", source="current", references=refs),
+    )
+    assert model.contexts[0]["history_omitted"] > 0
+    assert {item["name"] for item in model.contexts[0]["photo_names"]} == {"breakfast", "croissant"}
+    assert model.contexts[1]["resolved_intent"]["references"][0]["photo_id"] == 2
+    selected = FakeModel(intent("select", proposal_id=p1))
+    asyncio.run(conversation.request(f"Return to {p1}", selected, requests))
+    assert len(Conversation(conversation.store, "demo").state.photo_names) == 2
+    assert conversation.store.load("demo").current_version is None
+
+
+def test_grounding_clarifies_whole_task_and_learns_numeric_answer(agent_project):
+    conversation, requests = agent_project
+    prompt = "Move photo 1 right and breakfast higher"
+    first = FakeModel(intent(
+        "question", question="Which photo number is breakfast?",
+        references=[photo_reference("photo 1", 1, "number"), photo_reference("breakfast", None)],
+    ))
+    question = asyncio.run(conversation.request(prompt, first, requests))
+    assert question.kind == "question" and conversation.state.baseline is None
+    client = FakeModel(intent(
+        "fresh",
+        references=[photo_reference("photo 1", 1, "number"), photo_reference("breakfast", 2)],
+        name_updates=[photo_name("breakfast", 2, "2")],
+    ), reply())
+    result = asyncio.run(Conversation(conversation.store, "demo").request("2", client, requests))
+    assert result.kind == "proposal" and client.contexts[1]["original_task"] == prompt
+    assert client.contexts[1]["photo_names"][0]["question_event"] == question.event_id
+    assert {item["photo_id"] for item in client.contexts[1]["resolved_intent"]["references"]} == {1, 2}
+
+
+def test_multiple_name_questions_retain_the_original_complete_task(agent_project):
+    conversation, requests = agent_project
+    prompt = "Move breakfast closer to bookshop"
+    client = FakeModel(intent(
+        "question", question="Which photo is breakfast?",
+        references=[photo_reference("breakfast", None), photo_reference("bookshop", None)],
+    ))
+    asyncio.run(conversation.request(prompt, client, requests))
+    client = FakeModel(intent(
+        "question", question="Which photo is bookshop?",
+        references=[photo_reference("breakfast", 2), photo_reference("bookshop", None)],
+        name_updates=[photo_name("breakfast", 2, "2")],
+    ))
+    asyncio.run(conversation.request("2", client, requests))
+    conversation = Conversation(conversation.store, "demo")
+    client = FakeModel(intent(
+        "fresh", references=[photo_reference("breakfast", 2), photo_reference("bookshop", 1)],
+        name_updates=[photo_name("bookshop", 1, "1")],
+    ), reply())
+    asyncio.run(conversation.request("1", client, requests))
+    assert client.contexts[0]["pending_question"]["original_task"] == prompt
+    assert client.contexts[1]["original_task"] == prompt
+    assert {item.name: item.photo_id for item in conversation.state.photo_names} == {
+        "breakfast": 2, "bookshop": 1,
+    }
+
+
+def test_longer_learned_name_is_not_confused_with_a_shorter_name(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests, "breakfast", 1)
+    remember(conversation, requests, "full breakfast", 2)
+    _, client = ask(
+        conversation, requests, reply(), prompt="Move the full breakfast photo a bit right",
+        action=intent("fresh", references=[photo_reference("full breakfast", 2)]),
+    )
+    assert client.contexts[1]["resolved_intent"]["references"][0]["photo_id"] == 2
+
+
+def test_only_unknown_name_is_clarified_and_pronoun_has_visible_evidence(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests)
+    ask(conversation, requests, reply())
+    refs = [photo_reference("breakfast", 2), photo_reference("bookshop", None)]
+    client = FakeModel(intent("question", question="Which photo number is bookshop?", references=refs))
+    asyncio.run(conversation.request("Move breakfast closer to bookshop", client, requests))
+    assert conversation.state.baseline == "P001"
+    client = FakeModel(intent(
+        "edit", source="current",
+        references=[photo_reference("breakfast", 2), photo_reference("bookshop", 1)],
+        name_updates=[photo_name("bookshop", 1, "1")],
+    ), reply())
+    asyncio.run(conversation.request("1", client, requests))
+    _, model = ask(
+        conversation, requests, reply(), prompt="Move breakfast a bit right",
+        action=intent("edit", source="current", references=[photo_reference("breakfast", 2)]),
+    )
+    event_id = conversation.state.history[-1]
+    client = FakeModel(intent(
+        "edit", source="current",
+        references=[photo_reference("it", 2, "history", event_id=event_id)],
+    ), reply())
+    result = asyncio.run(conversation.request("Make it bigger", client, requests))
+    assert result.kind == "proposal" and len(client.contexts) == 2
+    assert client.contexts[1]["resolved_intent"]["references"][0]["photo_id"] == 2
+
+
+def test_name_conflict_confirmation_and_explicit_correction_keep_other_aliases(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests)
+    remember(conversation, requests, "croissant")
+    conflict = photo_name("breakfast", 1, "Photo 1 is breakfast", replaces_photo_id=2)
+    client = FakeModel(intent(
+        "question", question="Replace breakfast's photo 2 with photo 1?", confirmation=conflict,
+    ))
+    asyncio.run(conversation.request("Photo 1 is breakfast", client, requests))
+    assert conversation.state.photo_names[0].photo_id == 2
+    client = FakeModel(intent(
+        "remember", name_updates=[photo_name("breakfast", 1, "yes", replaces_photo_id=2)],
+    ))
+    result = asyncio.run(conversation.request("yes", client, requests))
+    assert result.kind == "acknowledgement"
+    evidence_event = result.event_id
+    prompt = "I meant photo 2, not photo 1"
+    client = FakeModel(intent(
+        "remember", name_updates=[photo_name(
+            "breakfast", 2, prompt, replaces_photo_id=1, evidence_event=evidence_event,
+        )],
+    ))
+    asyncio.run(conversation.request(prompt, client, requests))
+    assert {item.name: item.photo_id for item in conversation.state.photo_names} == {
+        "breakfast": 2, "croissant": 2,
+    }
+
+
+@pytest.mark.parametrize("fields,prompt", [
+    ({"references": [photo_reference("photo 99", 99, "number")]}, "Move photo 99"),
+    ({"references": [photo_reference("croissant", 1)]}, "Move croissant"),
+    ({"references": [photo_reference("croissant", 1, "number")]}, "Move croissant"),
+    ({"references": [photo_reference("it", 2, "history", event_id=999)]}, "Move it"),
+    ({"references": [photo_reference("breakfast", None)]}, "Move breakfast"),
+    ({"name_updates": [photo_name("breakfast", 2, "invented quote")]}, "Move breakfast"),
+    ({"name_updates": [photo_name("breakfast", 2, "photo 2")]}, "Move photo 2"),
+    ({"name_updates": [photo_name("breakfast", 1, "photo 1 is breakfast")]}, "photo 1 is breakfast"),
+    ({"name_updates": [
+        photo_name("breakfast", 2, "photo 2 is breakfast"),
+        photo_name("BREAKFAST", 2, "photo 2 is breakfast"),
+    ]}, "photo 2 is breakfast"),
+    ({"name_updates": [photo_name(
+        "breakfast", 1, "actually photo 1 is breakfast",
+        replaces_photo_id=2, evidence_event=999,
+    )]}, "actually photo 1 is breakfast"),
+])
+def test_invalid_grounding_never_mutates_names_or_generates(agent_project, fields, prompt):
+    conversation, requests = agent_project
+    remember(conversation, requests)
+    names = conversation.state.photo_names
+    bad = intent("fresh", **fields)
+    client = FakeModel(bad, bad)
+    with pytest.raises(CollageError, match="correction failed"):
+        asyncio.run(conversation.request(prompt, client, requests))
+    assert len(client.contexts) == 2
+    assert all(context["stage"] == "interpretation" for context in client.contexts)
+    assert conversation.state.photo_names == names and conversation.state.baseline is None
+    assert Conversation(conversation.store, "demo").state.photo_names == names
+
+
+def test_mentioned_learned_name_cannot_be_omitted_or_rebound_as_a_number(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests)
+    client = FakeModel(
+        intent("fresh"),
+        intent("fresh", references=[photo_reference("breakfast", 1)]),
+    )
+    with pytest.raises(CollageError, match="correction failed"):
+        asyncio.run(conversation.request("Move breakfast higher", client, requests))
+    assert conversation.state.photo_names[0].photo_id == 2 and conversation.state.baseline is None
+
+
+@pytest.mark.parametrize("text,prompt", [
+    ("bookshop", "Move bookshop higher"),
+    ("it", "Position photo 1 higher"),
+])
+def test_history_cannot_ground_unknown_names_or_embedded_word_fragments(agent_project, text, prompt):
+    conversation, requests = agent_project
+    result = remember(conversation, requests)
+    bad = intent("fresh", references=[
+        photo_reference(text, 2, "history", event_id=result.event_id),
+    ])
+    client = FakeModel(bad, bad)
+    with pytest.raises(CollageError, match="correction failed"):
+        asyncio.run(conversation.request(prompt, client, requests))
+    assert conversation.state.baseline is None
+    assert len(client.contexts) == 2 and all(
+        context["stage"] == "interpretation" for context in client.contexts
+    )
+
+
+def test_combined_naming_edit_keeps_fact_when_generation_fails(agent_project):
+    conversation, requests = agent_project
+    prompt = "Photo 2 is breakfast; move breakfast a bit right"
+    client = FakeModel(intent(
+        "fresh", references=[photo_reference("breakfast", 2)],
+        name_updates=[photo_name("breakfast", 2, "Photo 2 is breakfast")],
+    ), CollageError("simulated service failure"))
+    with pytest.raises(CollageError, match="simulated service failure"):
+        asyncio.run(conversation.request(prompt, client, requests))
+    resumed = Conversation(conversation.store, "demo")
+    assert resumed.state.photo_names[0].photo_id == 2
+    assert resumed.state.baseline is None and len(client.contexts) == 2
+
+
+def test_binding_evidence_and_state_tampering_are_rejected_on_restart(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests, "  Full   Breakfast  ")
+    assert conversation.state.photo_names[0].name == "Full Breakfast"
+    state = read_json(conversation.state_path)
+    state["photo_names"][0]["photo_id"] = 1
+    conversation.state_path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(CollageError, match="Photo-name state"):
+        Conversation(conversation.store, "demo")
+
+
+def test_chat_acknowledgement_does_not_open_a_preview(agent_project, monkeypatch, capsys):
+    from ai_collage.chat import run_chat
+
+    conversation, _ = agent_project
+    prompt = "Photo 2 is breakfast"
+    client = FakeModel(intent("remember", name_updates=[photo_name("breakfast", 2, prompt)]))
+    inputs = iter([prompt, "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    monkeypatch.setattr("ai_collage.chat.open_preview", lambda _: pytest.fail("No naming preview"))
+    assert run_chat(
+        conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=False,
+    ) == 0
+    output = capsys.readouterr().out
+    assert "Remembered: breakfast = photo 2." in output
+    assert "Generated P" not in output and len(client.contexts) == 1
+    assert not (conversation.root / "proposals").exists()

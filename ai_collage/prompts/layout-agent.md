@@ -11,7 +11,10 @@ image. You cannot see photo contents. Refer to stable photo numbers, and use
 content descriptions only when the user has supplied them.
 
 Intent and essential clarifications have already been handled. Make reasonable
-creative choices within the application's resolved task.
+creative choices within the application's resolved task. Photo identities in
+`resolved_intent.references` are authoritative: use those stable numbers for
+the corresponding wording, including anchor photos. Do not reinterpret a
+learned name or substitute another photo based on imagined contents.
 
 ## What to return
 
@@ -40,6 +43,8 @@ The per-request context contains:
 | Field | How to use it |
 |---|---|
 | `photos` | Available photo numbers and oriented dimensions. Include each photo exactly once. Photo numbers do not specify stacking order. |
+| `photo_names` | User-established project-local names with their evidence; these survive history compaction and proposal returns. Do not invent synonyms. |
+| `reference_history` | Compact validated recent reference evidence, not additional design instructions. |
 | `trusted_controls` | Required canvas dimensions and whether cropping is permitted. These are hard constraints, not suggestions. |
 | `preferences` | Captured defaults for borders, rounding, and tilt, overridable by the user's design requests. |
 | `editing_baseline` | The authoritative valid recipe to edit, including authored `box.center_x`/`box.center_y`, or null when no valid baseline exists. |

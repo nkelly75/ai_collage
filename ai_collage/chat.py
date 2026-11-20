@@ -119,6 +119,9 @@ def run_chat(
                     result = await conversation.request(text, FoundryModel(), requests)
                     if result.kind == "question":
                         print(result.question)
+                    elif result.kind == "acknowledgement":
+                        print(result.acknowledgement)
+                        print(json.dumps(requests.summary()))
                     else:
                         assert result.proposal_id is not None
                         label = "Generated" if result.kind == "proposal" else "Restored"

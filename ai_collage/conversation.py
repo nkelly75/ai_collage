@@ -13,12 +13,13 @@ from .agent_files import canonical, child, digest, save
 from .agent_models import (
     HISTORY, INTENT, AcceptanceIntent, Controls, ConversationState, EditIntent, Exchange,
     FreshIntent, Intent, LayoutSource, LocalEvent, Preferences, Proposal, QuestionIntent,
-    RequestResult, ResolvedIntent, RetryIntent, SelectIntent,
+    RememberIntent, RequestResult, ResolvedIntent, RetryIntent, SelectIntent,
 )
 from .geometry import LayoutBoundsError, resolve_layout
 from .imaging import render_layout
 from .models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
 from .projects import ProjectStore, parse_json, read_json
+from .photo_references import ground_references, name_history, name_key
 
 
 class ModelClient(Protocol):
@@ -70,7 +71,10 @@ class Conversation:
             if self.root.exists() and any(self.root.iterdir()):
                 raise CollageError("Incomplete conversation initialization; inspect local state.")
             save(self.state_path, self.state)
-        self.history()
+        name_history(
+            self.state.photo_names, dict(zip(self.state.history, self.history(), strict=True)),
+            {photo.photo_id for photo in project.photos},
+        )
         self.baseline()
 
     def _commit(self, state: ConversationState) -> None:
@@ -217,7 +221,9 @@ class Conversation:
                 active.append(event)
                 continue
             if not groups or (
-                groups[-1][-1][1].outcome in {"proposal", "selection", "question", "error"}
+                groups[-1][-1][1].outcome in {
+                    "proposal", "selection", "question", "acknowledgement", "error",
+                }
                 or len(groups[-1]) >= 4
                 or (
                     event.stage == "interpretation" and len(groups[-1]) >= 2
@@ -277,6 +283,13 @@ class Conversation:
                  "aspect_ratio": p.width / p.height} for p in project.photos
             ],
             "preferences": self.state.preferences.model_dump(),
+            "photo_names": [item.model_dump(mode="json") for item in self.state.photo_names],
+            "reference_history": [
+                {"event_id": number,
+                 "references": [item.model_dump(mode="json") for item in event.references],
+                 "name_updates": [item.model_dump(mode="json") for item in event.name_updates]}
+                for group in recent for number, event in [group[-1]]
+            ],
             "trusted_controls": self.state.controls.model_dump(),
             "current_baseline": self._current_source().model_dump(mode="json")
             if self._current_source() else None,
@@ -284,7 +297,9 @@ class Conversation:
             "history_omitted": len(groups) - len(recent),
             "proposal_count": len(published), "proposals": catalogue,
             "pending_question": (
-                {"prompt": previous.prompt, "response": previous.response}
+                {"event_id": groups[-1][-1][0], "prompt": previous.prompt,
+                 "original_task": intent.task_request if intent else self._task_origin(prompt)[1],
+                 "response": previous.response}
                 if previous is not None and previous.outcome == "question" else None
             ),
             "failed_candidate": active[-1].response if active and active[-1].outcome == "invalid" else None,
@@ -311,10 +326,8 @@ class Conversation:
             context["current_layout"] = baseline.model_dump(mode="json") if baseline else None
         return context
 
-    def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
+    def _task_origin(self, prompt: str) -> tuple[int, str]:
         task_turn = self._next_event()
-        source = None
-        reference = None
         task_request = prompt
         question_prompt = prompt
         for number, event in reversed(list(zip(self.state.history, self.history(), strict=True))):
@@ -327,6 +340,13 @@ class Conversation:
                 break
             task_turn, task_request = number, event.prompt
             question_prompt = event.prompt
+        return task_turn, task_request
+
+    def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
+        task_turn, task_request = self._task_origin(prompt)
+        source = None
+        reference = None
+        references = reply.references
         if isinstance(reply, EditIntent):
             source = (
                 self._current_source() if reply.source == "current"
@@ -342,6 +362,7 @@ class Conversation:
             task_turn = previous.intent.task_turn
             task_request = previous.intent.task_request
             reference = LayoutSource(proposal_id=previous.proposal_id)
+            references = previous.intent.references
         elif isinstance(reply, FreshIntent):
             reference = self._current_source()
         else:
@@ -352,7 +373,7 @@ class Conversation:
             self._validate_recipe(recipe)
         return ResolvedIntent(
             action=reply.action, source=source, task_turn=task_turn,
-            task_request=task_request, reference=reference,
+            task_request=task_request,             reference=reference, references=references,
         )
 
     @staticmethod
@@ -402,14 +423,53 @@ class Conversation:
                 data = parse_json(raw.encode("utf-8"))
                 if intent is None:
                     reply = INTENT.validate_python(data)
+                    history = dict(zip(self.state.history, self.history(), strict=True))
+                    pending_question = context["pending_question"]
+                    previous_number = (
+                        pending_question["event_id"] if isinstance(pending_question, dict) else None
+                    )
+                    previous = history.get(previous_number)
+                    visible = context["reference_history"]
+                    assert isinstance(visible, list)
+                    visible_ids = {item["event_id"] for item in visible}
+                    updates = ground_references(
+                        reply, prompt,
+                        photos={photo.photo_id for photo in self.store.load(self.project_id).photos},
+                        names=self.state.photo_names, event_id=self._next_event(),
+                        task_request=pending_question["original_task"]
+                        if isinstance(pending_question, dict) else prompt,
+                        pending=(previous_number, previous)
+                        if previous_number is not None and isinstance(previous, Exchange)
+                        and previous.outcome == "question" else None,
+                        reference_history={
+                            number: event for number, event in history.items()
+                            if number in visible_ids and isinstance(event, Exchange)
+                        },
+                    )
+                    names = {name_key(item.name): item for item in self.state.photo_names}
+                    names.update({name_key(item.name): item for item in updates})
                     if isinstance(reply, QuestionIntent):
                         event_id = self._append(Exchange(
                             prompt=prompt, response=raw, outcome="question",
                             stage=stage, parent=self.state.baseline,
                             run_id=None, attempt=len(requests.attempts()),
-                        ))
+                            references=reply.references, name_updates=updates,
+                        ), photo_names=list(names.values()))
                         return RequestResult(
                             kind="question", question=reply.question, event_id=event_id,
+                        )
+                    if isinstance(reply, RememberIntent):
+                        message = "Remembered: " + "; ".join(
+                            f"{item.name} = photo {item.photo_id}" for item in updates
+                        ) + "."
+                        event_id = self._append(Exchange(
+                            prompt=prompt, response=raw, outcome="acknowledgement",
+                            stage=stage, parent=self.state.baseline, run_id=None,
+                            attempt=len(requests.attempts()), references=reply.references,
+                            name_updates=updates,
+                        ), photo_names=list(names.values()))
+                        return RequestResult(
+                            kind="acknowledgement", acknowledgement=message, event_id=event_id,
                         )
                     intent = self._resolve_intent(reply, prompt)
                     if isinstance(reply, SelectIntent):
@@ -418,7 +478,8 @@ class Conversation:
                             prompt=prompt, response=raw, outcome="selection", stage=stage,
                             intent=intent, parent=self.state.baseline, run_id=None,
                             attempt=len(requests.attempts()), proposal_id=reply.proposal_id,
-                        ), baseline=reply.proposal_id)
+                            references=reply.references, name_updates=updates,
+                        ), baseline=reply.proposal_id, photo_names=list(names.values()))
                         return RequestResult(
                             kind="selection", proposal_id=reply.proposal_id, event_id=event_id,
                         )
@@ -426,7 +487,8 @@ class Conversation:
                         prompt=prompt, response=raw, outcome="intent", stage=stage,
                         intent=intent, parent=self.state.baseline, run_id=None,
                         attempt=len(requests.attempts()),
-                    ))
+                        references=reply.references, name_updates=updates,
+                    ), photo_names=list(names.values()))
                     feedback = None
                     continue
                 resolved = self._validate_recipe(InputLayout.model_validate(data))
@@ -487,6 +549,7 @@ class Conversation:
             prompt=prompt, response=raw, outcome="proposal",
             parent=proposal.parent, stage="generation", intent=intent,
             run_id=None, attempt=len(requests.attempts()), proposal_id=proposal_id,
+            references=intent.references,
         ), baseline=proposal_id)
         return RequestResult(kind="proposal", proposal_id=proposal_id, event_id=event_id)
 

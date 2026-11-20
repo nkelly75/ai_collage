@@ -16,8 +16,9 @@ background. Captions are not implemented yet.
 
 The deterministic engine runs offline without credentials or model calls.
 An optional metadata-only conversational agent supports natural-language layout
-creation and refinement, fresh arrangements, retries, and returning to earlier
-proposals. Proposals are preserved separately from explicitly accepted versions.
+creation and refinement, user-taught photo names, fresh arrangements, retries,
+and returning to earlier proposals. Proposals are preserved separately from
+explicitly accepted versions.
 See the [conversation guide](docs/cli-guide.md#conversational-proposals-optional).
 Live model requests require explicit bounded authorization. A graphical UI,
 image understanding, and cloud hosting remain future work.

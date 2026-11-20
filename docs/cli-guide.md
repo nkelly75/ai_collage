@@ -117,8 +117,9 @@ it after intentionally changing a contract, run from the repository root:
 
 ## Conversational proposals (optional)
 
-Natural-language requests now use two stages through the same provider/model:
-interpret the requested action/source, then generate a recipe only when needed.
+Natural-language requests use two stages through the same provider/model:
+interpret the requested action/source and photo references, then generate a
+recipe only when needed.
 Ordinary edits use the selected working proposal. Rejecting a composition can
 request a fresh arrangement; rejecting a targeted edit can retry its original
 task/source. "Go back to the first one" selects its exact preserved PNG without
@@ -127,7 +128,25 @@ source directly. Essential ambiguity produces an interpretation-stage question.
 All lifecycle branches have offline coverage. The separately authorized
 [008 landscape smoke check](../planning/008_results.md#authorized-live-landscape-smoke-check)
 also completed initial composition and three targeted edits with the live model;
-return/retry and clarification-answer behaviours still need user-led exploration.
+later user-led observations are recorded in [009 results](../planning/009_results.md).
+
+Photo references use stable numbers, explicit user-taught names, and clear
+recent conversational references such as "make it bigger" after discussing one
+photo. The model cannot see image contents; positional descriptions such as
+"top-right" and untaught content synonyms are not resolved in this increment.
+Qualitative amounts such as "a bit right" do not require exact distances.
+
+Teach a name with "photo 2 is breakfast", or answer "2" when asked which photo
+is breakfast. Naming alone produces a **Remembered** acknowledgement, without
+generation, a new proposal or a baseline change; ordinary text still requires
+`--live` and uses interpretation. Naming plus an edit can do both. Names are
+project-local and survive compaction, restarts and returns to older proposals.
+They compare case-insensitively with normalized whitespace; one photo may have
+several taught names. Unknown names require clarification, not guessed synonyms.
+Conflicting assignments require confirmation unless explicitly corrected, e.g.
+"breakfast is actually photo 3, not photo 2"; other names do not move with it.
+An unresolved target holds the whole edit until clarification is complete.
+Explicit name facts are saved independently of subsequent generation success.
 
 Model context keeps the original request, current layout/source, current task,
 and up to three recent user-message exchanges, not the full event log. Older
@@ -135,9 +154,13 @@ wording is not maintained as standing instructions; its layout effects remain
 in the current recipe. Full history and proposals stay on disk. Explicit older
 proposal IDs and ordinals can retrieve preserved sources/tasks; unclear older
 descriptions may require clarification. No model-generated memory summary or
-extra compaction call is used.
+extra compaction call is used. User-established photo names, their evidence,
+recent validated reference evidence and resolved generation references are
+separate essential context, not disposable rolling history. If essential input
+cannot fit, the request fails explicitly rather than silently dropping names.
 
-Conversation, proposal, event and replay records now use **record version 2**.
+Conversation, proposal, event, acceptance-intent, replay and assessment records
+now use **record version 3**.
 Layout/project format remains **3**; sequence definitions, preferences and
 request accounting retain their own unchanged versions. Old conversation/replay
 records are untouched archives: use fresh projects, not a legacy loader or
@@ -297,8 +320,10 @@ messages may be edited, appended or removed; each execution preserves its
 own complete sequence snapshot. Manual chat/control/acceptance changes cause
 resume to stop rather than silently adopt a different baseline.
 
+Naming-only acknowledgements advance one scripted step without creating a
+proposal, preview, source-relative layout difference or baseline change.
 A question pauses without advancing the sequence or answering on your behalf.
-After reviewing it, supply a recorded supplemental answer:
+After reviewing the question, supply a recorded supplemental answer:
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --resume --answer "Photo 2" --answer-origin user
@@ -379,14 +404,16 @@ rendering new previews, accepting anything, or making model requests.
 
 The default `integrity` profile checks source/instruction hashes, proposal
 identity/actual source relationships, schema/controls/recomputed geometry, saved recipe/PNG
-digests, per-execution result consistency and sequence completion. It does
+digests, audited name-state updates, naming acknowledgements, per-execution
+result consistency and sequence completion. It does
 **not** check whether a move, swap or styling change followed the user's intent.
 
 The `dark-portrait-adjustments` profile additionally preserves the old fixed
 checks: dark-neutral background, photo 2 smaller than the others, subtle
-white borders/rounding/tilt, an in-place shrink, border removal, straightening,
-and no unrelated authored changes. Exact white is a historical profile rule,
-not a universal composition requirement. It requires the four corresponding
+white or near-white borders (each RGB channel at least 240), rounding/tilt,
+an in-place shrink, border removal, straightening, and no unrelated authored
+changes. These are profile-specific rules, not universal composition
+requirements. It requires the four corresponding
 named messages on a 1200x1800 four-photo replay, with reopening before
 straightening; it is not a landscape profile.
 No prompts or live execution are duplicated in the assessor.

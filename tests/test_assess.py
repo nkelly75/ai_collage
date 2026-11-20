@@ -24,7 +24,7 @@ def saved_replay(store, scenario):
 
 @pytest.fixture
 def dark_replay(store, tmp_path, sources):
-    def create(*, white=True, unrelated_edit=False):
+    def create(*, border_color="#FFFFFF", unrelated_edit=False):
         images = [*sources, photo_file(tmp_path / "three.png"), photo_file(
             tmp_path / "four.png", (20, 40), "green",
         )]
@@ -40,7 +40,7 @@ def dark_replay(store, tmp_path, sources):
                     "photo_id": number,
                     "mode": "whole",
                     "box": {"center_x": x, "center_y": y, "width": width},
-                    "border": {"width_px": 1, "color": "#FFFFFF" if white else "#FFFEEE"},
+                    "border": {"width_px": 1, "color": border_color},
                     "corner_radius_px": 1,
                     "rotation_degrees": 1,
                 }
@@ -68,8 +68,9 @@ def dark_replay(store, tmp_path, sources):
     return create
 
 
-def test_dark_portrait_profile_checks_saved_results(dark_replay, store):
-    dark_replay()
+@pytest.mark.parametrize("border_color", ["#FFFFFF", "#F5F5F5", "#F0F0F0", "#F0FAFF"])
+def test_dark_portrait_profile_checks_saved_results(dark_replay, store, border_color):
+    dark_replay(border_color=border_color)
     report = assess(store, "dark", profile="dark-portrait-adjustments")
     assert report.complete and report.passed and not report.errors
     assert [case.status for case in report.cases] == ["passed"] * 4
@@ -117,10 +118,13 @@ def test_dark_portrait_checks_preserve_exact_unrelated_fields(agent_project):
 
 
 @pytest.mark.parametrize("options,case,expected", [
-    ({"white": False}, 0, "subtle-style"),
+    ({"border_color": "#FFFEEE"}, 0, "subtle-style"),
+    ({"border_color": "#EFF0F0"}, 0, "subtle-style"),
+    ({"border_color": "#F0EFF0"}, 0, "subtle-style"),
+    ({"border_color": "#F0F0EF"}, 0, "subtle-style"),
     ({"unrelated_edit": True}, 1, "Unrelated"),
 ])
-def test_profile_preserves_historical_rules_without_affecting_integrity(
+def test_profile_checks_style_and_edits_without_affecting_integrity(
     dark_replay, store, options, case, expected,
 ):
     dark_replay(**options)

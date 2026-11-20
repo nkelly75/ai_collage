@@ -9,11 +9,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .agent_files import canonical, child, digest, save
 from .agent_models import (
-    HISTORY, INTENT, Attempt, ConversationState, Exchange, Proposal, QuestionIntent,
+    HISTORY, INTENT, Attempt, ConversationState, Exchange, Proposal, QuestionIntent, RememberIntent,
 )
 from .geometry import resolve_layout
 from .models import CollageError, ResolvedLayout
 from .projects import ProjectStore, read_json
+from .photo_references import name_history
 from .replay import ReplayReport, StepResult, authored_changes
 
 Profile = Literal["integrity", "dark-portrait-adjustments"]
@@ -34,7 +35,7 @@ def _semantic(resolved: ResolvedLayout) -> dict:
 def dark_portrait_errors(
     step: int, current: ResolvedLayout, previous: ResolvedLayout | None,
 ) -> list[str]:
-    """Preserve the historical dark portrait checks, including exact white borders."""
+    """Check dark portrait edits, allowing near-white borders."""
     errors = []
     now = _semantic(current)
     if step == 0:
@@ -48,7 +49,7 @@ def dark_portrait_errors(
         for layer in current.recipe.layers:
             if (
                 layer.border is None or not 1 <= layer.border.width_px <= 12
-                or layer.border.color.upper() != "#FFFFFF"
+                or any(int(layer.border.color[index:index + 2], 16) < 240 for index in (1, 3, 5))
                 or not 1 <= layer.corner_radius_px <= 16
                 or abs(layer.rotation_degrees) > 3
             ):
@@ -106,7 +107,7 @@ class CaseAssessment(BaseModel):
 
 
 class AssessmentReport(BaseModel):
-    record_version: Literal[2] = 2
+    record_version: Literal[3] = 3
     project_id: str
     profile: Profile
     replay_sha256: str
@@ -208,6 +209,10 @@ def assess(
         report.errors.append("Replay changed acceptance.")
     if digest(canonical(state)) != replay.conversation_sha256:
         report.errors.append("Conversation state does not match the recorded replay identity.")
+    try:
+        name_history(state.photo_names, events, {photo.photo_id for photo in project.photos})
+    except CollageError as exc:
+        report.errors.append(str(exc))
     previous_attempts = 0
     for number, result in enumerate(replay.executions, 1):
         case = CaseAssessment(
@@ -298,7 +303,7 @@ def assess(
                 not 1 <= interpretations <= 2
                 or stages != ["interpretation"] * interpretations
                 + ["generation"] * (len(stages) - interpretations)
-                or (result.status in {"selection", "question"} and "generation" in stages)
+                or (result.status in {"selection", "question", "acknowledgement"} and "generation" in stages)
                 or (result.status == "proposal" and "generation" not in stages)
             ):
                 raise CollageError("Execution stage order or limits are inconsistent.")
@@ -309,7 +314,7 @@ def assess(
                 )))
                 if attempt.number != index or attempt.purpose != f"{project_id}: {stages[index - before - 1]}":
                     raise CollageError("Request accounting does not match the captured stages.")
-            if result.status in {"proposal", "selection", "question"}:
+            if result.status in {"proposal", "selection", "question", "acknowledgement"}:
                 event = events.get(result.event_id)
                 if (
                     not isinstance(event, Exchange)
@@ -322,6 +327,21 @@ def assess(
                     question_reply = INTENT.validate_json(event.response or "")
                     if not isinstance(question_reply, QuestionIntent) or question_reply.question != result.question:
                         case.errors.append("Recorded question does not match its conversation event.")
+                elif result.status == "acknowledgement":
+                    reply = INTENT.validate_json(event.response or "")
+                    expected = "Remembered: " + "; ".join(
+                        f"{item.name} = photo {item.photo_id}" for item in event.name_updates
+                    ) + "."
+                    if (
+                        not isinstance(reply, RememberIntent) or not event.name_updates
+                        or result.acknowledgement != expected or result.intent is not None
+                        or result.source is not None or result.changes
+                        or result.preview_path is not None or result.proposal_path is not None
+                    ):
+                        case.errors.append("Acknowledgement does not match a naming-only update.")
+                    if profile == "dark-portrait-adjustments":
+                        case.errors.append("Historical profile requires a generated proposal.")
+                    case.status = "failed" if case.errors else "passed"
             if result.status in {"proposal", "selection"}:
                 if result.intent is None or result.source != result.intent.source:
                     raise CollageError("Successful execution has no matching resolved intent.")
@@ -369,13 +389,17 @@ def assess(
         if result.status in {"proposal", "selection"}:
             cursor += 1
             baseline = result.proposal_id
+        elif result.status == "acknowledgement":
+            cursor += 1
     if replay.next_step != cursor:
-        report.errors.append("Replay cursor does not match its successful proposal executions.")
+        report.errors.append("Replay cursor does not match its successful executions.")
     if state.baseline != baseline:
         report.errors.append("Conversation baseline does not match the replay outcomes.")
     report.complete = (
         cursor == len(replay.sequence.messages) and replay.next_step == cursor
-        and bool(replay.executions) and replay.executions[-1].status in {"proposal", "selection"}
+        and bool(replay.executions) and replay.executions[-1].status in {
+            "proposal", "selection", "acknowledgement",
+        }
     )
     if not report.complete:
         report.errors.append("Replay is incomplete; unexecuted messages have not been assessed.")

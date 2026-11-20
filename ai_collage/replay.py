@@ -54,12 +54,12 @@ class Change(BaseModel):
 
 class StepResult(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[2] = 2
+    record_version: Literal[3] = 3
     step: int
     name: str
     prompt: str
     reopened: bool
-    status: Literal["pending", "proposal", "selection", "question", "failed"] = "pending"
+    status: Literal["pending", "proposal", "selection", "question", "acknowledgement", "failed"] = "pending"
     baseline_before: str | None = None
     source: LayoutSource | None = None
     intent: ResolvedIntent | None = None
@@ -71,6 +71,7 @@ class StepResult(BaseModel):
     proposal_path: str | None = None
     preview_path: str | None = None
     question: str | None = None
+    acknowledgement: str | None = None
     error: str | None = None
     contexts: list[str] = Field(default_factory=list)
     changes: list[Change] = Field(default_factory=list)
@@ -83,7 +84,7 @@ class StepResult(BaseModel):
 
 class ReplayReport(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[2] = 2
+    record_version: Literal[3] = 3
     project_id: str
     sequence: Sequence
     sources: list[Source]
@@ -155,14 +156,16 @@ async def replay(
         if (
             not 0 <= report.next_step <= len(sequence.messages)
             or report.next_step != sum(
-                item.status in {"proposal", "selection"} for item in report.executions
+                item.status in {"proposal", "selection", "acknowledgement"} for item in report.executions
             )
         ):
             raise CollageError("Replay cursor is inconsistent.")
         conversation = Conversation(store, project_id)
         if digest(canonical(conversation.state)) != report.conversation_sha256:
             raise CollageError("Conversation changed outside the replay; inspect before continuing.")
-        if report.executions and report.executions[-1].status not in {"proposal", "selection"}:
+        if report.executions and report.executions[-1].status not in {
+            "proposal", "selection", "acknowledgement",
+        }:
             last = report.executions[-1]
             if last.status == "question":
                 if answer is None:
@@ -251,6 +254,9 @@ async def replay(
             if reply.kind == "question" and event.outcome == "question":
                 result.status = "question"
                 result.question = reply.question
+            elif reply.kind == "acknowledgement" and event.outcome == "acknowledgement":
+                result.status = "acknowledgement"
+                result.acknowledgement = reply.acknowledgement
             elif (
                 event.outcome in {"proposal", "selection"} and event.outcome == reply.kind
                 and event.proposal_id == reply.proposal_id
@@ -275,7 +281,7 @@ async def replay(
                 or conversation.state.accepted_proposal is not None
             ):
                 raise CollageError("Replay unexpectedly changed acceptance; stop and inspect.")
-            if result.status in {"proposal", "selection"}:
+            if result.status in {"proposal", "selection", "acknowledgement"}:
                 report.next_step += 1
         except (CollageError, ValidationError, OSError) as exc:
             result.status = "failed"
@@ -297,7 +303,7 @@ async def replay(
             report.conversation_sha256 = digest(canonical(conversation.state))
             save(child(directory, "result.json"), result)
             save(report_path, report)
-        if result.status not in {"proposal", "selection"}:
+        if result.status not in {"proposal", "selection", "acknowledgement"}:
             break
         answer = answer_origin = answers_execution = None
     return report
@@ -335,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
                 answer=args.answer, answer_origin=args.answer_origin,
             ))
         print(report.model_dump_json(indent=2))
-        return 0 if report.executions[-1].status in {"proposal", "selection"} else 1
+        return 0 if report.executions[-1].status in {"proposal", "selection", "acknowledgement"} else 1
     except (CollageError, ValidationError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

@@ -41,16 +41,18 @@ def response_format(stage: str = "generation") -> dict[str, object]:
     if stage == "interpretation":
         # Provider requires an object root. The local discriminated union
         # enforces the stricter action-dependent fields.
-        definitions = INTENT.json_schema()["$defs"]
+        intent_schema = INTENT.json_schema()
+        definitions = intent_schema["$defs"]
         properties = {}
-        for definition in definitions.values():
+        for branch in intent_schema["oneOf"]:
+            definition = definitions[branch["$ref"].rsplit("/", 1)[-1]]
             properties.update(definition["properties"])
         properties["action"] = {
-            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question"],
+            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question", "remember"],
         }
         schema = {
             "$defs": definitions, "type": "object", "properties": properties,
-            "required": ["action"], "additionalProperties": False,
+            "required": ["action", "references", "name_updates"], "additionalProperties": False,
         }
     elif stage == "generation":
         schema = InputLayout.model_json_schema()
