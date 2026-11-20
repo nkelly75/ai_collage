@@ -25,6 +25,10 @@ Every action includes `references` and `name_updates` arrays (empty when not
 applicable). Ground all photo references, including relation/anchor photos,
 before generation. Do not equate choosing edit/current with understanding targets.
 
+Every action may set `continues_task` (default true). For an answer to a pending
+question keep it true; for a clearly independent replacement request set it false
+so old questions/confirmations are not silently applied to the new task.
+
 Each reference has `text` (the exact relevant user wording), `photo_id`,
 `source`, and optional `event_id`:
 - `number`: the wording contains that photo number.
@@ -65,22 +69,58 @@ multiple answers). A clarification may record independently clear
 explicit names, but must not generate the known part of the edit on its own.
 
 Context retains the original request, current layout and up to three recent
-user-message exchanges, not the full transcript. `history_omitted` counts older
-or size-trimmed exchanges; their wording is not available as standing instructions.
+logical tasks, not the full transcript. Answers and validation corrections
+belong to their originating task. `active_task` retains required task wording
+and answers even when optional history is trimmed. `history_omitted` counts older
+or size-trimmed tasks; their wording is not available as standing instructions.
 `pending_question` retains an outstanding clarification even if recent history
 is size-trimmed. `photo_names` and `reference_history` are separately retained
 grounding evidence, not discarded rolling wording. `failed_candidate` and
 `validation_feedback` describe the latest
 invalid action when correcting interpretation.
 
-Use the real recent history, current baseline and application-validated proposal
-catalogue to resolve references. The catalogue includes first/latest, current,
-recent and explicitly referenced IDs/ordinals; `ordinal` is creation order,
-not photo numbering. It is not a full list of old designs. Ask when an older
-descriptive reference cannot be resolved from this context; do not invent its
-contents. The application loads and validates the selected old source/task
-after your action. A proposal ID that merely looks valid is not
-proof that a vague reference was understood. Prefer `retry` for "I hate that,
+`recent_tasks` and up to twelve `compact_tasks` contain deterministic task records:
+the request is what was asked; `changes` is what actually happened, keyed by
+photo number, with a separate stacking change. A successful proposal may be a
+no-op. Questions, errors, selections and naming are not generated edits.
+`required_tasks` pins evidence for a pending confirmation/resolved navigation.
+`navigation_lookup` supplies the deterministically computed undo destination
+even beyond the visible history window; an explicit lookup error means clarify,
+not fabricate a target.
+Omission counts mean more evidence exists on disk, not that there were no other
+matches. Do not recreate missing history from guesses or treat old wording as
+standing design requirements.
+
+Use the real task evidence, current baseline and validated proposal catalogue.
+`ordinal` is creation order, not photo numbering or undo ancestry. Undo follows
+actual source links, skipping no-ops; fresh arrangements link to their prior
+baseline. A retry branches from its original source, not the rejected result.
+Descriptive returns can refer to older branches. When several changes plausibly
+fit, ask a concrete destination confirmation rather than choosing by recency.
+
+For `select` or an older-source `edit`, supply `navigation`:
+- `kind: "id"` and `text` quoting the explicit proposal ID.
+- `kind: "ordinal"` and `text` quoting the creation ordinal.
+- `kind: "undo"`, `text` quoting e.g. "undo the last two edits", and `steps: 2`.
+- `kind: "before"` or `"after"`, `text` quoting the relationship/description,
+  `task_id` citing visible task evidence, and `field` citing the actual change,
+  e.g. `recipe.photos.2.border.width_px`. Do not cite a request that failed or
+  did not actually change the described field.
+Use null/omit unused evidence fields. A pure return MUST use `select`, not an
+edit restoring fields. Only a return with an additional requested edit generates.
+The application checks the cited relationship/count and loads the exact source.
+
+For a supported but uncertain destination, use `question` with
+`return_confirmation: {proposal_id, action, evidence}`. `action` is `select`
+for a pure return or `edit` for return-and-edit. Explain the candidate briefly.
+On an affirmative answer copy its exact destination, action and evidence into
+the action's `navigation`; retain the original task and any requested edit.
+On rejection clarify the alternative; do not select or generate. A new independent
+request must not reuse a pending confirmation.
+
+Ask when an older descriptive reference cannot be established from the supplied
+evidence. A real ID alone is not proof of understanding.
+Prefer `retry` for "I hate that,
 try again" after a proposal; the application resolves its source/task.
 If there is no edit source, use `fresh`, not an edit of an imaginary baseline.
 

@@ -4,8 +4,11 @@
 autopilot specs, **010a, 010b and 010c**.
 [010a](010a-grounded-photo-references.md) is implemented and verified offline,
 with a separately authorized live replay sanity follow-up;
-see [010a results](010a_results.md). 010b and 010c still need detailed specs and
-approval. No further live calls are authorized. Next: review the 010a handoff.
+see [010a results](010a_results.md).
+[010b](010b-compact-history-and-reliable-returns.md) is implemented and verified
+offline, with a separately authorized live replay sanity follow-up;
+see [010b results](010b_results.md). 010c still needs a detailed spec and approval.
+No further live calls are authorized. Next: review the 010b handoff.
 
 ## Purpose and prerequisites
 
@@ -49,6 +52,9 @@ resolved identities reach generation. Controlled responses test application
 behaviour, not whether the live model will interpret every request correctly.
 
 ### 010b: Compact history and reliable returns
+
+Implemented scope and guardrails: [010b](010b-compact-history-and-reliable-returns.md);
+evidence and limitations: [010b results](010b_results.md).
 
 Build on 010a with a compact task/proposal navigation ledger, recent detail and
 retrieval of relevant older evidence. Preserve the full audit record on disk.
@@ -163,6 +169,21 @@ The user sends collage prompts to the application and observations to Copilot;
 do not inject observer commentary into model context. Mark user-entered suggested
 prompts as assisted. Do not silently repair trial outputs or change candidates
 mid-run; record interventions. Scripted success is not human sign-off.
+
+### Trial watchpoint: Useful, recoverable progress
+
+Prefer useful, recoverable progress over perfect interpretation. When a request
+cannot be resolved confidently, the desired experience is to preserve the
+current layout, explain what remains unresolved and give a practical way to
+continue. Watch for repeated clarification loops, unnecessary questions and
+silent substitution of a different task. Distinguish dangerous guessing about
+photo/proposal identities from reasonable creative judgement about vague amounts.
+
+Do not overfit the intent layer with special cases for every awkward phrase or
+assume semantic search is needed. Record concrete trial examples where users
+cannot continue usefully; small, separately agreed interactive fixes may suffice.
+This is a trial observation principle, not a new 010d stage or authorization for
+implementation changes.
 
 ## Exclusions
 

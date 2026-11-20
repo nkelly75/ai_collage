@@ -178,9 +178,10 @@ def guarded_transport(
                 raise CollageError("Unexpected provider message framing.")
             input_bound = len(request.content) + 4096
             history = context.get("history") if context is not None else None
+            optional = ("compact_tasks", "history", "proposals")
             if (
                 input_bound > limits.input_tokens and context is not None
-                and isinstance(history, list) and history
+                and any(context.get(key) for key in optional)
             ):
                 omitted = context.get("history_omitted")
                 if type(omitted) is not int or omitted < 0:
@@ -193,10 +194,22 @@ def guarded_transport(
                 ]
                 if len(parts) != 1:
                     raise CollageError("Cannot identify context for input-size trimming; no request dispatched.")
-                while input_bound > limits.input_tokens and history:
-                    history.pop(0)
-                    omitted += 1
-                    context["history_omitted"] = omitted
+                while input_bound > limits.input_tokens and any(context.get(key) for key in optional):
+                    if context.get("compact_tasks"):
+                        context["compact_tasks"].pop()
+                        context["compact_tasks_omitted"] += 1
+                    elif isinstance(history, list) and history:
+                        removed = history.pop(0)
+                        omitted += 1
+                        context["history_omitted"] = omitted
+                        if "recent_tasks" in context:
+                            context["recent_tasks"] = [
+                                item for item in context["recent_tasks"]
+                                if item["task_id"] != removed["task_id"]
+                            ]
+                    else:
+                        context["proposals"].pop()
+                        context["proposals_omitted"] = context.get("proposals_omitted", 0) + 1
                     parts[0]["text"] = json.dumps(context, ensure_ascii=False)
                     content = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                     request = httpx.Request(

@@ -148,22 +148,41 @@ Conflicting assignments require confirmation unless explicitly corrected, e.g.
 An unresolved target holds the whole edit until clarification is complete.
 Explicit name facts are saved independently of subsequent generation success.
 
-Model context keeps the original request, current layout/source, current task,
-and up to three recent user-message exchanges, not the full event log. Older
-wording is not maintained as standing instructions; its layout effects remain
-in the current recipe. Full history and proposals stay on disk. Explicit older
-proposal IDs and ordinals can retrieve preserved sources/tasks; unclear older
-descriptions may require clarification. No model-generated memory summary or
-extra compaction call is used. User-established photo names, their evidence,
-recent validated reference evidence and resolved generation references are
-separate essential context, not disposable rolling history. If essential input
-cannot fit, the request fails explicitly rather than silently dropping names.
+Model context keeps detail for up to **three recent logical tasks** plus up to
+**twelve relevant compact task records**, not the full event log. Clarification
+answers and validation corrections belong to their originating task. Records
+are derived from authoritative events/proposals, retaining the requested task
+separately from actual recipe changes keyed by photo number, plus stacking.
+Deterministic retrieval uses IDs/ordinals, ancestry, learned names, request
+wording and actual change facts; no model-written memory summaries, extra model
+stage or retrieval calls are used. Full audit history and proposals stay on disk.
+Omission counts distinguish unavailable detail from nonexistent history.
+
+"Undo the last two edits" follows the current proposal's ancestry, skipping
+no-ops and non-edit outcomes, rather than counting the latest two created
+proposals. Fresh arrangements retain a navigation predecessor without acquiring
+an editing source; retries branch from the original source, not a rejected result.
+Descriptive returns can find older branches. The interpretation supplies
+destination evidence, which code checks before any baseline change or generation.
+Competing or unsupported matches require clarification. A concrete return
+confirmation retains its exact destination and original task across restart;
+"yes" confirms it, while rejection does not select or generate anything.
+A clearly independent replacement request supersedes the pending task.
+
+A pure return reuses the saved proposal/PNG without rerendering or acceptance.
+Return-and-edit selects an old generation source but leaves the current baseline
+unchanged if generation fails. Older wording is not maintained as standing
+instructions; preserve current recipe effects rather than replaying old requests.
+Names, current task/answers, pending confirmations, resolved sources and required
+evidence survive optional-history size fitting. If essential input cannot fit,
+the request fails explicitly instead of silently forgetting it.
 
 Conversation, proposal, event, acceptance-intent, replay and assessment records
-now use **record version 3**.
+now use **record version 4**.
 Layout/project format remains **3**; sequence definitions, preferences and
 request accounting retain their own unchanged versions. Old conversation/replay
-records are untouched archives: use fresh projects, not a legacy loader or
+records (including version 3 conversations/replays) are untouched archives:
+use fresh projects, not a legacy loader or
 migration. Existing supported deterministic recipes/snapshots remain usable.
 
 **Format 3 prompt/context adaptation is covered offline.** The agent now edits
@@ -459,7 +478,8 @@ The per-request limits are 50,000 input
 tokens, 25,000 output tokens including reasoning, and 120 seconds. Input
 preflight uses serialized UTF-8 bytes plus a reserve as a conservative token
 bound; actual provider usage is recorded separately. If needed, it removes
-the oldest recent exchange first until the complete outgoing request fits.
+optional compact records first, then oldest recent task detail and optional
+proposal catalogue entries until the complete outgoing request fits.
 It never cuts the original/current request, required source/task, pending
 question, or latest correction candidate/feedback. If essential input still
 exceeds the bound, a local error reports the measured bound and limit before

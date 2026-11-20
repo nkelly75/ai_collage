@@ -25,8 +25,11 @@ iteration; see [009 results](009_results.md).
 interpretation, compact memory/navigation and timeout recovery with continued
 human-led trials. [010a](010a-grounded-photo-references.md) is implemented and
 verified offline, with a separately authorized live replay sanity follow-up;
-see [010a results](010a_results.md). Later stages and further live evaluation
+see [010a results](010a_results.md). Further stages and live evaluation
 need separate approval.
+[010b](010b-compact-history-and-reliable-returns.md) is implemented and verified
+offline, with a separately authorized live replay sanity follow-up;
+see [010b results](010b_results.md). 010c still needs its detailed spec and approval.
 The blueprint's broader Phase 1 is not complete.
 
 ## Planning records
@@ -46,8 +49,9 @@ and record 003 spans several feature increments.
 | [007: Vision for photos and collage feedback](007-image-understanding-and-interactive-design.md) | Exploratory vision ideas: preview understanding plus human feedback, photo descriptions and subjects; colour/contrast analysis lower priority. No implementation authorized. | New discussion record. |
 | [008: Project lifecycle and interactive iteration](008-project-lifecycle-and-interactive-iteration.md) | Complete and closed. See [008 results](008_results.md) for implementation and verification evidence. | New planning record. |
 | [009: User-led natural-language trial](009-user-led-natural-language-trial.md) | Complete and closed as a learning iteration; see [009 results](009_results.md). Follow-up proposed in 010. | New planning record. |
-| [010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md) | Three-stage umbrella; 010a verified with live sanity follow-up, later stages and further live evaluation await approval. | New planning record. |
+| [010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md) | Three-stage umbrella; 010a/010b verified offline with live sanity follow-ups. 010c and further live evaluation await approval. | New planning record. |
 | [010a: Grounded photo references](010a-grounded-photo-references.md) | Implemented and closed with live sanity follow-up; see [010a results](010a_results.md). | First 010 stage. |
+| [010b: Compact history and reliable returns](010b-compact-history-and-reliable-returns.md) | Implemented and closed with live sanity follow-up; see [010b results](010b_results.md). | Second 010 stage. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

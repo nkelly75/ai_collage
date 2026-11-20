@@ -15,6 +15,7 @@ from .geometry import resolve_layout
 from .models import CollageError, ResolvedLayout
 from .projects import ProjectStore, read_json
 from .photo_references import name_history
+from .task_history import task_records
 from .replay import ReplayReport, StepResult, authored_changes
 
 Profile = Literal["integrity", "dark-portrait-adjustments"]
@@ -107,7 +108,7 @@ class CaseAssessment(BaseModel):
 
 
 class AssessmentReport(BaseModel):
-    record_version: Literal[3] = 3
+    record_version: Literal[4] = 4
     project_id: str
     profile: Profile
     replay_sha256: str
@@ -211,7 +212,15 @@ def assess(
         report.errors.append("Conversation state does not match the recorded replay identity.")
     try:
         name_history(state.photo_names, events, {photo.photo_id for photo in project.photos})
-    except CollageError as exc:
+        proposals = {
+            event.proposal_id: Proposal.model_validate(read_json(child(
+                store.project_dir(project_id), "conversation", "proposals",
+                event.proposal_id, "proposal.json",
+            ))) for event in events.values()
+            if isinstance(event, Exchange) and event.outcome == "proposal"
+        }
+        task_records(events, proposals)
+    except (CollageError, ValidationError, OSError) as exc:
         report.errors.append(str(exc))
     previous_attempts = 0
     for number, result in enumerate(replay.executions, 1):

@@ -80,6 +80,8 @@ def ask(conversation, requests, *responses, prompt="Make a collage", action=None
     action = action or (
         intent("edit", source="current") if conversation.baseline() else intent("fresh")
     )
+    if prompt == "Make a collage" and json.loads(action)["action"] == "select":
+        prompt = f"Return to {json.loads(action)['proposal_id']}"
     model = FakeModel(action, *responses)
     result = asyncio.run(conversation.request(prompt, model, requests))
     return result.proposal_id if result.kind != "question" else result.question, model
@@ -266,9 +268,9 @@ def test_defaults_snapshot_and_ratings_stay_local(agent_project):
 def test_compact_context_bounds_history_and_loads_old_sources_on_demand(agent_project):
     conversation, requests = agent_project
     earlier_size = None
-    for number in range(10):
+    for number in range(20):
         ask(conversation, requests, reply(), prompt=f"Design request {number}")
-        if number == 4:
+        if number == 15:
             earlier_size = len(json.dumps(conversation.context("Make another edit")))
     assert earlier_size is not None
     assert len(json.dumps(conversation.context("Make another edit"))) <= earlier_size + 256
@@ -276,15 +278,17 @@ def test_compact_context_bounds_history_and_loads_old_sources_on_demand(agent_pr
     context = conversation.context("Go back to the second one")
     assert context["original_request"] == "Design request 0"
     assert [entry["prompt"] for entry in context["history"]] == [
-        "Design request 7", "Design request 8", "Design request 9",
+        "Design request 17", "Design request 18", "Design request 19",
     ]
-    assert context["history_omitted"] == 7
+    assert context["history_omitted"] == 17
+    assert len(context["compact_tasks"]) == 12
     assert "schema_version" not in json.dumps(context["history"])
     assert all(entry["response"] is None for entry in context["history"])
     ids = {entry["proposal_id"] for entry in context["proposals"]}
-    assert ids == {"P001", "P002", "P008", "P009", "P010"}
-    assert context["proposal_count"] == 10
-    assert context["current_layout"] == conversation.proposal("P010").recipe.model_dump(mode="json")
+    assert {"P001", "P002", "P018", "P019", "P020"} <= ids
+    assert len(ids) <= 17
+    assert context["proposal_count"] == 20
+    assert context["current_layout"] == conversation.proposal("P020").recipe.model_dump(mode="json")
     assert before == {path: path.read_bytes() for path in conversation.root.rglob("*") if path.is_file()}
     for prompt in ("Return to P004", "Return to the 4th one"):
         assert "P004" in {
@@ -300,7 +304,7 @@ def test_compact_context_bounds_history_and_loads_old_sources_on_demand(agent_pr
     assert generation["editing_baseline"] == conversation.proposal("P001").recipe.model_dump(mode="json")
     assert generation["reference_to_avoid"] == conversation.proposal("P002").recipe.model_dump(mode="json")
     assert conversation.proposal(proposal_id).parent == "P001"
-    assert len(conversation.history()) == 22
+    assert len(conversation.history()) == 42
     selected, _ = ask(conversation, requests, action=intent("select", proposal_id="P004"))
     assert selected == "P004"
     assert conversation.state.baseline == "P004"
@@ -529,7 +533,8 @@ def test_real_framework_mocked_http_gate(store, status, stage):
         assert not {"oneOf", "anyOf", "allOf", "enum", "const", "not"}.intersection(schema)
         assert set(schema["properties"]) == (
             {"schema_version", "canvas", "layers"} if stage == "generation"
-            else {"action", "source", "proposal_id", "question", "references", "name_updates", "confirmation"}
+            else {"action", "source", "proposal_id", "question", "references", "name_updates",
+                  "confirmation", "navigation", "continues_task", "return_confirmation"}
         )
         assert "oneOf" not in json.dumps(schema) and "discriminator" not in json.dumps(schema)
         definitions = schema["$defs"]
@@ -618,7 +623,7 @@ def test_gate_rejects_an_extra_dispatch(store):
 
 
 @pytest.mark.parametrize("essential_oversize", [False, True])
-def test_actual_payload_trims_only_recent_history_before_reserving(store, essential_oversize):
+def test_actual_payload_trims_optional_history_before_reserving(store, essential_oversize):
     pytest.importorskip("agent_framework")
     import httpx
     from openai import AsyncOpenAI
@@ -627,8 +632,14 @@ def test_actual_payload_trims_only_recent_history_before_reserving(store, essent
 
     context = {
         "stage": "generation", "original_request": "Keep the original design",
-        "history": [{"prompt": str(i) + "x" * 16_000} for i in range(3)],
+        "history": [{"task_id": i + 1, "prompt": str(i) + "x" * 16_000} for i in range(3)],
         "history_omitted": 4,
+        "recent_tasks": [{"task_id": i + 1, "outcome": "proposal"} for i in range(3)],
+        "compact_tasks": [{"task_id": i + 10, "request": "y" * 16_000} for i in range(3)],
+        "compact_tasks_omitted": 2,
+        "required_tasks": [{"task_id": 8, "request": "before thicker borders", "proposal_id": "P001"}],
+        "active_task": {"request": "Return to before thicker borders", "answers": ["Yes"]},
+        "proposals": [{"proposal_id": "P001"}],
         "user_request": "x" * 60_000 if essential_oversize else "Make photo 2 smaller",
         "editing_baseline": layout_data(), "original_task": "Make photo 2 smaller",
         "pending_question": {"prompt": "Make one smaller", "response": "Which photo?"},
@@ -675,8 +686,12 @@ def test_actual_payload_trims_only_recent_history_before_reserving(store, essent
     assert removed > 0
     assert context["history"] == original["history"][removed:]
     assert context["history_omitted"] == original["history_omitted"] + removed
-    assert {key: value for key, value in context.items() if key not in {"history", "history_omitted"}} == {
-        key: value for key, value in original.items() if key not in {"history", "history_omitted"}
+    assert context["compact_tasks"] == [] and context["compact_tasks_omitted"] == 5
+    assert context["recent_tasks"] == original["recent_tasks"][removed:]
+    optional = {"history", "history_omitted", "recent_tasks", "compact_tasks", "compact_tasks_omitted",
+                "proposals", "proposals_omitted"}
+    assert {key: value for key, value in context.items() if key not in optional} == {
+        key: value for key, value in original.items() if key not in optional
     }
 
 
@@ -801,7 +816,8 @@ def test_fresh_retry_and_old_source_edit_keep_durable_provenance(agent_project):
     assert resumed.proposal(p5).parent is None
     p6, model = ask(
         resumed, requests, reply(changed),
-        action=intent("edit", source=p1), prompt="Go back to the first and shrink photo 2",
+        action=intent("edit", source=p1, navigation={"kind": "ordinal", "text": "first"}),
+        prompt="Go back to the first and shrink photo 2",
     )
     assert resumed.proposal(p6).parent == p1
     assert model.contexts[1]["editing_baseline"] == resumed.proposal(p1).recipe.model_dump(mode="json")
@@ -824,7 +840,9 @@ def test_composition_retry_and_exact_selection_are_not_acceptance(agent_project,
 
     monkeypatch.setattr("ai_collage.conversation.render_layout", forbidden)
     monkeypatch.setattr(conversation.store, "accept_recipe", forbidden)
-    client = FakeModel(intent("select", proposal_id=p1))
+    client = FakeModel(intent(
+        "select", proposal_id=p1, navigation={"kind": "ordinal", "text": "first"},
+    ))
     result = asyncio.run(conversation.request("Go back to the first one", client, requests))
     assert result.kind == "selection" and result.proposal_id == p1
     assert len(client.contexts) == 1
@@ -840,7 +858,7 @@ def test_failed_compound_edit_keeps_current_baseline_and_no_generation_questions
     p1, _ = ask(conversation, requests, reply())
     p2, _ = ask(conversation, requests, reply())
     client = FakeModel(
-        intent("edit", source=p1),
+        intent("edit", source=p1, navigation={"kind": "ordinal", "text": "first"}),
         intent("question", question="Can I change the canvas?"),
         intent("select", proposal_id=p1),
         json.dumps({"kind": "proposal", "recipe": layout_data()}),
@@ -981,7 +999,7 @@ def test_concurrent_state_change_during_inference_is_not_overwritten(agent_proje
     assert len(resumed.history()) == 1 and resumed.state.baseline is None
 
 
-@pytest.mark.parametrize("old_version", [1, 2])
+@pytest.mark.parametrize("old_version", [1, 2, 3])
 def test_old_conversation_rejected_without_writing(agent_project, old_version):
     conversation, requests = agent_project
     state = read_json(conversation.state_path)
@@ -1008,6 +1026,7 @@ def test_intent_prompt_identity_reloads_and_stage_schema_is_strict(tmp_path, mon
     assert schema["type"] == "object" and schema["additionalProperties"] is False
     assert set(schema["properties"]) == {
         "action", "source", "proposal_id", "question", "references", "name_updates", "confirmation",
+        "navigation", "continues_task", "return_confirmation",
     }
     for data in (
         {"action": "fresh", "source": "current"},

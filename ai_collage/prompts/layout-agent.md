@@ -50,7 +50,9 @@ The per-request context contains:
 | `editing_baseline` | The authoritative valid recipe to edit, including authored `box.center_x`/`box.center_y`, or null when no valid baseline exists. |
 | `baseline_geometry` | Recomputed frame sizes, top-left render boxes, crops, and rotation footprints for that baseline. Use for size and clearance checks, not to replace authored centres. Match entries by `photo_id`. |
 | `original_request` | The first user request, retained without a generated summary. Later requests can override it. |
-| `history` | Compact summaries of up to three recent user-message exchanges, possibly fewer to fit the input bound. Old recipes and internal event metadata are omitted; `history_omitted` counts excluded exchanges. |
+| `history` | Detail for up to three recent logical tasks, with grouped clarification answers; possibly fewer after size fitting. `history_omitted` counts excluded tasks. |
+| `recent_tasks`, `compact_tasks` | Deterministic task outcomes and actual photo-keyed recipe changes, not additional instructions or model-written summaries. Compact records are bounded to twelve; omission counts indicate unavailable optional history. |
+| `required_tasks`, `active_task` | Essential evidence and originating task/answers retained through size fitting. |
 | `pending_question` | The latest outstanding clarification, retained even if recent history is size-trimmed. |
 | `failed_candidate` | The latest invalid response in this attempt, retained with its validation feedback for correction. |
 | `user_request` | The current task. |

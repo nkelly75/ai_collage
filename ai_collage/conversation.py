@@ -20,6 +20,9 @@ from .imaging import render_layout
 from .models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
 from .projects import ProjectStore, parse_json, read_json
 from .photo_references import ground_references, name_history, name_key
+from .task_history import (
+    TaskRecord, ordinals, retrieve, task_records, undo_steps, undo_target, validate_navigation,
+)
 
 
 class ModelClient(Protocol):
@@ -76,6 +79,7 @@ class Conversation:
             {photo.photo_id for photo in project.photos},
         )
         self.baseline()
+        self.tasks()
 
     def _commit(self, state: ConversationState) -> None:
         save(self.state_path, state)
@@ -108,6 +112,11 @@ class Conversation:
         if ConversationState.model_validate(read_json(self.state_path)) != self.state:
             raise CollageError("Conversation changed; restart before making further changes.")
         number = self._next_event()
+        if isinstance(event, Exchange):
+            event = event.model_copy(update={
+                "task_id": self._active_task,
+                "baseline_before": self._current_source(),
+            })
         save(child(self.root, "events", f"{number:06d}.json"), event)
         state = self.state.model_copy(update={
             **updates, "history": [*self.state.history, number],
@@ -120,11 +129,16 @@ class Conversation:
             raise CollageError("Invalid proposal ID.")
         return child(self.root, "proposals", proposal_id, "preview.png")
 
-    def proposal(self, proposal_id: str) -> Proposal:
+    def proposal(
+        self, proposal_id: str, *, _events: dict[int, Exchange | LocalEvent] | None = None,
+    ) -> Proposal:
         preview = self.preview_path(proposal_id)
+        history = _events if _events is not None else dict(zip(
+            self.state.history, self.history(), strict=True,
+        ))
         committed = {
             entry.proposal_id: (number, entry)
-            for number, entry in zip(self.state.history, self.history(), strict=True)
+            for number, entry in history.items()
             if isinstance(entry, Exchange) and entry.outcome == "proposal"
         }
         if proposal_id not in committed:
@@ -133,7 +147,6 @@ class Conversation:
         number, event = committed[proposal_id]
         project = self.store.load(self.project_id)
         expected = resolve_layout(proposal.recipe, project.photos, 1)
-        history = dict(zip(self.state.history, self.history(), strict=True))
         task = history.get(proposal.intent.task_turn)
         source = proposal.intent.source
         identities = [
@@ -214,50 +227,51 @@ class Conversation:
             for number, event in zip(self.state.history, self.history(), strict=True)
             if isinstance(event, Exchange)
         ]
+        records = self.tasks()
+        prior_records = [
+            record for record in records
+            if request_start is None or record.task_id < request_start
+        ]
         groups: list[list[tuple[int, Exchange]]] = []
         active: list[Exchange] = []
         for number, event in exchanges:
             if request_start is not None and number >= request_start:
                 active.append(event)
                 continue
-            if not groups or (
-                groups[-1][-1][1].outcome in {
-                    "proposal", "selection", "question", "acknowledgement", "error",
-                }
-                or len(groups[-1]) >= 4
-                or (
-                    event.stage == "interpretation" and len(groups[-1]) >= 2
-                    and all(item.stage == "interpretation" for _, item in groups[-1])
-                )
-            ):
+            if not groups or groups[-1][0][1].task_id != event.task_id:
                 groups.append([])
             groups[-1].append((number, event))
         recent = groups[-3:]
         history = [
             {
                 "kind": "turn", "turn": group[0][0], "prompt": group[0][1].prompt,
+                "task_id": group[0][1].task_id,
+                "answers": list(dict.fromkeys(event.prompt for _, event in group[1:]
+                                             if event.prompt != group[0][1].prompt)),
                 "outcome": group[-1][1].outcome, "proposal_id": group[-1][1].proposal_id,
                 "response": group[-1][1].response if group[-1][1].outcome == "question" else None,
             }
             for group in recent
         ]
         published = [event.proposal_id for _, event in exchanges if event.outcome == "proposal"]
+        compact = retrieve(prior_records, prompt, self._current_source(), self.state.photo_names)
+        lookup = None
+        count = undo_steps(prompt)
+        if count is not None:
+            try:
+                target = undo_target(records, self._current_source(), count)
+                lookup = {"kind": "undo", "steps": count, "proposal_id": target}
+            except CollageError as exc:
+                lookup = {"kind": "undo", "steps": count, "error": str(exc)}
         selected = {self.state.baseline}
         if published:
             selected.update((published[0], published[-1]))
         selected.update(event.proposal_id for group in recent for _, event in group)
+        selected.update(record.proposal_id for record in compact)
+        if lookup is not None and "proposal_id" in lookup:
+            selected.add(lookup["proposal_id"])
         selected.update(re.findall(r"\bP[0-9]{3,}\b", prompt))
-        ordinals = {
-            "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
-            "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
-        }
-        positions = [
-            ordinals[word] for word in re.findall(r"\b[a-z]+\b", prompt.lower())
-            if word in ordinals
-        ]
-        positions.extend(
-            int(value) for value in re.findall(r"\b([0-9]{1,9})(?:st|nd|rd|th)\b", prompt.lower())
-        )
+        positions = ordinals(prompt)
         selected.update(published[position - 1] for position in positions if 1 <= position <= len(published))
         if intent is not None:
             selected.update(
@@ -268,14 +282,14 @@ class Conversation:
             if proposal_id not in selected:
                 continue
             assert proposal_id is not None
-            proposal = self.proposal(proposal_id)
+            proposal = self.proposal(proposal_id, _events=dict(exchanges))
             catalogue.append({
                 "proposal_id": proposal_id, "ordinal": ordinal,
                 "action": proposal.intent.action,
                 "source": proposal.intent.source.model_dump(mode="json") if proposal.intent.source else None,
                 "controls": proposal.controls.model_dump(mode="json"),
             })
-        previous = groups[-1][-1][1] if groups else None
+        previous = groups[-1][-1][1] if groups and not getattr(self, "_independent_task", False) else None
         context: dict[str, object] = {
             "stage": stage,
             "photos": [
@@ -284,11 +298,19 @@ class Conversation:
             ],
             "preferences": self.state.preferences.model_dump(),
             "photo_names": [item.model_dump(mode="json") for item in self.state.photo_names],
+            "compact_tasks": [record.model_dump(mode="json") for record in compact],
+            "compact_tasks_omitted": max(0, len(prior_records) - len(recent) - len(compact)),
+            "recent_tasks": [
+                record.model_dump(mode="json", exclude={"request"}) for record in prior_records[-3:]
+            ],
+            "task_count": len(prior_records),
+            "navigation_lookup": lookup,
             "reference_history": [
                 {"event_id": number,
                  "references": [item.model_dump(mode="json") for item in event.references],
                  "name_updates": [item.model_dump(mode="json") for item in event.name_updates]}
-                for group in recent for number, event in [group[-1]]
+                for group in recent for number, event in group
+                if event.references or event.name_updates
             ],
             "trusted_controls": self.state.controls.model_dump(),
             "current_baseline": self._current_source().model_dump(mode="json")
@@ -304,6 +326,32 @@ class Conversation:
             ),
             "failed_candidate": active[-1].response if active and active[-1].outcome == "invalid" else None,
             "history": history, "user_request": prompt, "validation_feedback": feedback,
+        }
+        pending = INTENT.validate_json(previous.response or "") if (
+            previous is not None and previous.outcome == "question"
+        ) else None
+        pinned_ids = {
+            evidence.task_id for evidence in (
+                pending.return_confirmation.evidence
+                if isinstance(pending, QuestionIntent) and pending.return_confirmation else None,
+                intent.navigation if intent else None,
+            ) if evidence is not None and evidence.task_id is not None
+        }
+        context["required_tasks"] = [
+            record.model_dump(mode="json", exclude={"request", "events"})
+            for record in records if record.task_id in pinned_ids
+        ]
+        active_task = next(
+            (record for record in records if request_start is not None
+             and record.task_id == getattr(self, "_active_task", None)), None,
+        )
+        context["active_task"] = {
+            "request": active_task.request if active_task else prompt,
+            "answers": list(dict.fromkeys(
+                [event.prompt for number, event in exchanges if active_task
+                 and number in active_task.events and event.prompt != active_task.request]
+                + ([prompt] if active_task and prompt != active_task.request else [])
+            )),
         }
         if stage == "generation":
             if intent is None:
@@ -326,21 +374,44 @@ class Conversation:
             context["current_layout"] = baseline.model_dump(mode="json") if baseline else None
         return context
 
-    def _task_origin(self, prompt: str) -> tuple[int, str]:
-        task_turn = self._next_event()
-        task_request = prompt
-        question_prompt = prompt
-        for number, event in reversed(list(zip(self.state.history, self.history(), strict=True))):
+    def tasks(self) -> list[TaskRecord]:
+        events = dict(zip(self.state.history, self.history(), strict=True))
+        proposals = {
+            event.proposal_id: self.proposal(event.proposal_id, _events=events)
+            for event in events.values()
+            if isinstance(event, Exchange) and event.outcome == "proposal"
+        }
+        initial = None
+        if self.state.initial_version is not None:
+            source = LayoutSource(accepted_version=self.state.initial_version)
+            recipe = self.source_recipe(source)
+            assert recipe is not None
+            initial = (source, recipe)
+        records = task_records(events, proposals, initial)
+        expected = initial[0] if initial else None
+        for event in events.values():
             if (
-                isinstance(event, Exchange) and event.outcome == "invalid"
-                and event.stage == "interpretation" and event.prompt == question_prompt
+                isinstance(event, Exchange) and event.outcome in {"proposal", "selection"}
+                or isinstance(event, LocalEvent) and event.kind == "accept"
             ):
+                expected = LayoutSource(proposal_id=event.proposal_id)
+        if expected != self._current_source():
+            raise CollageError("Working baseline does not match recorded navigation.")
+        return records
+
+    def _task_origin(self, prompt: str) -> tuple[int, str]:
+        if getattr(self, "_independent_task", False):
+            return self._next_event(), prompt
+        history = dict(zip(self.state.history, self.history(), strict=True))
+        exchanges = [(number, event) for number, event in history.items() if isinstance(event, Exchange)]
+        for _, event in reversed(exchanges):
+            if event.outcome == "invalid" and event.stage == "interpretation" and event.prompt == prompt:
                 continue
-            if not isinstance(event, Exchange) or event.outcome != "question":
-                break
-            task_turn, task_request = number, event.prompt
-            question_prompt = event.prompt
-        return task_turn, task_request
+            if event.outcome == "question":
+                origin = history[event.task_id]
+                return event.task_id, origin.prompt
+            break
+        return self._next_event(), prompt
 
     def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
         task_turn, task_request = self._task_origin(prompt)
@@ -373,7 +444,8 @@ class Conversation:
             self._validate_recipe(recipe)
         return ResolvedIntent(
             action=reply.action, source=source, task_turn=task_turn,
-            task_request=task_request,             reference=reference, references=references,
+            task_request=task_request, reference=reference, references=references,
+            navigation=reply.navigation,
         )
 
     @staticmethod
@@ -399,6 +471,8 @@ class Conversation:
         feedback = None
         intent = None
         request_start = self._next_event()
+        self._independent_task = False
+        self._active_task = self._task_origin(prompt)[0]
         for call in range(4):
             stage = "interpretation" if intent is None else "generation"
             context = self.context(
@@ -429,6 +503,18 @@ class Conversation:
                         pending_question["event_id"] if isinstance(pending_question, dict) else None
                     )
                     previous = history.get(previous_number)
+                    if not reply.continues_task:
+                        self._independent_task = True
+                        self._active_task = self._next_event()
+                        previous = None
+                    pending_reply = (
+                        INTENT.validate_json(previous.response or "")
+                        if isinstance(previous, Exchange) and previous.outcome == "question" else None
+                    )
+                    visible_tasks = {
+                        item["task_id"] for key in ("recent_tasks", "compact_tasks", "required_tasks")
+                        for item in context[key]
+                    }
                     visible = context["reference_history"]
                     assert isinstance(visible, list)
                     visible_ids = {item["event_id"] for item in visible}
@@ -437,7 +523,7 @@ class Conversation:
                         photos={photo.photo_id for photo in self.store.load(self.project_id).photos},
                         names=self.state.photo_names, event_id=self._next_event(),
                         task_request=pending_question["original_task"]
-                        if isinstance(pending_question, dict) else prompt,
+                        if isinstance(pending_question, dict) and reply.continues_task else prompt,
                         pending=(previous_number, previous)
                         if previous_number is not None and isinstance(previous, Exchange)
                         and previous.outcome == "question" else None,
@@ -448,6 +534,13 @@ class Conversation:
                     )
                     names = {name_key(item.name): item for item in self.state.photo_names}
                     names.update({name_key(item.name): item for item in updates})
+                    validate_navigation(
+                        reply, prompt,
+                        pending_question["original_task"]
+                        if isinstance(pending_question, dict) and reply.continues_task else prompt,
+                        self.tasks(), self._current_source(), list(names.values()), visible_tasks,
+                        pending_reply if isinstance(pending_reply, QuestionIntent) else None,
+                    )
                     if isinstance(reply, QuestionIntent):
                         event_id = self._append(Exchange(
                             prompt=prompt, response=raw, outcome="question",

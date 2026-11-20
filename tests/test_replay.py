@@ -470,8 +470,10 @@ def test_selection_fresh_and_older_source_edits_are_not_linearized(store, scenar
     changed = layout_data()
     changed["canvas"]["background"] = "#202020"
     model = FakeModel(
-        *turns(reply(), reply(changed)), intent("select", proposal_id="P001"),
-        intent("edit", source="P002"), reply(), intent("fresh"), reply(),
+        *turns(reply(), reply(changed)),
+        intent("select", proposal_id="P001", navigation={"kind": "ordinal", "text": "first"}),
+        intent("edit", source="P002", navigation={"kind": "ordinal", "text": "second"}),
+        reply(), intent("fresh"), reply(),
     )
     report = execute(store, path, model, remaining=True)
     assert report.next_step == 5
@@ -482,6 +484,27 @@ def test_selection_fresh_and_older_source_edits_are_not_linearized(store, scenar
     assert fresh.source is None and fresh.changes == []
     assert assess(store, "demo").passed
     assert len(list((store.project_dir("demo") / "conversation" / "proposals").iterdir())) == 4
+
+
+def test_return_confirmation_resume_preserves_exact_selection_and_assesses_offline(store, scenario):
+    from ai_collage.assess import assess
+
+    path, data = scenario
+    data["messages"].append({"name": "return", "prompt": "Return to the first one"})
+    path.write_text(json.dumps(data), encoding="utf-8")
+    evidence = {"kind": "ordinal", "text": "first"}
+    model = FakeModel(
+        *turns(reply(), reply()),
+        intent("question", question="Do you mean P001?",
+               return_confirmation={"proposal_id": "P001", "action": "select", "evidence": evidence}),
+    )
+    pending = execute(store, path, model, remaining=True)
+    assert pending.next_step == 2 and pending.executions[-1].status == "question"
+    model = FakeModel(intent("select", proposal_id="P001", navigation=evidence))
+    result = execute(store, path, model, resume=True, answer="Yes", answer_origin="copilot")
+    assert result.next_step == 3 and result.executions[-1].status == "selection"
+    assert result.executions[-1].changes == [] and len(model.contexts) == 1
+    assert assess(store, "demo").passed
 
 
 def test_only_intent_prompt_change_also_blocks_resume(store, scenario, monkeypatch):

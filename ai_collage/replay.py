@@ -14,8 +14,9 @@ from .agent_files import canonical, child, digest, save
 from .agent_models import Controls, Digest, Exchange, LayoutSource, Record, ResolvedIntent
 from .agent_provider import FoundryModel, instruction_bundle
 from .conversation import Conversation, ModelClient
-from .models import MAX_FILE_BYTES, CollageError
+from .models import MAX_FILE_BYTES, CollageError, InputLayout
 from .projects import ProjectStore, read_json
+from .task_history import RecipeChange as Change, recipe_changes
 
 Name = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
 
@@ -46,15 +47,9 @@ class Source(Record):
     sha256: Digest
 
 
-class Change(BaseModel):
-    field: str
-    before: object
-    after: object
-
-
 class StepResult(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[3] = 3
+    record_version: Literal[4] = 4
     step: int
     name: str
     prompt: str
@@ -84,7 +79,7 @@ class StepResult(BaseModel):
 
 class ReplayReport(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[3] = 3
+    record_version: Literal[4] = 4
     project_id: str
     sequence: Sequence
     sources: list[Source]
@@ -95,20 +90,8 @@ class ReplayReport(BaseModel):
     executions: list[StepResult] = Field(default_factory=list)
 
 
-def authored_changes(before: object, after: object, path: str = "recipe") -> list[Change]:
-    if isinstance(before, dict) and isinstance(after, dict):
-        return [
-            change
-            for key in sorted(before.keys() | after.keys())
-            for change in authored_changes(before.get(key), after.get(key), f"{path}.{key}")
-        ]
-    if isinstance(before, list) and isinstance(after, list) and len(before) == len(after):
-        return [
-            change
-            for index, (old, new) in enumerate(zip(before, after, strict=True))
-            for change in authored_changes(old, new, f"{path}[{index}]")
-        ]
-    return [] if before == after else [Change(field=path, before=before, after=after)]
+def authored_changes(before: object, after: object) -> list[Change]:
+    return recipe_changes(InputLayout.model_validate(before), InputLayout.model_validate(after))
 
 
 def load_sequence(path: Path) -> tuple[Sequence, list[Source]]:

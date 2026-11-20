@@ -57,10 +57,40 @@ class PhotoName(BaseModel):
     question_event: PositiveInt | None = None
 
 
+class NavigationEvidence(BaseModel):
+    model_config = Record.model_config
+    kind: Literal["id", "ordinal", "undo", "before", "after"]
+    text: Annotated[str, Field(min_length=1, max_length=1000)]
+    task_id: PositiveInt | None = None
+    field: str | None = None
+    steps: PositiveInt | None = None
+
+    @model_validator(mode="after")
+    def matching_evidence(self) -> "NavigationEvidence":
+        if self.kind in {"before", "after"}:
+            valid = self.task_id is not None and bool(self.field) and self.steps is None
+        elif self.kind == "undo":
+            valid = self.steps is not None and self.task_id is None and self.field is None
+        else:
+            valid = self.task_id is None and self.field is None and self.steps is None
+        if not valid:
+            raise ValueError("Navigation fields must match the evidence kind.")
+        return self
+
+
+class ReturnConfirmation(BaseModel):
+    model_config = Record.model_config
+    proposal_id: ProposalId
+    action: Literal["select", "edit"]
+    evidence: NavigationEvidence
+
+
 class GroundedIntent(BaseModel):
     model_config = Record.model_config
     references: list[PhotoReference]
     name_updates: list[NameUpdate]
+    navigation: NavigationEvidence | None = None
+    continues_task: bool = True
 
 
 class EditIntent(GroundedIntent):
@@ -86,6 +116,7 @@ class QuestionIntent(GroundedIntent):
     action: Literal["question"]
     question: Question
     confirmation: NameUpdate | None = None
+    return_confirmation: ReturnConfirmation | None = None
 
 
 class RememberIntent(GroundedIntent):
@@ -100,7 +131,7 @@ INTENT = TypeAdapter(Intent)
 
 
 class ConversationRecord(Record):
-    record_version: Literal[3] = 3
+    record_version: Literal[4] = 4
 
 
 class LayoutSource(BaseModel):
@@ -123,6 +154,7 @@ class ResolvedIntent(BaseModel):
     task_request: Annotated[str, Field(min_length=1, pattern=r"\S")]
     reference: LayoutSource | None = None
     references: list[PhotoReference] = Field(default_factory=list)
+    navigation: NavigationEvidence | None = None
 
     @model_validator(mode="after")
     def matching_action(self) -> "ResolvedIntent":
@@ -201,6 +233,8 @@ class Exchange(ConversationRecord):
     proposal_id: ProposalId | None = None
     references: list[PhotoReference] = Field(default_factory=list)
     name_updates: list[PhotoName] = Field(default_factory=list)
+    task_id: PositiveInt | None = None
+    baseline_before: LayoutSource | None = None
 
 
 class LocalEvent(ConversationRecord):
