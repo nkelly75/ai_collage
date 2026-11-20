@@ -27,7 +27,10 @@ Actions:
   essential ambiguity rather than inventing an unknown photo or proposal.
 
 Every action includes `references` and `name_updates` arrays (empty when not
-applicable). Ground all photo references, including relation/anchor photos,
+applicable). Only `edit` supplies the action-level `source` field. Omit it
+entirely for every other action, including `fresh` and `question`; even
+`"source": null` is invalid there. A reference's nested `source` is separate.
+Ground all photo references, including relation/anchor photos,
 before generation. Do not equate choosing edit/current with understanding targets.
 
 `references` binds individually identified photos, not every member of a group.
@@ -37,6 +40,8 @@ individual references or mark known photos `unknown`. For "Make photo 2 smaller
 than the others", return only `{"text":"photo 2","photo_id":2,"source":"number"}`
 in `references`; generation receives the complete comparison. Clarify only if
 the intended group is genuinely unclear, not merely because the wording is plural.
+For an initial "Make a collage using all four photos", return
+`{"action":"fresh","references":[],"name_updates":[]}`.
 
 Every action may set `continues_task` (default true). For an answer to a pending
 question keep it true; for a clearly independent replacement request set it false
@@ -55,7 +60,8 @@ Each reference has `text` (the relevant user wording), `photo_id`,
 - `history`: clear conversational wording such as "it", citing the `event_id`
   of an unambiguous single-photo target in `reference_history`.
 - `unknown`: another unresolved reference; null `photo_id`, then clarify.
-Only history references cite an event ID. Except for normalized numbered
+Only history references cite an event ID: omit/null it for learned names,
+even when `photo_names` supplies their establishing event. Except for normalized numbered
 references, the wording must occur in the current message or the pending
 question's original user prompt. Do not resolve photos
 by layout descriptions such as "top-right" or invent image-content synonyms.
@@ -80,6 +86,18 @@ user quote and `replaces_photo_id`) in question-only `confirmation`, NOT in
 `name_updates`, using the actual affirmative answer as its quote. For a question
 about an unknown name, include that label as an unresolved name reference so a
 subsequent numeric answer can establish the binding.
+
+An unknown label may use `source: "name"` or `"unknown"` with null photo_id.
+When its identity is answered, use `name_updates` with the actual answer quote,
+no `evidence_event` and no `replaces_photo_id`: this is establishing a name,
+not correcting an existing one. Reference the newly bound label as `source: "name"`.
+A single numeric identity answer can also use normalized `photo N` wording.
+Do not guess between multiple candidate numbers.
+
+Answering a pending edit/composition question is NOT a naming-only task.
+Keep `continues_task: true`, resolve the original task as `edit`/`fresh` with
+the appropriate source, and include the name update in that action. Use `remember`
+only if the original task itself solely requested naming; do not drop the edit.
 
 Do not partially execute an edit with unresolved references. Retain the whole
 original task through questions (`pending_question.original_task`, even after
@@ -129,7 +147,11 @@ For `select` or an older-source `edit`, supply `navigation`:
   `task_id` citing visible task evidence, and `field` citing the actual change,
   e.g. `recipe.photos.2.border.width_px`. Do not cite a request that failed or
   did not actually change the described field.
-Use null/omit unused evidence fields. A pure return MUST use `select`, not an
+Use null/omit unused evidence fields.
+For `id`/`ordinal`, task_id, field and steps must all be null/absent; never copy
+a catalogue task ID into ordinal evidence. Quote the user's ordinal wording,
+not the proposal ID inferred from it.
+A pure return MUST use `select`, not an
 edit restoring fields. Only a return with an additional requested edit generates.
 The application checks the cited relationship/count and loads the exact source.
 

@@ -242,8 +242,9 @@ def test_readable_project_usage_preserves_unknown_attempt_ids(store, capsys, mis
     assert reopened.summary() == before
 
 
+@pytest.mark.parametrize("interpretation", ["high", "low"])
 def test_chat_progress_low_candidate_and_readable_status_are_terminal_only(
-    agent_project, monkeypatch, capsys,
+    agent_project, monkeypatch, capsys, interpretation,
 ):
     from ai_collage.__main__ import main
 
@@ -254,7 +255,7 @@ def test_chat_progress_low_candidate_and_readable_status_are_terminal_only(
     monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: model)
     assert main([
         "--data-dir", str(conversation.store.data_dir), "chat", "--project", "demo",
-        "--live", "--no-open", "--generation-reasoning", "low",
+        "--live", "--no-open", "--interpretation-reasoning", interpretation,
     ]) == 0
     output = capsys.readouterr()
     assert not output.err
@@ -262,20 +263,24 @@ def test_chat_progress_low_candidate_and_readable_status_are_terminal_only(
     assert "; target photo 2." in output.out
     assert output.out.index("Intent:") < output.out.index("Generating layout...") < output.out.index("Generated P001")
     assert "unknown_usage_attempts" not in output.out
-    assert "Generation reasoning: low; interpretation reasoning: high." in output.out
-    assert [item.reasoning_effort for item in requests.attempts()] == ["high", "high", "low"]
+    assert f"Generation reasoning: low; interpretation reasoning: {interpretation}." in output.out
+    assert [item.reasoning_effort for item in requests.attempts()] == [interpretation, interpretation, "low"]
 
 
-@pytest.mark.parametrize("reasoning", ["high", "low"])
+@pytest.mark.parametrize("generation", ["high", "low"])
+@pytest.mark.parametrize("interpretation", ["high", "low"])
 @pytest.mark.parametrize("stage", ["interpretation", "generation"])
-def test_actual_payload_reasoning_and_attempt_settings(store, stage, reasoning):
+def test_actual_payload_reasoning_and_attempt_settings(store, stage, generation, interpretation):
     import httpx
     from openai import AsyncOpenAI
     from ai_collage.agent_provider import ENDPOINT, guarded_transport, run_agent
 
-    requests = RequestLog(store, "candidate", generation_reasoning=reasoning)
+    requests = RequestLog(
+        store, "candidate", generation_reasoning=generation,
+        interpretation_reasoning=interpretation,
+    )
     captured = []
-    expected = reasoning if stage == "generation" else "high"
+    expected = generation if stage == "generation" else interpretation
     context = {"stage": stage, "user_request": "Make a collage"}
 
     async def handler(request):

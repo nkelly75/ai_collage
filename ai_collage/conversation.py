@@ -146,9 +146,34 @@ class Conversation:
             raise CollageError("Unknown or unpublished proposal ID.")
         proposal = Proposal.model_validate(read_json(child(preview.parent, "proposal.json")))
         number, event = committed[proposal_id]
+        self._validate_proposal(proposal, proposal_id, number, event, history, preview)
+        return proposal
+
+    def _validate_proposal(
+        self, proposal: Proposal, proposal_id: str, number: int, event: Exchange,
+        history: dict[int, Exchange | LocalEvent], preview: Path,
+    ) -> None:
+        committed = {
+            entry.proposal_id: turn for turn, entry in history.items()
+            if isinstance(entry, Exchange) and entry.outcome == "proposal"
+        }
         project = self.store.load(self.project_id)
         expected = resolve_layout(proposal.recipe, project.photos, 1)
         task = history.get(proposal.intent.task_turn)
+        # A logical task can start with an invalid attempt, then a validated correction.
+        corrected_origin = isinstance(task, Exchange) and task.task_id == proposal.intent.task_turn and any(
+            proposal.intent.task_turn < turn < number
+            and isinstance(entry, Exchange) and entry.task_id == task.task_id
+            and entry.stage == "interpretation" and entry.outcome in {"intent", "question"}
+            and entry.prompt == proposal.intent.task_request
+            for turn, entry in history.items()
+        )
+        confirmed_intent = any(
+            turn < number and isinstance(entry, Exchange) and entry.task_id == event.task_id
+            and entry.stage == "interpretation" and entry.outcome == "intent"
+            and entry.intent == proposal.intent
+            for turn, entry in history.items()
+        )
         source = proposal.intent.source
         identities = [
             identity for identity in (
@@ -166,7 +191,7 @@ class Conversation:
             or proposal.parent != (
                 proposal.intent.source.proposal_id if proposal.intent.source else None
             )
-            or any(identity not in committed or committed[identity][0] >= number for identity in identities)
+            or any(identity not in committed or committed[identity] >= number for identity in identities)
             or (
                 source is not None and source.accepted_version is not None
                 and source.accepted_version != self.state.initial_version
@@ -177,10 +202,13 @@ class Conversation:
                 and proposal.intent.reference.accepted_version != self.state.initial_version
             )
             or not isinstance(task, Exchange) or task.prompt != proposal.intent.task_request
-            or task.stage != "interpretation" or task.outcome not in {"intent", "question"}
+            or task.stage != "interpretation" or not (
+                task.outcome in {"intent", "question"}
+                or task.outcome == "invalid" and corrected_origin
+            )
+            or not confirmed_intent
         ):
             raise CollageError("Proposal recipe, geometry, or preview identity mismatch.")
-        return proposal
 
     def baseline(self) -> InputLayout | None:
         if self.state.baseline is not None:
@@ -470,7 +498,8 @@ class Conversation:
             return failure.intent
         if failure is not None and not isinstance(reply, (QuestionIntent, RememberIntent)):
             raise CollageError("Continue the timed-out task with resume, or mark a new task independent.")
-        task_turn, task_request = self._task_origin(prompt)
+        _, task_request = self._task_origin(prompt)
+        task_turn = self._active_task
         source = None
         reference = None
         references = reply.references
@@ -684,7 +713,7 @@ class Conversation:
                 continue
             try:
                 return self._publish(prompt, raw, resolved, requests, intent)
-            except (CollageError, OSError) as exc:
+            except (CollageError, ValidationError, OSError) as exc:
                 self._append(Exchange(
                     prompt=prompt,
                     response=raw if len(raw.encode("utf-8")) <= MAX_JSON_BYTES // 2 else None,
@@ -710,6 +739,14 @@ class Conversation:
         proposal_id = f"P{max(numbers, default=0) + 1:03d}"
         event_id = self._next_event()
         project = self.store.load(self.project_id)
+        event = Exchange(
+            prompt=prompt, response=raw, outcome="proposal",
+            parent=intent.source.proposal_id if intent.source else None,
+            stage="generation", intent=intent, task_id=self._active_task,
+            baseline_before=self._current_source(),
+            run_id=None, attempt=len(requests.attempts()), proposal_id=proposal_id,
+            references=intent.references,
+        )
         with tempfile.TemporaryDirectory(dir=self.root, prefix=".proposal-") as directory:
             staging = Path(directory)
             preview = staging / "preview.png"
@@ -722,14 +759,15 @@ class Conversation:
                 preview_digest=digest(preview.read_bytes()),
             )
             save(staging / "proposal.json", proposal)
+            self._validate_proposal(
+                Proposal.model_validate(read_json(staging / "proposal.json")),
+                proposal_id, event_id, event,
+                {**dict(zip(self.state.history, self.history(), strict=True)), event_id: event},
+                preview,
+            )
             self._fresh()
             staging.rename(child(proposals, proposal_id))
-        self._append(Exchange(
-            prompt=prompt, response=raw, outcome="proposal",
-            parent=proposal.parent, stage="generation", intent=intent,
-            run_id=None, attempt=len(requests.attempts()), proposal_id=proposal_id,
-            references=intent.references,
-        ), baseline=proposal_id)
+        self._append(event, baseline=proposal_id)
         return RequestResult(kind="proposal", proposal_id=proposal_id, event_id=event_id)
 
     def controls(self, controls: Controls) -> None:

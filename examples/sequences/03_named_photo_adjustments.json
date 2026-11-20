@@ -1,0 +1,26 @@
+{
+  "record_version": 1,
+  "name": "named-photo-adjustments",
+  "images": [
+    "..\\..\\photos\\01_tower_bridge.jpg",
+    "..\\..\\photos\\02_breakfast.jpg",
+    "..\\..\\photos\\03_london_eye.jpg",
+    "..\\..\\photos\\04_daunt_books.jpg"
+  ],
+  "canvas": {"width": 1200, "height": 1800},
+  "messages": [
+    {
+      "name": "initial-and-names",
+      "prompt": "Photo 1 is bridge and photo 2 is breakfast. Make a simple collage using all four photos, with a light background, rounded corners and generous margins."
+    },
+    {
+      "name": "named-multi-photo-edit",
+      "prompt": "Make breakfast a bit smaller and move bridge a bit to the right. Leave everything else alone.",
+      "reopen_before": true
+    },
+    {
+      "name": "named-square-corners",
+      "prompt": "Remove the rounded corners from breakfast only."
+    }
+  ]
+}

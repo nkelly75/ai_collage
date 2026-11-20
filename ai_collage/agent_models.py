@@ -45,7 +45,11 @@ class NameUpdate(BaseModel):
     photo_id: PositiveInt
     quote: Annotated[str, Field(min_length=1, max_length=1000, pattern=r"\S")]
     replaces_photo_id: PositiveInt | None = None
-    evidence_event: PositiveInt | None = None
+    evidence_event: PositiveInt | None = Field(
+        default=None,
+        description="Only an explicit correction of an existing name may cite this prior event. "
+        "Omit/null for an unknown-name identity answer; the application links its pending question.",
+    )
 
 
 class PhotoName(BaseModel):

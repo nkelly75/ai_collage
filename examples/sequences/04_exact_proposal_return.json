@@ -1,0 +1,26 @@
+{
+  "record_version": 1,
+  "name": "exact-proposal-return",
+  "images": [
+    "..\\..\\photos\\01_tower_bridge.jpg",
+    "..\\..\\photos\\02_breakfast.jpg",
+    "..\\..\\photos\\03_london_eye.jpg",
+    "..\\..\\photos\\04_daunt_books.jpg"
+  ],
+  "canvas": {"width": 1200, "height": 1800},
+  "messages": [
+    {
+      "name": "initial",
+      "prompt": "Make a simple collage using all four photos, with a dark background and thin white borders."
+    },
+    {
+      "name": "remove-borders",
+      "prompt": "Remove all the borders. Leave everything else alone."
+    },
+    {
+      "name": "return-to-first",
+      "prompt": "Go back to the first proposal.",
+      "reopen_before": true
+    }
+  ]
+}

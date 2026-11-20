@@ -154,6 +154,11 @@ several taught names. Unknown names require clarification, not guessed synonyms.
 Conflicting assignments require confirmation unless explicitly corrected, e.g.
 "breakfast is actually photo 3, not photo 2"; other names do not move with it.
 An unresolved target holds the whole edit until clarification is complete.
+An unambiguous identity answer (`2` or `photo 2`) can bind the unknown label
+whether interpretation represented it as an unresolved name or an unknown
+reference. Multiple candidate numbers require clarification, not a guessed
+binding. Answering an edit's identity question must retain and complete the
+original edit; it is not a naming-only acknowledgement.
 Explicit name facts are saved independently of subsequent generation success.
 
 Model context keeps detail for up to **three recent logical tasks** plus up to
@@ -161,6 +166,10 @@ Model context keeps detail for up to **three recent logical tasks** plus up to
 answers and validation corrections belong to their originating task. Records
 are derived from authoritative events/proposals, retaining the requested task
 separately from actual recipe changes keyed by photo number, plus stacking.
+An invalid interpretation followed by a valid correction keeps the same logical
+task origin, including through clarification answers and restart. Proposal
+publication checks the corrected origin and matching confirmed intent, alongside
+recipe/geometry/preview identity, before advancing the working baseline.
 Deterministic retrieval uses IDs/ordinals, ancestry, learned names, request
 wording and actual change facts; no model-written memory summaries, extra model
 stage or retrieval calls are used. Full audit history and proposals stay on disk.
@@ -187,8 +196,10 @@ Names, current task/answers, pending confirmations, resolved sources and require
 evidence survive optional-history size fitting. If essential input cannot fit,
 the request fails explicitly instead of silently forgetting it.
 
-Conversation, proposal, event, acceptance-intent, replay and assessment records
-now use **record version 5**; request-attempt records use **version 2**, recording
+Replay reports use **record version 6**, requiring explicit generation and
+interpretation reasoning selections. Conversation, proposal, event,
+acceptance-intent, replay-step and assessment records remain **version 5**;
+request-attempt records use **version 2**, recording
 their stage, actual reasoning selection and remaining deadline at dispatch.
 Layout/project format remains **3**; sequence definitions, preferences and
 controls retain their own unchanged versions. Old conversation/replay and
@@ -263,12 +274,18 @@ restart. A clearly independent request replaces it. Retrying requires an
 explicit user message, may produce different output and may incur more usage.
 Unrelated publication/I/O failures do not carry the same unchanged-state promise.
 
-Both chat and replay accept `--generation-reasoning high|low`; **high** is the
-default and interpretation always stays high. The choice is fixed for that
-chat session/replay run and recorded in request evidence. For an explicitly
-authorized later trial, append `--generation-reasoning low` to the normal
-command; repeat it on replay resume, which rejects a candidate change (including
-silently reverting to the default). This option does not authorize a live trial.
+Chat and replay accept independent stage settings:
+`--generation-reasoning high|low` defaults to **low**;
+`--interpretation-reasoning high|low` defaults to **high**.
+Use `--generation-reasoning high` to restore higher generation effort explicitly.
+Each setting applies to its stage's corrections too; interpretation selection
+also covers clarification answers and timeout-continuation interpretation.
+There is no automatic effort escalation. Both choices are fixed for the chat
+session/replay run and recorded in request evidence. Repeat both selected flags
+on replay resume, which rejects either candidate changing (including an omitted
+flag selecting a different default). These options do not authorize a live trial.
+For a separately authorized interpretation trial with generation low, append
+`--generation-reasoning low --interpretation-reasoning low` to the normal command.
 
 | Local command | Behavior |
 |---|---|
@@ -337,6 +354,14 @@ The supplied sequences are:
   reopening before straightening; its mechanical checks are an explicit assessment profile.
 - `examples\sequences\02_landscape_staggered_adjustments.json`: an exploratory landscape
   composition and three provisional follow-ups, editable before they are attempted.
+- `examples\sequences\03_named_photo_adjustments.json`: teach two names, resume
+  for a two-photo edit, then remove rounding from one named photo.
+- `examples\sequences\04_exact_proposal_return.json`: remove borders, then resume
+  and select the first proposal exactly.
+- `examples\sequences\05_clarification_continuation.json`: request an untaught
+  name; pause for the planned identity answer `2` via `--answer`, not a scripted
+  third message. See [010d](../planning/010d-bounded-reasoning-evaluation.md)
+  for the frozen comparison and its separate live-execution boundary.
 
 A sequence contains `record_version: 1`, a `name`, ordered `images` paths
 relative to the sequence file, `canvas` width/height, and `messages`.
@@ -424,8 +449,8 @@ remain in the normal conversation events; individual request usage remains
 in the project's request records. Selection is a completed step, not a new
 proposal; it has no authored changes or generation call. Both prompts are
 captured in the instruction bundle and checked on resume.
-The report also captures the generation-reasoning candidate; offline integrity
-assessment checks request stages/reasoning against that candidate.
+The report captures both reasoning candidates; offline integrity assessment
+checks each request's stage/reasoning against its corresponding candidate.
 No photos or local paths are added to the
 model context by the runner. Existing executions and proposal files are
 preserved when resuming.

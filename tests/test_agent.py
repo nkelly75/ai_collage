@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from ai_collage.agent_requests import RequestLog
 from ai_collage.agent_files import child, digest, save
-from ai_collage.agent_models import Controls, Exchange, Preferences, INTENT
+from ai_collage.agent_models import Controls, Exchange, LayoutSource, Preferences, INTENT
 from ai_collage.conversation import Conversation
 from ai_collage.models import CollageError
 from ai_collage.models import InputLayout
@@ -356,6 +356,35 @@ def test_proposal_render_failure_does_not_replace_baseline(agent_project, monkey
     assert failed.attempt == 4
 
 
+@pytest.mark.parametrize("field,value", [
+    ("task_turn", 999),
+    ("task_request", "An unrelated task"),
+    ("source", LayoutSource(proposal_id="P999")),
+])
+def test_invalid_provenance_is_rejected_before_publication(
+    agent_project, monkeypatch, field, value,
+):
+    conversation, requests = agent_project
+    first, _ = ask(conversation, requests, reply())
+    publish = conversation._publish
+
+    def changed_intent(prompt, raw, resolved, log, resolved_intent):
+        return publish(
+            prompt, raw, resolved, log, resolved_intent.model_copy(update={field: value}),
+        )
+
+    monkeypatch.setattr(conversation, "_publish", changed_intent)
+    with pytest.raises(CollageError, match="identity"):
+        ask(conversation, requests, reply())
+    resumed = Conversation(conversation.store, "demo")
+    assert resumed.state.baseline == first
+    assert not (conversation.root / "proposals" / "P002").exists()
+    assert [event.outcome for event in resumed.history()] == [
+        "intent", "proposal", "intent", "error",
+    ]
+    assert resumed.state.accepted_proposal is None
+
+
 def test_acceptance_reconciles_exact_commit_after_index_failure(agent_project, monkeypatch):
     conversation, requests = agent_project
     p1, _ = ask(conversation, requests, reply())
@@ -552,17 +581,18 @@ def test_real_framework_mocked_http_gate(store, status, stage):
             text, status="incomplete" if status == "incomplete" else "completed"
         ))
 
-    gate = guarded_transport(requests, "mock", httpx.MockTransport(handler))
+    context = {
+        "stage": stage,
+        "user_request": "x" * (60_000 if status == "oversize" else 1),
+    }
+    gate = guarded_transport(requests, "mock", httpx.MockTransport(handler), context=context)
 
     async def execute():
         async with AsyncOpenAI(
             base_url=ENDPOINT, api_key="offline-not-a-real-credential", max_retries=0,
             http_client=httpx.AsyncClient(transport=gate),
         ) as sdk:
-            return await run_agent({
-                "stage": stage,
-                "user_request": "x" * (60_000 if status == "oversize" else 1),
-            }, sdk, requests)
+            return await run_agent(context, sdk, requests)
 
     if status == "completed":
         assert asyncio.run(execute()) == text
@@ -580,7 +610,7 @@ def test_real_framework_mocked_http_gate(store, status, stage):
     assert len(captured) == 1
     assert captured[0]["store"] is False
     assert captured[0]["max_output_tokens"] == 25_000
-    assert captured[0]["reasoning"] == {"effort": "high"}
+    assert captured[0]["reasoning"] == {"effort": "low" if stage == "generation" else "high"}
     assert not captured[0].get("tools")
     assert captured[0]["text"]["format"]["type"] == "json_schema"
     assert len(requests.attempts()) == 1
@@ -900,10 +930,14 @@ def test_two_interpretations_leave_only_two_generation_calls(agent_project):
     assert len(conversation.context("Next request")["history"]) == 1
 
 
-def test_clarification_task_survives_interpretation_correction_and_restart(agent_project):
+@pytest.mark.parametrize("question_correction", [False, True])
+def test_clarification_task_survives_interpretation_correction_and_restart(
+    agent_project, question_correction,
+):
     conversation, requests = agent_project
-    ask(conversation, requests, action=intent("question", question="Which photo?"),
-        prompt="Make one photo stand out")
+    question = intent("question", question="Which photo?")
+    question_model = FakeModel(*(["{}"] if question_correction else []), question)
+    asyncio.run(conversation.request("Make one photo stand out", question_model, requests))
     client = FakeModel("{}", intent("fresh"), reply())
     resumed = Conversation(conversation.store, "demo")
     result = asyncio.run(resumed.request("Photo 2", client, requests))
@@ -913,6 +947,59 @@ def test_clarification_task_survives_interpretation_correction_and_restart(agent
     assert proposal.intent.task_turn == 1
     assert client.contexts[-1]["user_request"] == "Photo 2"
     assert client.contexts[-1]["history"][0]["prompt"] == "Make one photo stand out"
+    reopened = Conversation(conversation.store, "demo")
+    assert len(reopened.tasks()) == 1
+    assert reopened.tasks()[0].task_id == proposal.intent.task_turn
+    retried, _ = ask(
+        reopened, requests, reply(), prompt="Try again",
+        action=intent("retry", proposal_id=result.proposal_id),
+    )
+    assert reopened.proposal(retried).intent.task_turn == proposal.intent.task_turn
+
+
+@pytest.mark.parametrize("action", ["fresh", "edit"])
+def test_interpretation_correction_keeps_one_task_origin(agent_project, action):
+    conversation, requests = agent_project
+    if action == "edit":
+        ask(conversation, requests, reply())
+    start = conversation._next_event()
+    fields = {"source": "current"} if action == "edit" else {}
+    model = FakeModel("{}", intent(action, **fields), reply())
+    result = asyncio.run(conversation.request("Use an airy arrangement", model, requests))
+    resumed = Conversation(conversation.store, "demo")
+    proposal = resumed.proposal(result.proposal_id)
+    task = resumed.tasks()[-1]
+    assert proposal.intent.task_turn == task.task_id == start
+    assert task.events == [start, start + 1, start + 2]
+    assert task.request == proposal.intent.task_request == "Use an airy arrangement"
+
+
+@pytest.mark.parametrize("evidence,field,value", [
+    ("question", "outcome", "invalid"),
+    ("question", "task_id", 2),
+    ("intent", "task_id", 2),
+    ("intent", "task_request", "An unrelated task"),
+])
+def test_corrected_task_rejects_invalid_or_unrelated_provenance(
+    agent_project, evidence, field, value,
+):
+    conversation, requests = agent_project
+    asyncio.run(conversation.request(
+        "Make one photo stand out",
+        FakeModel("{}", intent("question", question="Which photo?")), requests,
+    ))
+    proposal_id, _ = ask(conversation, requests, reply(), prompt="Photo 2")
+    number = next(
+        number for number, event in zip(conversation.state.history, conversation.history(), strict=True)
+        if event.outcome == evidence
+    )
+    path = conversation.root / "events" / f"{number:06d}.json"
+    data = read_json(path)
+    target = data["intent"] if field == "task_request" else data
+    target[field] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(CollageError, match="identity"):
+        conversation.proposal(proposal_id)
 
 
 def test_initial_accepted_layout_is_a_valid_source(agent_project, tmp_path):
@@ -1046,6 +1133,78 @@ def photo_reference(text, photo_id, source="name", **fields):
 
 def photo_name(name, photo_id, quote, **fields):
     return {"name": name, "photo_id": photo_id, "quote": quote, **fields}
+
+
+@pytest.mark.parametrize("name,photo_id,answer", [
+    ("harbour", 1, "1"), ("forest", 2, "Photo 2"),
+])
+@pytest.mark.parametrize("question_correction", [False, True])
+def test_unknown_label_answer_resumes_original_edit_after_restart(
+    agent_project, name, photo_id, answer, question_correction,
+):
+    conversation, requests = agent_project
+    first, _ = ask(conversation, requests, reply())
+    prompt = f"Make {name} smaller. Leave the other photo alone."
+    question = FakeModel(*(["{}"] if question_correction else []), intent(
+        "question", question=f"Which photo is {name}?",
+        references=[photo_reference(name, None, "unknown")],
+    ))
+    asyncio.run(conversation.request(prompt, question, requests))
+    changed = layout_data()
+    changed["layers"][photo_id - 1]["box"]["width"] -= 0.01
+    model = FakeModel(intent(
+        "edit", source="current",
+        references=[photo_reference(f"photo {photo_id}", photo_id, "number")],
+        name_updates=[photo_name(name, photo_id, answer)],
+    ), reply(changed))
+    resumed = Conversation(conversation.store, "demo")
+    result = asyncio.run(resumed.request(answer, model, requests))
+    proposal = resumed.proposal(result.proposal_id)
+    assert proposal.parent == first and proposal.intent.task_request == prompt
+    assert model.contexts[-1]["original_task"] == prompt
+    assert model.contexts[-1]["resolved_intent"]["references"][0]["photo_id"] == photo_id
+    assert resumed.state.photo_names[0].name == name
+    assert resumed.state.photo_names[0].question_event is not None
+    assert resumed.store.load("demo").current_version is None
+
+
+@pytest.mark.parametrize("answer", ["1 or 2", "1.5", "12", "photo 1 or photo 2"])
+def test_unknown_label_answer_cannot_guess_a_number(agent_project, answer):
+    conversation, requests = agent_project
+    prompt = "Make forest smaller"
+    asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "question", question="Which photo is forest?",
+        references=[photo_reference("forest", None, "unknown")],
+    )), requests))
+    invalid = intent("fresh", references=[photo_reference("forest", 1)],
+                     name_updates=[photo_name("forest", 1, answer)])
+    with pytest.raises(CollageError, match="correction failed"):
+        asyncio.run(conversation.request(answer, FakeModel(invalid, invalid), requests))
+    assert not conversation.state.photo_names and conversation.state.baseline is None
+
+
+def test_interpretation_transport_schema_constrains_reference_and_navigation_metadata():
+    from ai_collage.agent_provider import response_format
+
+    definitions = response_format("interpretation")["json_schema"]["schema"]["$defs"]
+    references = {
+        branch["properties"]["source"]["const"]: branch
+        for branch in definitions["PhotoReference"]["anyOf"]
+    }
+    for source in ("name", "number", "unknown"):
+        assert references[source]["properties"]["event_id"] == {"type": "null"}
+    assert references["unknown"]["properties"]["photo_id"] == {"type": "null"}
+    assert "event_id" in references["history"]["required"]
+    navigation = {
+        branch["properties"]["kind"]["const"]: branch
+        for branch in definitions["NavigationEvidence"]["anyOf"]
+    }
+    for kind in ("id", "ordinal"):
+        for field in ("task_id", "field", "steps"):
+            assert navigation[kind]["properties"][field] == {"type": "null"}
+    for kind in ("before", "after"):
+        assert {"task_id", "field"} <= set(navigation[kind]["required"])
+    assert "steps" in navigation["undo"]["required"]
 
 
 @pytest.mark.parametrize("wording,ids", [
@@ -1190,17 +1349,20 @@ def test_grounding_clarifies_whole_task_and_learns_numeric_answer(agent_project)
     assert {item["photo_id"] for item in client.contexts[1]["resolved_intent"]["references"]} == {1, 2}
 
 
-def test_multiple_name_questions_retain_the_original_complete_task(agent_project):
+@pytest.mark.parametrize("unresolved_source", ["name", "unknown"])
+def test_multiple_name_questions_retain_the_original_complete_task(agent_project, unresolved_source):
     conversation, requests = agent_project
     prompt = "Move breakfast closer to bookshop"
     client = FakeModel(intent(
         "question", question="Which photo is breakfast?",
-        references=[photo_reference("breakfast", None), photo_reference("bookshop", None)],
+        references=[photo_reference("breakfast", None, unresolved_source),
+                    photo_reference("bookshop", None, unresolved_source)],
     ))
     asyncio.run(conversation.request(prompt, client, requests))
     client = FakeModel(intent(
         "question", question="Which photo is bookshop?",
-        references=[photo_reference("breakfast", 2), photo_reference("bookshop", None)],
+        references=[photo_reference("breakfast", 2),
+                    photo_reference("bookshop", None, unresolved_source)],
         name_updates=[photo_name("breakfast", 2, "2")],
     ))
     asyncio.run(conversation.request("2", client, requests))

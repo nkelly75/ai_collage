@@ -324,7 +324,10 @@ def assess(
                 if attempt.number != index or attempt.purpose != f"{project_id}: {stages[index - before - 1]}":
                     raise CollageError("Request accounting does not match the captured stages.")
                 stage = stages[index - before - 1]
-                expected_reasoning = replay.generation_reasoning if stage == "generation" else "high"
+                expected_reasoning = (
+                    replay.generation_reasoning if stage == "generation"
+                    else replay.interpretation_reasoning
+                )
                 if attempt.stage != stage or attempt.reasoning_effort != expected_reasoning:
                     raise CollageError("Request reasoning/stage does not match the replay candidate.")
             if result.status in {"proposal", "selection", "question", "acknowledgement"}:

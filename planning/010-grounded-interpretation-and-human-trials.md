@@ -9,8 +9,20 @@ see [010a results](010a_results.md).
 offline, with a separately authorized live replay sanity follow-up;
 see [010b results](010b_results.md).
 [010c](010c-timeout-recovery-and-reasoning-trials.md) is complete and closed;
-see [010c results](010c_results.md). Next: review the integrated 010 handoff.
-No further live calls or human trials are authorized.
+see [010c results](010c_results.md).
+[010d](010d-bounded-reasoning-evaluation.md) is executed and closed;
+see [010d results](010d_results.md) for the separately bounded high/low evaluation.
+[010e](010e-interpretation-fixes-and-second-freeze.md) implemented offline fixes
+and stopped the second-frozen comparison on a provenance blocker;
+see [010e results](010e_results.md). A targeted offline provenance fix is
+implemented; 010e's third-freeze follow-up is complete and closed;
+see [third-freeze results](010e_third_freeze_results.md).
+[010f](010f-interpretation-reasoning-comparison.md) is executed and closed after
+surgical prompt preparation and a frozen interpretation comparison with
+generation low; see [010f results](010f_results.md).
+Generation now defaults low with a high override; interpretation's default stays
+high. Further trials or default changes require separate approval.
+Exploratory human-led trials and other live work remain separate.
 
 ## Purpose and prerequisites
 
@@ -111,6 +123,15 @@ Keep presentation separate from model context and preserve accounting evidence.
 unchanged baseline, repeat-prompt guidance, failed-task continuation and honest
 usage accounting. Check the explicitly selected reasoning settings and run
 accumulated integration cases from 010a and 010b.
+
+## 010d: Bounded reasoning evaluation
+
+Follow-up brief: [010d](010d-bounded-reasoning-evaluation.md). Compare three
+short frozen replays under high and generation-only low reasoning, using the
+existing shared call guard. This screens adherence and measured layout latency,
+not subjective design quality or perfect repeatability. Do not change the
+solution between candidates or automatically change the default afterward.
+The later exploratory human-led trial remains separate.
 
 ## Verification across stages
 

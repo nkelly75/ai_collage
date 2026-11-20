@@ -127,13 +127,16 @@ def local_command(
 def run_chat(
     store: ProjectStore, project_id: str, *, canvas: tuple[int, int] | None,
     preferences: Path | None, live: bool, no_open: bool,
-    generation_reasoning: Reasoning = "high",
+    generation_reasoning: Reasoning = "low", interpretation_reasoning: Reasoning = "high",
 ) -> int:
     conversation = Conversation(store, project_id, canvas=canvas, preferences=preferences)
-    requests = RequestLog(store, project_id, generation_reasoning=generation_reasoning)
+    requests = RequestLog(
+        store, project_id, generation_reasoning=generation_reasoning,
+        interpretation_reasoning=interpretation_reasoning,
+    )
     print("Conversation resumed. Use /help. Generated previews are not accepted automatically.")
     print(f"Editing baseline: {conversation.state.baseline or conversation.state.initial_version or 'none'}")
-    print(f"Generation reasoning: {generation_reasoning}; interpretation reasoning: high.")
+    print(f"Generation reasoning: {generation_reasoning}; interpretation reasoning: {interpretation_reasoning}.")
     if not live:
         print("Local-only mode: omit model requests, or restart with --live.")
 

@@ -75,18 +75,22 @@ def ground_references(
     pending_reply = INTENT.validate_json(pending[1].response or "") if pending else None
     if pending_reply is not None and not isinstance(pending_reply, QuestionIntent):
         raise CollageError("Pending clarification has no question response.")
+    unresolved_names = {
+        name_key(item.text) for item in pending_reply.references
+        if item.source in {"name", "unknown"} and item.photo_id is None
+    } if isinstance(pending_reply, QuestionIntent) else set()
+    asked_names = {
+        key for key in unresolved_names if contains(pending_reply.question, key)
+    } if isinstance(pending_reply, QuestionIntent) else set()
+    bare_number = re.fullmatch(r"([1-9][0-9]{0,8})[.!]?", prompt.strip())
+    answer_numbers = {int(bare_number[1])} if bare_number else numbered_photos(prompt)
 
     def validate_update(update: NameUpdate, *, confirmation: bool = False) -> PhotoName:
         key = name_key(update.name)
         previous = bindings.get(key)
         if update.photo_id not in photos or update.quote not in prompt:
             raise CollageError("Name update requires a known photo and an exact user quote.")
-        answered_name = (
-            isinstance(pending_reply, QuestionIntent) and any(
-                item.source == "name" and item.photo_id is None
-                and name_key(item.text) == key for item in pending_reply.references
-            )
-        )
+        answered_name = (asked_names or unresolved_names) == {key}
         confirmed = (
             isinstance(pending_reply, QuestionIntent)
             and pending_reply.confirmation is not None
@@ -101,7 +105,10 @@ def ground_references(
                              prompt.strip(), re.IGNORECASE) is not None
         )
         direct = contains(update.quote, update.name) and has_number(update.quote, update.photo_id)
-        answered = answered_name and has_number(update.quote, update.photo_id)
+        answered = (
+            answered_name and answer_numbers == {update.photo_id}
+            and has_number(update.quote, update.photo_id)
+        )
         evidence = reference_history.get(update.evidence_event)
         history_names = (
             {name_key(item.name) for item in evidence.name_updates}
@@ -152,6 +159,9 @@ def ground_references(
     unresolved = False
     claims: dict[str, int | None] = {}
     explicit_numbers = numbered_photos(prompt) | numbered_photos(task_request)
+    explicit_numbers.update(
+        item.photo_id for item in updates if pending and item.question_event == pending[0]
+    )
     for reference in reply.references:
         key = name_key(reference.text)
         if key in claims and claims[key] != reference.photo_id:

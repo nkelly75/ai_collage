@@ -1,0 +1,21 @@
+{
+  "record_version": 1,
+  "name": "clarification-continuation",
+  "images": [
+    "..\\..\\photos\\01_tower_bridge.jpg",
+    "..\\..\\photos\\02_breakfast.jpg",
+    "..\\..\\photos\\03_london_eye.jpg",
+    "..\\..\\photos\\04_daunt_books.jpg"
+  ],
+  "canvas": {"width": 1200, "height": 1800},
+  "messages": [
+    {
+      "name": "initial",
+      "prompt": "Make a simple collage using all four photos, with a light background and generous margins."
+    },
+    {
+      "name": "clarify-and-resize",
+      "prompt": "Make breakfast a bit smaller. Leave everything else alone."
+    }
+  ]
+}

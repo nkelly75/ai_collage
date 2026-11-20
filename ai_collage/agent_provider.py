@@ -43,6 +43,39 @@ def response_format(stage: str = "generation") -> dict[str, object]:
         # enforces the stricter action-dependent fields.
         intent_schema = INTENT.json_schema()
         definitions = intent_schema["$defs"]
+
+        def branch(base: dict, tag: str, kind: str, fields: dict, required: tuple = ()) -> dict:
+            return {
+                **base,
+                "properties": {
+                    **base["properties"], tag: {"type": "string", "const": kind}, **fields,
+                },
+                "required": [*base["required"], *required],
+            }
+
+        positive = {"type": "integer", "exclusiveMinimum": 0}
+        null = {"type": "null"}
+        reference = definitions["PhotoReference"]
+        definitions["PhotoReference"] = {"anyOf": [
+            branch(reference, "source", "number", {"photo_id": positive, "event_id": null}),
+            branch(reference, "source", "name", {"event_id": null}),
+            branch(reference, "source", "unknown", {"photo_id": null, "event_id": null}),
+            branch(reference, "source", "history", {"photo_id": positive, "event_id": positive},
+                   ("event_id",)),
+        ]}
+        navigation = definitions["NavigationEvidence"]
+        definitions["NavigationEvidence"] = {"anyOf": [
+            branch(navigation, "kind", kind, {"task_id": null, "field": null, "steps": null})
+            for kind in ("id", "ordinal")
+        ] + [
+            branch(navigation, "kind", "undo", {"task_id": null, "field": null, "steps": positive},
+                   ("steps",)),
+        ] + [
+            branch(navigation, "kind", kind, {
+                "task_id": positive, "field": {"type": "string", "minLength": 1}, "steps": null,
+            }, ("task_id", "field"))
+            for kind in ("before", "after")
+        ]}
         properties = {}
         for branch in intent_schema["oneOf"]:
             definition = definitions[branch["$ref"].rsplit("/", 1)[-1]]

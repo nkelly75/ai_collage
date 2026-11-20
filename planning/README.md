@@ -31,8 +31,22 @@ need separate approval.
 offline, with a separately authorized live replay sanity follow-up;
 see [010b results](010b_results.md).
 [010c](010c-timeout-recovery-and-reasoning-trials.md) is implemented and verified
-offline; see [010c results](010c_results.md). All three 010 stages are closed for
-integrated review. Further live evaluation requires separate approval.
+offline; see [010c results](010c_results.md). All three implementation stages
+are closed. [010d](010d-bounded-reasoning-evaluation.md) is executed and closed;
+see [010d results](010d_results.md) for the high/low comparison and interpretation
+failures. [010e](010e-interpretation-fixes-and-second-freeze.md) implemented general
+offline fixes and stopped its second-frozen comparison on a provenance blocker;
+see [010e results](010e_results.md).
+A subsequent approved targeted provenance fix is implemented offline:
+corrected-task origins are retained and proposals are checked before publication.
+The [third-freeze follow-up](010e_third_freeze_results.md) is complete and closed;
+it recommended low generation for separate review.
+Earlier closed results remain unchanged.
+[010f](010f-interpretation-reasoning-comparison.md) is executed and closed:
+generation now defaults to low with a high override; interpretation remains high
+after its frozen comparison. See [010f results](010f_results.md) for the
+recommendation, evidence and limitations. No further calls are authorized.
+Exploratory human-led trials and alternative-model experiments remain separate.
 The blueprint's broader Phase 1 is not complete.
 
 ## Planning records
@@ -52,10 +66,13 @@ and record 003 spans several feature increments.
 | [007: Vision for photos and collage feedback](007-image-understanding-and-interactive-design.md) | Exploratory vision ideas: preview understanding plus human feedback, photo descriptions and subjects; colour/contrast analysis lower priority. No implementation authorized. | New discussion record. |
 | [008: Project lifecycle and interactive iteration](008-project-lifecycle-and-interactive-iteration.md) | Complete and closed. See [008 results](008_results.md) for implementation and verification evidence. | New planning record. |
 | [009: User-led natural-language trial](009-user-led-natural-language-trial.md) | Complete and closed as a learning iteration; see [009 results](009_results.md). Follow-up proposed in 010. | New planning record. |
-| [010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md) | All three stages verified offline; 010a/010b also have live sanity follow-ups. Integrated review precedes separately authorized further trials. | New planning record. |
+| [010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md) | Implementation stages and bounded 010d evaluation complete; exploratory human trials remain separate. | New planning record. |
 | [010a: Grounded photo references](010a-grounded-photo-references.md) | Implemented and closed with live sanity follow-up; see [010a results](010a_results.md). | First 010 stage. |
 | [010b: Compact history and reliable returns](010b-compact-history-and-reliable-returns.md) | Implemented and closed with live sanity follow-up; see [010b results](010b_results.md). | Second 010 stage. |
 | [010c: Timeout recovery and reasoning-trial preparation](010c-timeout-recovery-and-reasoning-trials.md) | Implemented and closed offline; see [010c results](010c_results.md). Integrated review and separate authorization precede live trials. | Third 010 stage. |
+| [010d: Bounded reasoning evaluation](010d-bounded-reasoning-evaluation.md) | Executed and closed; see [010d results](010d_results.md). Low generation promising; interpretation issues remain. No default change. | Evaluation follow-up, before exploratory human trials. |
+| [010e: Interpretation fixes and frozen comparisons](010e-interpretation-fixes-and-second-freeze.md) | Both passes closed; see [first results](010e_results.md) and [third-freeze results](010e_third_freeze_results.md). Low generation recommended for review; no default change or further calls. | Follow-up to 010d; later interpretation comparison remains separate. |
+| [010f: Interpretation efficiency and reasoning comparison](010f-interpretation-reasoning-comparison.md) | Executed and closed; see [010f results](010f_results.md). Generation defaults low with high override; interpretation remains high. | Follow-up to 010e; further trials/default changes need approval. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

@@ -35,46 +35,64 @@ def execute(store, path, model, **options):
     return asyncio.run(replay(store, "demo", path, client=model, **options))
 
 
-def test_reasoning_candidate_is_fixed_on_resume_and_verified_offline(store, scenario):
+@pytest.mark.parametrize("generation", ["high", "low"])
+@pytest.mark.parametrize("interpretation", ["high", "low"])
+def test_reasoning_candidate_is_fixed_on_resume_and_verified_offline(
+    store, scenario, generation, interpretation,
+):
     from ai_collage.assess import assess
 
     path, _ = scenario
     model = FakeModel(*turns(reply(), reply()))
-    first = execute(store, path, model, generation_reasoning="low")
-    assert first.generation_reasoning == "low"
+    options = dict(generation_reasoning=generation, interpretation_reasoning=interpretation)
+    first = execute(store, path, model, **options)
+    assert first.generation_reasoning == generation
+    assert first.interpretation_reasoning == interpretation
     captured = (store.project_dir("demo") / "replay" / "report.json").read_bytes()
-    with pytest.raises(CollageError, match="reasoning changed"):
-        execute(store, path, model, resume=True)
+    for field in options:
+        changed = {**options, field: "high" if options[field] == "low" else "low"}
+        with pytest.raises(CollageError, match="reasoning changed"):
+            execute(store, path, model, resume=True, **changed)
+    if generation == "high" or interpretation == "low":
+        with pytest.raises(CollageError, match="reasoning changed"):
+            execute(store, path, model, resume=True)
     assert len(model.contexts) == 2
     assert (store.project_dir("demo") / "replay" / "report.json").read_bytes() == captured
-    report = execute(store, path, model, resume=True, generation_reasoning="low")
+    report = execute(store, path, model, resume=True, **options)
     assert report.next_step == 2 and assess(store, "demo").passed
-    request_path = store.project_dir("demo") / "conversation" / "requests" / "attempt-0002.json"
+    request_path = store.project_dir("demo") / "conversation" / "requests" / "attempt-0001.json"
     data = read_json(request_path)
-    data["reasoning_effort"] = "high"
+    data["reasoning_effort"] = "high" if interpretation == "low" else "low"
     request_path.write_text(json.dumps(data), encoding="utf-8")
     assert not assess(store, "demo").passed
 
 
-def test_timeout_retry_preserves_original_answer_and_auditable_task(store, scenario):
+@pytest.mark.parametrize("interpretation", ["high", "low"])
+def test_timeout_retry_preserves_original_answer_and_auditable_task(store, scenario, interpretation):
     from ai_collage.agent_requests import StageTimeout
     from ai_collage.assess import assess
 
     path, _ = scenario
+    options = dict(interpretation_reasoning=interpretation, generation_reasoning="low")
     model = FakeModel(
         intent("question", question="Which photo?"),
-        intent("fresh"), StageTimeout("offline timeout"),
+        "{}", intent("fresh"), StageTimeout("offline timeout"),
         intent("resume"), reply(),
         intent("edit", source="current"), reply(),
     )
-    assert execute(store, path, model).executions[-1].status == "question"
-    failed = execute(store, path, model, resume=True, answer="2", answer_origin="user")
+    assert execute(store, path, model, **options).executions[-1].status == "question"
+    failed = execute(store, path, model, resume=True, answer="2", answer_origin="user", **options)
     assert failed.executions[-1].status == "failed"
-    resumed = execute(store, path, model, resume=True, retry=True, remaining=True)
+    resumed = execute(store, path, model, resume=True, retry=True, remaining=True, **options)
     assert resumed.next_step == 2
     assert resumed.executions[2].answer == "2"
-    assert model.contexts[4]["original_task"] == "Make a collage."
-    assert model.contexts[4]["active_task"]["answers"] == ["2"]
+    assert model.contexts[5]["original_task"] == "Make a collage."
+    assert model.contexts[5]["active_task"]["answers"] == ["2"]
+    attempts = RequestLog(store, "demo").attempts()
+    assert [a.reasoning_effort for a in attempts] == [
+        interpretation, interpretation, interpretation, "low",
+        interpretation, "low", interpretation, "low",
+    ]
     assert assess(store, "demo").passed
 
 
@@ -310,20 +328,37 @@ def test_four_message_batch_cannot_make_more_than_sixteen_calls(store, scenario)
     assert len(model.contexts) == 16
 
 
-def test_legacy_replay_version_is_rejected_without_rewriting(store, scenario):
+@pytest.mark.parametrize("version", [1, 5])
+def test_legacy_replay_version_is_rejected_without_rewriting(store, scenario, version):
     path, _ = scenario
     model = FakeModel(*turns(reply(), reply()))
     execute(store, path, model)
     root = store.project_dir("demo") / "replay"
     original = (root / "steps" / "0001" / "result.json").read_bytes()
     report = read_json(root / "report.json")
-    report["record_version"] = 1
+    report["record_version"] = version
     (root / "report.json").write_text(json.dumps(report), encoding="utf-8")
     from pydantic import ValidationError
     with pytest.raises(ValidationError, match="record_version"):
         execute(store, path, model, resume=True)
     assert (root / "steps" / "0001" / "result.json").read_bytes() == original
     assert not (store.owner_dir / "agent-runs").exists()
+
+
+@pytest.mark.parametrize("field", ["generation_reasoning", "interpretation_reasoning"])
+def test_replay_candidates_are_required_without_defaulting(store, scenario, field):
+    from pydantic import ValidationError
+
+    path, _ = scenario
+    execute(store, path, FakeModel(*turns(reply())))
+    report_path = store.project_dir("demo") / "replay" / "report.json"
+    data = read_json(report_path)
+    del data[field]
+    report_path.write_text(json.dumps(data), encoding="utf-8")
+    before = report_path.read_bytes()
+    with pytest.raises(ValidationError, match=field):
+        execute(store, path, FakeModel(), resume=True)
+    assert report_path.read_bytes() == before
 
 
 @pytest.mark.parametrize("change", ["prompt", "canvas", "source", "instructions", "conversation"])
@@ -393,6 +428,9 @@ def test_check_validates_shipped_sequences_without_creating_data(tmp_path, capsy
     for filename, name in (
         ("01_dark_portrait_adjustments.json", "checkpoint-a"),
         ("02_landscape_staggered_adjustments.json", "landscape-staggered"),
+        ("03_named_photo_adjustments.json", "named-photo-adjustments"),
+        ("04_exact_proposal_return.json", "exact-proposal-return"),
+        ("05_clarification_continuation.json", "clarification-continuation"),
     ):
         sequence = REPO / "examples" / "sequences" / filename
         assert main(["--sequence", str(sequence), "--check", "--data-dir", str(tmp_path / "unused")]) == 0
@@ -430,6 +468,22 @@ def test_cli_runs_one_step_and_reports_stop_status(store, scenario, monkeypatch,
     ]) == code
     report = json.loads(capsys.readouterr().out)
     assert len(report["executions"]) == 1
+    assert report["generation_reasoning"] == "low"
+    assert report["interpretation_reasoning"] == "high"
+
+
+def test_cli_independent_reasoning_overrides_are_captured(store, scenario, monkeypatch, capsys):
+    path, _ = scenario
+    model = FakeModel(*turns(reply()))
+    monkeypatch.setattr("ai_collage.replay.FoundryModel", lambda: model)
+    assert main([
+        "--sequence", str(path), "--data-dir", str(store.data_dir), "--project", "demo",
+        "--generation-reasoning", "high", "--interpretation-reasoning", "low",
+    ]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["generation_reasoning"] == "high"
+    assert report["interpretation_reasoning"] == "low"
+    assert [a.reasoning_effort for a in RequestLog(store, "demo").attempts()] == ["low", "high"]
 
 
 def test_recorded_clarification_continues_script_and_assesses_as_assisted(store, scenario):

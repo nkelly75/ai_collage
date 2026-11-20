@@ -62,13 +62,17 @@ class StageTimeout(CollageError):
 
 class RequestLog:
     def __init__(
-        self, store: ProjectStore, project_id: str, *, generation_reasoning: Reasoning = "high",
+        self, store: ProjectStore, project_id: str, *, generation_reasoning: Reasoning = "low",
+        interpretation_reasoning: Reasoning = "high",
     ):
         if generation_reasoning not in {"high", "low"}:
             raise CollageError("Generation reasoning must be high or low.")
+        if interpretation_reasoning not in {"high", "low"}:
+            raise CollageError("Interpretation reasoning must be high or low.")
         self.root = child(store.project_dir(project_id), "conversation", "requests")
         self.limits = Limits()
         self.generation_reasoning = generation_reasoning
+        self.interpretation_reasoning = interpretation_reasoning
         self.stage: str | None = None
         self._deadline: float | None = None
 
@@ -92,7 +96,10 @@ class RequestLog:
         return remaining
 
     def reasoning(self, stage: str | None = None) -> Reasoning:
-        return self.generation_reasoning if (stage or self.stage) == "generation" else "high"
+        return (
+            self.generation_reasoning if (stage or self.stage) == "generation"
+            else self.interpretation_reasoning
+        )
 
     def attempts(self) -> list[Attempt]:
         paths = sorted(self.root.glob("attempt-*.json"), key=lambda path: (len(path.name), path.name))
