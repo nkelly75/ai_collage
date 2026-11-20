@@ -123,15 +123,25 @@ class RememberIntent(GroundedIntent):
     action: Literal["remember"]
 
 
+class ResumeIntent(GroundedIntent):
+    action: Literal["resume"]
+
+    @model_validator(mode="after")
+    def unchanged_task(self) -> "ResumeIntent":
+        if self.references or self.name_updates or self.navigation or not self.continues_task:
+            raise ValueError("Resume reuses the timed-out task without new bindings or navigation.")
+        return self
+
+
 Intent = Annotated[
-    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent | RememberIntent,
+    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent | RememberIntent | ResumeIntent,
     Field(discriminator="action"),
 ]
 INTENT = TypeAdapter(Intent)
 
 
 class ConversationRecord(Record):
-    record_version: Literal[4] = 4
+    record_version: Literal[5] = 5
 
 
 class LayoutSource(BaseModel):
@@ -235,6 +245,15 @@ class Exchange(ConversationRecord):
     name_updates: list[PhotoName] = Field(default_factory=list)
     task_id: PositiveInt | None = None
     baseline_before: LayoutSource | None = None
+    generation_timeout: bool = False
+
+    @model_validator(mode="after")
+    def timeout_evidence(self) -> "Exchange":
+        if self.generation_timeout and (
+            self.stage != "generation" or self.outcome != "error" or self.intent is None
+        ):
+            raise ValueError("Generation timeout requires a failed generation with resolved intent.")
+        return self
 
 
 class LocalEvent(ConversationRecord):
@@ -259,9 +278,14 @@ class Limits(Record):
     input_tokens: Annotated[int, Field(ge=1, le=50_000)] = 50_000
     output_tokens: Annotated[int, Field(ge=1, le=25_000)] = 25_000
     timeout_seconds: Annotated[int, Field(ge=1, le=120)] = 120
+    generation_timeout_seconds: Annotated[int, Field(ge=1, le=180)] = 180
+
+
+Reasoning = Literal["high", "low"]
 
 
 class Attempt(Record):
+    record_version: Literal[2] = 2
     number: PositiveInt
     purpose: str
     input_bound: Annotated[int, Field(ge=0)]
@@ -273,3 +297,6 @@ class Attempt(Record):
     cached_tokens: Annotated[int, Field(ge=0)] | None = None
     reasoning_tokens: Annotated[int, Field(ge=0)] | None = None
     error: str | None = None
+    stage: Literal["interpretation", "generation"] | None = None
+    reasoning_effort: Reasoning | None = None
+    timeout_seconds: Annotated[float, Field(gt=0, le=180)] | None = None

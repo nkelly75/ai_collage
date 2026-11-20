@@ -20,6 +20,16 @@ def has_number(text: str, photo_id: int) -> bool:
     return re.search(rf"(?<!\d){photo_id}(?!\d)", text) is not None
 
 
+def numbered_photos(text: str) -> set[int]:
+    number = r"[1-9][0-9]{0,8}(?!\w|\.[0-9]|%)"
+    lists = re.finditer(
+        r"\b(?:photos?|images?|pictures?)\s+(" + number
+        + r"(?:\s*(?:,\s*(?:and\b\s*)?|\band\b|&)\s*" + number + r")*)",
+        text, re.IGNORECASE,
+    )
+    return {int(value) for match in lists for value in re.findall(r"[0-9]+", match[1])}
+
+
 def mentioned_names(text: str, names: dict[str, PhotoName]) -> set[str]:
     spans: list[tuple[int, int]] = []
     found = set()
@@ -141,13 +151,26 @@ def ground_references(
 
     unresolved = False
     claims: dict[str, int | None] = {}
+    explicit_numbers = numbered_photos(prompt) | numbered_photos(task_request)
     for reference in reply.references:
         key = name_key(reference.text)
         if key in claims and claims[key] != reference.photo_id:
             raise CollageError("Contradictory identities for the same photo reference.")
         claims[key] = reference.photo_id
-        if not any(contains(text, reference.text) for text in (prompt, task_request)):
-            raise CollageError("Photo reference text is absent from the current task/answer.")
+        normalized_number = re.fullmatch(r"(?:photo|image|picture)\s+([1-9][0-9]*)", key)
+        numbered_evidence = (
+            reference.source == "number" and normalized_number is not None
+            and int(normalized_number[1]) == reference.photo_id
+            and reference.photo_id in explicit_numbers
+        )
+        if not numbered_evidence and not any(
+            contains(text, reference.text) for text in (prompt, task_request)
+        ):
+            raise CollageError(
+                "Photo reference text is absent from the current task/answer. "
+                "Bind only individually identified photos; keep collective instructions "
+                "in the task rather than enumerating group members."
+            )
         if reference.photo_id is None:
             if reference.source not in {"name", "unknown"} or reference.event_id is not None:
                 raise CollageError("Unresolved photo reference has contradictory evidence.")
@@ -180,7 +203,11 @@ def ground_references(
             if targets != {reference.photo_id}:
                 raise CollageError("Conversational reference needs an unambiguous visible prior target.")
         else:
-            raise CollageError("A resolved photo reference needs number, name or history evidence.")
+            raise CollageError(
+                "A resolved photo reference needs number, name or history evidence. "
+                "Unknown requires a null photo_id. Keep collective instructions in the "
+                "task rather than encoding group members as individual references."
+            )
     if unresolved and not isinstance(reply, QuestionIntent):
         raise CollageError("Unresolved photo references require clarification before generation.")
     if not isinstance(reply, QuestionIntent):

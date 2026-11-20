@@ -1,14 +1,16 @@
 # 010: Grounded interpretation and continued human trials
 
-**Status:** Agreed high-level direction; umbrella for three proposed sequential
-autopilot specs, **010a, 010b and 010c**.
+**Status:** Three sequential implementation stages, **010a, 010b and 010c**,
+are implemented and verified offline.
 [010a](010a-grounded-photo-references.md) is implemented and verified offline,
 with a separately authorized live replay sanity follow-up;
 see [010a results](010a_results.md).
 [010b](010b-compact-history-and-reliable-returns.md) is implemented and verified
 offline, with a separately authorized live replay sanity follow-up;
-see [010b results](010b_results.md). 010c still needs a detailed spec and approval.
-No further live calls are authorized. Next: review the 010b handoff.
+see [010b results](010b_results.md).
+[010c](010c-timeout-recovery-and-reasoning-trials.md) is complete and closed;
+see [010c results](010c_results.md). Next: review the integrated 010 handoff.
+No further live calls or human trials are authorized.
 
 ## Purpose and prerequisites
 
@@ -82,11 +84,17 @@ and actual outcomes differ.
 
 ### 010c: Timeout recovery and reasoning-trial preparation
 
-Set a **180-second total deadline for a generation invocation**, rather than
-stacking separate waits through provider/transport layers. This adds patience,
-not speed. For a confirmed generation timeout before publication, report the
-unchanged baseline and advise that it is OK to repeat the previous prompt.
-Retain the task's source and clarification context, including for short answers.
+Implemented scope and guardrails:
+[010c](010c-timeout-recovery-and-reasoning-trials.md);
+evidence and limitations: [010c results](010c_results.md).
+
+Set a **180-second total generation-stage deadline** and a **120-second total
+interpretation-stage deadline**, each shared across its validation corrections
+rather than stacking separate waits through provider/transport layers. This
+adds patience for generation, not speed. For a confirmed generation timeout
+before publication, report the unchanged baseline and advise that it is OK to
+repeat the previous prompt or say "try again". Retain the task's source and
+clarification context across restart, including repeated short answers.
 Do not promise identical output, free retries or zero timed-out usage, or give
 unchanged-state assurances for unrelated publication/I/O failures.
 
@@ -94,6 +102,10 @@ Prepare an explicitly selected and recorded generation-only low-reasoning
 candidate for a later trial. **High reasoning remains the default** and
 interpretation reasoning stays unchanged. No model switch, automatic tuning or
 live reasoning experiment is part of this implementation stage.
+
+Add lightweight terminal progress after validated interpretation and before
+generation, plus readable known-usage/incomplete-total reporting in chat.
+Keep presentation separate from model context and preserve accounting evidence.
 
 **Offline gate:** Simulate timeouts without real waits; verify deadline settings,
 unchanged baseline, repeat-prompt guidance, failed-task continuation and honest

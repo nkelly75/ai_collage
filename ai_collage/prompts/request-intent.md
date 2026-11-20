@@ -16,6 +16,11 @@ Actions:
 - `retry`, with `proposal_id`: rejection of a generated result. After an edit,
   retry the original task from its original source, not the disliked result.
   After a new composition, try a fresh arrangement.
+- `resume`: explicitly repeat a confirmed timed-out generation from `failed_task`,
+  including "try again", the repeated prompt or a repeated short clarification
+  answer. Use empty `references` and `name_updates`, no navigation and
+  `continues_task: true`; code reuses the already validated intent/source/bindings.
+  This is not rejection of a published result; do not use `retry` for a timeout.
 - `select`, with `proposal_id`: return to the exact preserved result and wait.
   Do not generate or edit when the user only asks to return.
 - `question`, with one short `question` of at most 1,000 characters: resolve
@@ -25,21 +30,34 @@ Every action includes `references` and `name_updates` arrays (empty when not
 applicable). Ground all photo references, including relation/anchor photos,
 before generation. Do not equate choosing edit/current with understanding targets.
 
+`references` binds individually identified photos, not every member of a group.
+Collective instructions such as "all the photos", "the others" or "the remaining
+photos" stay in the original task for generation; do not enumerate them as
+individual references or mark known photos `unknown`. For "Make photo 2 smaller
+than the others", return only `{"text":"photo 2","photo_id":2,"source":"number"}`
+in `references`; generation receives the complete comparison. Clarify only if
+the intended group is genuinely unclear, not merely because the wording is plural.
+
 Every action may set `continues_task` (default true). For an answer to a pending
 question keep it true; for a clearly independent replacement request set it false
 so old questions/confirmations are not silently applied to the new task.
+The same applies when `failed_task` is present: use `resume` to continue it,
+or set `continues_task: false` for an independent replacement request.
 
-Each reference has `text` (the exact relevant user wording), `photo_id`,
+Each reference has `text` (the relevant user wording), `photo_id`,
 `source`, and optional `event_id`:
-- `number`: the wording contains that photo number.
+- `number`: the wording contains that photo number. An explicit numbered list
+  such as "photos 1 and 4" may use individual normalized texts "photo 1" and
+  "photo 4". Only numbers explicitly identifying photos qualify, not quantities.
 - `name`: use the exact learned label from `photo_names`, or a name established
   by a validated update in this response. Unknown names have null `photo_id`
   and require a question, not a guessed number.
 - `history`: clear conversational wording such as "it", citing the `event_id`
   of an unambiguous single-photo target in `reference_history`.
 - `unknown`: another unresolved reference; null `photo_id`, then clarify.
-Only history references cite an event ID. The wording must occur in the current
-message or the pending question's original user prompt. Do not resolve photos
+Only history references cite an event ID. Except for normalized numbered
+references, the wording must occur in the current message or the pending
+question's original user prompt. Do not resolve photos
 by layout descriptions such as "top-right" or invent image-content synonyms.
 "The breakfast photo" can refer to the learned label "breakfast"; a newly
 guessed "croissant" cannot. Ask only for unknown essentials, not exact amounts
@@ -78,6 +96,11 @@ is size-trimmed. `photo_names` and `reference_history` are separately retained
 grounding evidence, not discarded rolling wording. `failed_candidate` and
 `validation_feedback` describe the latest
 invalid action when correcting interpretation.
+`failed_task` retains the validated intent of a generation that timed out before
+publication. Its source and original task remain authoritative for explicit
+continuation, including after restart; do not replace them with the current
+baseline or treat a short repeated answer as a new task. Do not copy previous
+name updates into a resume. If continuation is genuinely unclear, ask.
 
 `recent_tasks` and up to twelve `compact_tasks` contain deterministic task records:
 the request is what was asked; `changes` is what actually happened, keyed by

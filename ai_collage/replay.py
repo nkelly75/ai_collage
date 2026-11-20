@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, RootModel, ValidationError, model_validat
 
 from .agent_requests import RequestLog, call_budget
 from .agent_files import canonical, child, digest, save
-from .agent_models import Controls, Digest, Exchange, LayoutSource, Record, ResolvedIntent
+from .agent_models import Controls, Digest, Exchange, LayoutSource, Reasoning, Record, ResolvedIntent
 from .agent_provider import FoundryModel, instruction_bundle
 from .conversation import Conversation, ModelClient
 from .models import MAX_FILE_BYTES, CollageError, InputLayout
@@ -49,7 +49,7 @@ class Source(Record):
 
 class StepResult(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[4] = 4
+    record_version: Literal[5] = 5
     step: int
     name: str
     prompt: str
@@ -79,7 +79,7 @@ class StepResult(BaseModel):
 
 class ReplayReport(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[4] = 4
+    record_version: Literal[5] = 5
     project_id: str
     sequence: Sequence
     sources: list[Source]
@@ -88,6 +88,7 @@ class ReplayReport(BaseModel):
     conversation_sha256: Digest
     next_step: int = 0
     executions: list[StepResult] = Field(default_factory=list)
+    generation_reasoning: Reasoning = "high"
 
 
 def authored_changes(before: object, after: object) -> list[Change]:
@@ -110,12 +111,13 @@ async def replay(
     resume: bool = False, remaining: bool = False, retry: bool = False,
     answer: str | None = None, answer_origin: Literal["user", "copilot"] | None = None,
     client: ModelClient | None = None,
+    generation_reasoning: Reasoning = "high",
 ) -> ReplayReport:
     sequence, sources = load_sequence(sequence_path)
     assembled = instruction_bundle()
     instruction_hash = digest(assembled.encode("utf-8"))
     root = child(store.project_dir(project_id), "replay")
-    requests = RequestLog(store, project_id)
+    requests = RequestLog(store, project_id, generation_reasoning=generation_reasoning)
     report_path = child(root, "report.json")
     if retry and not resume:
         raise CollageError("--retry requires --resume.")
@@ -127,6 +129,8 @@ async def replay(
     answers_execution = None
     if resume:
         report = ReplayReport.model_validate(read_json(report_path))
+        if report.generation_reasoning != generation_reasoning:
+            raise CollageError("Replay generation reasoning changed; use a fresh replay project.")
         if (
             report.project_id != project_id or report.sources != sources
             or report.sequence.name != sequence.name or report.sequence.canvas != sequence.canvas
@@ -183,6 +187,7 @@ async def replay(
             project_id=project_id, sequence=sequence, sources=sources,
             instructions_sha256=instruction_hash,
             conversation_sha256=digest(canonical(conversation.state)),
+            generation_reasoning=generation_reasoning,
         )
         save(report_path, report)
         child(root, "instructions.md").write_text(assembled, encoding="utf-8")
@@ -305,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--remaining", action="store_true", help="Run all remaining messages, not just one.")
     parser.add_argument("--answer", help="Supplement the pending question; do not replace the script.")
     parser.add_argument("--answer-origin", choices=["user", "copilot"])
+    parser.add_argument("--generation-reasoning", choices=["high", "low"], default="high")
     args = parser.parse_args(argv)
     if not args.check and not args.project:
         parser.error("--project is required for live execution.")
@@ -322,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
                 store, args.project, args.sequence,
                 resume=args.resume, remaining=args.remaining, retry=args.retry,
                 answer=args.answer, answer_origin=args.answer_origin,
+                generation_reasoning=args.generation_reasoning,
             ))
         print(report.model_dump_json(indent=2))
         return 0 if report.executions[-1].status in {"proposal", "selection", "acknowledgement"} else 1

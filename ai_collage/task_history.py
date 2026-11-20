@@ -9,7 +9,7 @@ from .agent_models import (
     PhotoName, Proposal, QuestionIntent, RetryIntent, SelectIntent,
 )
 from .models import CollageError, InputLayout
-from .photo_references import contains, mentioned_names, name_key
+from .photo_references import contains, mentioned_names, name_key, numbered_photos
 
 
 class RecipeChange(BaseModel):
@@ -71,7 +71,10 @@ def task_records(
                 baseline_before=baseline,
             )
         task = records[event.task_id]
-        if task.outcome in {"proposal", "selection", "acknowledgement", "error"}:
+        resumable = task.events and isinstance(events[task.events[-1]], Exchange) and (
+            events[task.events[-1]].generation_timeout
+        )
+        if task.outcome in {"proposal", "selection", "acknowledgement", "error"} and not resumable:
             raise CollageError("A completed task cannot acquire unrelated events.")
         task.events.append(number)
         task.outcome = event.outcome
@@ -156,7 +159,7 @@ def change_matches(text: str, change: RecipeChange, names: list[PhotoName]) -> b
     """Conservative vocabulary links to actual fields, not promises in old prompts."""
     field = change.field
     match = re.search(r"\.photos\.(\d+)\.", field)
-    numbers = {int(value) for value in re.findall(r"\b(?:photo|image|picture)\s+(\d+)\b", text, re.I)}
+    numbers = numbered_photos(text)
     bindings = {name_key(name.name): name for name in names}
     numbers.update(bindings[key].photo_id for key in mentioned_names(text, bindings))
     if match and numbers and int(match[1]) not in numbers:

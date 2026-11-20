@@ -5,11 +5,12 @@ import json
 import pytest
 
 from ai_collage.conversation import Conversation
-from ai_collage.agent_models import NavigationEvidence
+from ai_collage.agent_models import INTENT, LayoutSource, NavigationEvidence
 from ai_collage.models import CollageError, InputLayout
 from ai_collage.projects import read_json
 from ai_collage.task_history import (
-    RecipeChange, change_matches, navigation_target, recipe_changes, undo_target,
+    RecipeChange, TaskRecord, change_matches, matching_records, navigation_target,
+    recipe_changes, undo_target, validate_navigation,
 )
 
 from .helpers import layout_data
@@ -55,6 +56,55 @@ def test_photo_keyed_differences_do_not_turn_stacking_into_spurious_photo_edits(
 ])
 def test_descriptive_evidence_does_not_confuse_fields_or_reverse_direction(text, field, before, after):
     assert not change_matches(text, RecipeChange(field=field, before=before, after=after), [])
+
+
+@pytest.mark.parametrize("wording", [
+    "photo 1 and photo 4",
+    "photos 1 and 4",
+    "images 1,4",
+])
+def test_descriptive_numbered_lists_exclude_unrelated_photo_changes(wording):
+    records = [
+        TaskRecord(
+            task_id=number, events=[number], request="Make smaller", outcome="proposal",
+            baseline_before=LayoutSource(proposal_id=f"P{number:03d}"),
+            proposal_id=f"P{number + 1:03d}",
+            predecessor=LayoutSource(proposal_id=f"P{number:03d}"),
+            changes=[RecipeChange(field=f"recipe.photos.{photo}.box.width", before=0.3, after=0.2)
+                     for photo in photos],
+        ) for number, photos in ((1, [1, 4]), (2, [2]))
+    ]
+    text = f"Go back to before {wording} became smaller"
+    assert [record.task_id for record in matching_records(text, records, None, [])] == [1]
+    evidence = NavigationEvidence(
+        kind="before", text=text, task_id=1, field="recipe.photos.4.box.width",
+    )
+    assert navigation_target(evidence, text, records, None, [], {1, 2}) == "P001"
+    unrelated = evidence.model_copy(update={"task_id": 2, "field": "recipe.photos.2.box.width"})
+    with pytest.raises(CollageError, match="does not support"):
+        navigation_target(unrelated, text, records, None, [], {1, 2})
+
+
+def test_descriptive_plural_list_still_requires_confirmation_for_competing_matches():
+    text = "Go back to before photos 1 and 4 became smaller"
+    records = [
+        TaskRecord(
+            task_id=number, events=[number], request="Make smaller", outcome="proposal",
+            baseline_before=LayoutSource(proposal_id=f"P{number:03d}"),
+            proposal_id=f"P{number + 1:03d}",
+            predecessor=LayoutSource(proposal_id=f"P{number:03d}"),
+            changes=[RecipeChange(field=f"recipe.photos.{photo}.box.width", before=0.3, after=0.2)
+                     for photo in (1, 4)],
+        ) for number in (1, 2)
+    ]
+    evidence = navigation(
+        "before", text, task_id=1, field="recipe.photos.4.box.width",
+    )
+    action = INTENT.validate_json(intent("select", proposal_id="P001", navigation=evidence))
+    with pytest.raises(CollageError, match="Several preserved changes match"):
+        validate_navigation(
+            action, text, text, records, LayoutSource(proposal_id="P003"), [], {1, 2}, None,
+        )
 
 
 def test_ordinal_evidence_cannot_be_a_fragment_of_an_unrelated_word():

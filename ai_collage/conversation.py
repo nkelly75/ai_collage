@@ -1,19 +1,20 @@
 """Local proposals, real conversation history, and explicit acceptance."""
 
+import asyncio
 import json
 import re
 import tempfile
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from pydantic import ValidationError
 
-from .agent_requests import RequestLog
+from .agent_requests import RequestLog, StageTimeout
 from .agent_files import canonical, child, digest, save
 from .agent_models import (
     HISTORY, INTENT, AcceptanceIntent, Controls, ConversationState, EditIntent, Exchange,
     FreshIntent, Intent, LayoutSource, LocalEvent, Preferences, Proposal, QuestionIntent,
-    RememberIntent, RequestResult, ResolvedIntent, RetryIntent, SelectIntent,
+    RememberIntent, RequestResult, ResolvedIntent, ResumeIntent, RetryIntent, SelectIntent,
 )
 from .geometry import LayoutBoundsError, resolve_layout
 from .imaging import render_layout
@@ -228,6 +229,7 @@ class Conversation:
             if isinstance(event, Exchange)
         ]
         records = self.tasks()
+        failure = self._pending_failure()
         prior_records = [
             record for record in records
             if request_start is None or record.task_id < request_start
@@ -277,6 +279,11 @@ class Conversation:
             selected.update(
                 source.proposal_id for source in (intent.source, intent.reference) if source is not None
             )
+        if failure is not None:
+            selected.update(
+                source.proposal_id for source in (failure.intent.source, failure.intent.reference)
+                if source is not None
+            )
         catalogue = []
         for ordinal, proposal_id in enumerate(published, 1):
             if proposal_id not in selected:
@@ -305,6 +312,10 @@ class Conversation:
             ],
             "task_count": len(prior_records),
             "navigation_lookup": lookup,
+            "failed_task": {
+                "task_id": failure.task_id,
+                "resolved_intent": failure.intent.model_dump(mode="json"),
+            } if failure is not None else None,
             "reference_history": [
                 {"event_id": number,
                  "references": [item.model_dump(mode="json") for item in event.references],
@@ -341,6 +352,19 @@ class Conversation:
             record.model_dump(mode="json", exclude={"request", "events"})
             for record in records if record.task_id in pinned_ids
         ]
+        if failure is not None:
+            failure_events = {
+                number for record in records if record.task_id == failure.task_id
+                for number in record.events
+            }
+            visible_reference_ids = {item["event_id"] for item in context["reference_history"]}
+            context["reference_history"].extend(
+                {"event_id": number,
+                 "references": [item.model_dump(mode="json") for item in event.references],
+                 "name_updates": [item.model_dump(mode="json") for item in event.name_updates]}
+                for number, event in exchanges if number in failure_events
+                and number not in visible_reference_ids and (event.references or event.name_updates)
+            )
         active_task = next(
             (record for record in records if request_start is not None
              and record.task_id == getattr(self, "_active_task", None)), None,
@@ -399,9 +423,30 @@ class Conversation:
             raise CollageError("Working baseline does not match recorded navigation.")
         return records
 
+    def _pending_failure(self) -> Exchange | None:
+        if getattr(self, "_independent_task", False):
+            return None
+        task_id = None
+        for event in reversed(self.history()):
+            if not isinstance(event, Exchange):
+                continue
+            if task_id is None:
+                task_id = event.task_id
+            if event.task_id != task_id:
+                break
+            if event.generation_timeout:
+                return event
+            if event.outcome not in {"invalid", "intent", "question"}:
+                break
+        return None
+
     def _task_origin(self, prompt: str) -> tuple[int, str]:
         if getattr(self, "_independent_task", False):
             return self._next_event(), prompt
+        failure = self._pending_failure()
+        if failure is not None:
+            history = dict(zip(self.state.history, self.history(), strict=True))
+            return failure.task_id, history[failure.task_id].prompt
         history = dict(zip(self.state.history, self.history(), strict=True))
         exchanges = [(number, event) for number, event in history.items() if isinstance(event, Exchange)]
         for _, event in reversed(exchanges):
@@ -414,6 +459,17 @@ class Conversation:
         return self._next_event(), prompt
 
     def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
+        failure = self._pending_failure()
+        if isinstance(reply, ResumeIntent):
+            if failure is None:
+                raise CollageError("No confirmed generation timeout to resume.")
+            if failure.intent.source is not None:
+                recipe = self.source_recipe(failure.intent.source)
+                assert recipe is not None
+                self._validate_recipe(recipe)
+            return failure.intent
+        if failure is not None and not isinstance(reply, (QuestionIntent, RememberIntent)):
+            raise CollageError("Continue the timed-out task with resume, or mark a new task independent.")
         task_turn, task_request = self._task_origin(prompt)
         source = None
         reference = None
@@ -462,6 +518,7 @@ class Conversation:
 
     async def request(
         self, prompt: str, client: ModelClient, requests: RequestLog | None = None,
+        *, progress: Callable[[str, ResolvedIntent | None], None] | None = None,
     ) -> RequestResult:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_JSON_BYTES // 4:
             raise CollageError("Prompt must be nonempty and at most 256 KiB UTF-8.")
@@ -473,15 +530,33 @@ class Conversation:
         request_start = self._next_event()
         self._independent_task = False
         self._active_task = self._task_origin(prompt)[0]
+        requests.begin_stage("interpretation")
+        previous_stage = "interpretation"
         for call in range(4):
             stage = "interpretation" if intent is None else "generation"
+            if stage != previous_stage:
+                requests.begin_stage(stage)
+                previous_stage = stage
+                if progress is not None:
+                    progress("generation", intent)
             context = self.context(
                 prompt, feedback, stage=stage, intent=intent, request_start=request_start,
             )
             attempts_before = len(requests.attempts())
             try:
-                raw = await client.complete(context, requests, f"{self.project_id}: {stage}")
-            except (CollageError, OSError) as exc:
+                async with asyncio.timeout(requests.remaining_seconds()):
+                    raw = await client.complete(context, requests, f"{self.project_id}: {stage}")
+                requests.remaining_seconds()
+            except (CollageError, OSError, TimeoutError) as exc:
+                timed_out = isinstance(exc, (StageTimeout, TimeoutError))
+                error = (
+                    "Generation timed out before publication; editing baseline is unchanged. "
+                    'Repeat the prompt or say "try again". Usage may be unavailable; retries are new calls.'
+                    if timed_out and stage == "generation"
+                    else "Interpretation timed out; no automatic retry." if timed_out
+                    else str(exc) if isinstance(exc, CollageError)
+                    else f"Request stopped: {type(exc).__name__}."
+                )
                 self._append(Exchange(
                     prompt=prompt, outcome="error", parent=self.state.baseline,
                     stage=stage, intent=intent,
@@ -490,8 +565,10 @@ class Conversation:
                         len(requests.attempts())
                         if len(requests.attempts()) > attempts_before else None
                     ),
-                    error=str(exc) if isinstance(exc, CollageError) else f"Request stopped: {type(exc).__name__}.",
+                    error=error, generation_timeout=timed_out and stage == "generation",
                 ))
+                if timed_out:
+                    raise StageTimeout(error) from exc
                 raise
             try:
                 data = parse_json(raw.encode("utf-8"))
@@ -518,7 +595,7 @@ class Conversation:
                     visible = context["reference_history"]
                     assert isinstance(visible, list)
                     visible_ids = {item["event_id"] for item in visible}
-                    updates = ground_references(
+                    updates = [] if isinstance(reply, ResumeIntent) else ground_references(
                         reply, prompt,
                         photos={photo.photo_id for photo in self.store.load(self.project_id).photos},
                         names=self.state.photo_names, event_id=self._next_event(),
@@ -534,13 +611,14 @@ class Conversation:
                     )
                     names = {name_key(item.name): item for item in self.state.photo_names}
                     names.update({name_key(item.name): item for item in updates})
-                    validate_navigation(
-                        reply, prompt,
-                        pending_question["original_task"]
-                        if isinstance(pending_question, dict) and reply.continues_task else prompt,
-                        self.tasks(), self._current_source(), list(names.values()), visible_tasks,
-                        pending_reply if isinstance(pending_reply, QuestionIntent) else None,
-                    )
+                    if not isinstance(reply, ResumeIntent):
+                        validate_navigation(
+                            reply, prompt,
+                            pending_question["original_task"]
+                            if isinstance(pending_question, dict) and reply.continues_task else prompt,
+                            self.tasks(), self._current_source(), list(names.values()), visible_tasks,
+                            pending_reply if isinstance(pending_reply, QuestionIntent) else None,
+                        )
                     if isinstance(reply, QuestionIntent):
                         event_id = self._append(Exchange(
                             prompt=prompt, response=raw, outcome="question",
@@ -548,6 +626,8 @@ class Conversation:
                             run_id=None, attempt=len(requests.attempts()),
                             references=reply.references, name_updates=updates,
                         ), photo_names=list(names.values()))
+                        if progress is not None:
+                            progress("question", None)
                         return RequestResult(
                             kind="question", question=reply.question, event_id=event_id,
                         )
@@ -561,6 +641,8 @@ class Conversation:
                             attempt=len(requests.attempts()), references=reply.references,
                             name_updates=updates,
                         ), photo_names=list(names.values()))
+                        if progress is not None:
+                            progress("remember", None)
                         return RequestResult(
                             kind="acknowledgement", acknowledgement=message, event_id=event_id,
                         )
@@ -573,6 +655,8 @@ class Conversation:
                             attempt=len(requests.attempts()), proposal_id=reply.proposal_id,
                             references=reply.references, name_updates=updates,
                         ), baseline=reply.proposal_id, photo_names=list(names.values()))
+                        if progress is not None:
+                            progress("intent", intent)
                         return RequestResult(
                             kind="selection", proposal_id=reply.proposal_id, event_id=event_id,
                         )
@@ -582,6 +666,8 @@ class Conversation:
                         attempt=len(requests.attempts()),
                         references=reply.references, name_updates=updates,
                     ), photo_names=list(names.values()))
+                    if progress is not None:
+                        progress("intent", intent)
                     feedback = None
                     continue
                 resolved = self._validate_recipe(InputLayout.model_validate(data))

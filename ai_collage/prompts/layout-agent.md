@@ -55,6 +55,7 @@ The per-request context contains:
 | `required_tasks`, `active_task` | Essential evidence and originating task/answers retained through size fitting. |
 | `pending_question` | The latest outstanding clarification, retained even if recent history is size-trimmed. |
 | `failed_candidate` | The latest invalid response in this attempt, retained with its validation feedback for correction. |
+| `failed_task` | A confirmed timed-out generation. Its already validated intent/source is reused on explicit continuation; this is not rejection of a generated proposal. |
 | `user_request` | The current task. |
 | `validation_feedback` | When present, the latest failed candidate's validation problems to address. |
 

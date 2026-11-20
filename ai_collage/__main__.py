@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--preferences", type=Path)
     chat.add_argument("--live", action="store_true", help="Enable model requests; otherwise stay local-only.")
     chat.add_argument("--no-open", action="store_true")
+    chat.add_argument("--generation-reasoning", choices=["high", "low"], default="high")
     args = parser.parse_args(argv)
     try:
         store = ProjectStore(args.data_dir)
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_chat(
                 store, args.project, canvas=tuple(args.canvas) if args.canvas else None,
                 preferences=args.preferences, live=args.live, no_open=args.no_open,
+                generation_reasoning=args.generation_reasoning,
             )
         elif args.command == "create":
             store.create(args.project, args.images)

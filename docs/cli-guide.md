@@ -135,6 +135,14 @@ recent conversational references such as "make it bigger" after discussing one
 photo. The model cannot see image contents; positional descriptions such as
 "top-right" and untaught content synonyms are not resolved in this increment.
 Qualitative amounts such as "a bit right" do not require exact distances.
+Collective instructions such as "photo 2 smaller than the others" or "remove all
+borders" do not need individual bindings for every group member. Interpretation
+binds individually identified photos and passes the complete task to generation;
+an actually unclear group may still need clarification.
+Explicit lists such as "photos 1 and 4" or "photos 1, 3 and 4" support individual
+normalized numbered references. Numbers must identify photos in the task, not
+be borrowed from unrelated quantities; photo IDs still must exist. Named and
+historical references retain their existing evidence checks.
 
 Teach a name with "photo 2 is breakfast", or answer "2" when asked which photo
 is breakfast. Naming alone produces a **Remembered** acknowledgement, without
@@ -164,6 +172,8 @@ proposals. Fresh arrangements retain a navigation predecessor without acquiring
 an editing source; retries branch from the original source, not a rejected result.
 Descriptive returns can find older branches. The interpretation supplies
 destination evidence, which code checks before any baseline change or generation.
+History matching uses the same explicit photo-number list recognition as edit
+grounding, so plural/list wording still excludes unrelated-photo changes.
 Competing or unsupported matches require clarification. A concrete return
 confirmation retains its exact destination and original task across restart;
 "yes" confirms it, while rejection does not select or generate anything.
@@ -178,10 +188,11 @@ evidence survive optional-history size fitting. If essential input cannot fit,
 the request fails explicitly instead of silently forgetting it.
 
 Conversation, proposal, event, acceptance-intent, replay and assessment records
-now use **record version 4**.
+now use **record version 5**; request-attempt records use **version 2**, recording
+their stage, actual reasoning selection and remaining deadline at dispatch.
 Layout/project format remains **3**; sequence definitions, preferences and
-request accounting retain their own unchanged versions. Old conversation/replay
-records (including version 3 conversations/replays) are untouched archives:
+controls retain their own unchanged versions. Old conversation/replay and
+request-attempt records are untouched archives:
 use fresh projects, not a legacy loader or
 migration. Existing supported deterministic recipes/snapshots remain usable.
 
@@ -239,6 +250,26 @@ proposals; `/show`, `/rate`, and `/accept` act on existing successful proposals.
 A resume uses the captured preferences and effective controls. Omit
 `--canvas`, or supply the same dimensions; use `/canvas` for an explicit change.
 
+Chat shows a concise action/source/photo summary only after interpretation is
+validated, then `Generating layout...` before waiting for generation. Questions,
+name acknowledgements and exact returns do not announce generation. This is
+terminal feedback, not an extra model call or model-generated explanation.
+
+After a confirmed generation timeout before publication, the editing baseline
+is unchanged. Repeat the original prompt, say "try again", or repeat the last
+clarification answer (for example "2"). The existing interpretation stage can
+resume the failed task with its original source and answers, including after
+restart. A clearly independent request replaces it. Retrying requires an
+explicit user message, may produce different output and may incur more usage.
+Unrelated publication/I/O failures do not carry the same unchanged-state promise.
+
+Both chat and replay accept `--generation-reasoning high|low`; **high** is the
+default and interpretation always stays high. The choice is fixed for that
+chat session/replay run and recorded in request evidence. For an explicitly
+authorized later trial, append `--generation-reasoning low` to the normal
+command; repeat it on replay resume, which rejects a candidate change (including
+silently reverting to the default). This option does not authorize a live trial.
+
 | Local command | Behavior |
 |---|---|
 | `/show P001` | Print/open the immutable preview; never regenerate it. |
@@ -282,6 +313,13 @@ Conversation state, bounded event files, and immutable `proposals\P001`
 artifacts live under the project's `conversation` directory. Per-request usage
 records are saved automatically in `conversation\requests\attempt-0001.json`,
 etc. They are accounting, not an allowance or a cumulative usage limit.
+Chat and `/status` label project-wide token sums as **Known usage**. If usage is
+missing, they show the affected request count/attempt IDs and warn that totals
+are incomplete. The machine-readable `unknown_usage_attempts` is a list of IDs,
+not a count. A timeout may prevent provider usage from arriving; unknown does
+not mean zero consumption or no charge. Partial reported counts remain included
+in known totals; missing counts are never estimated. Raw accounting fields remain
+available in replay summaries and request records.
 All experiment runtime files remain ignored by Git.
 
 ### Repeatable prompt sequences
@@ -386,6 +424,8 @@ remain in the normal conversation events; individual request usage remains
 in the project's request records. Selection is a completed step, not a new
 proposal; it has no authored changes or generation call. Both prompts are
 captured in the instruction bundle and checked on resume.
+The report also captures the generation-reasoning candidate; offline integrity
+assessment checks request stages/reasoning against that candidate.
 No photos or local paths are added to the
 model context by the runner. Existing executions and proposal files are
 preserved when resuming.
@@ -475,7 +515,11 @@ active limits, and this simplification grants no new service-call authorization.
 
 The transport durably records each actual outbound inference before dispatch.
 The per-request limits are 50,000 input
-tokens, 25,000 output tokens including reasoning, and 120 seconds. Input
+tokens and 25,000 output tokens including reasoning. Each message has a shared
+**120-second interpretation-stage deadline** and an independent shared
+**180-second generation-stage deadline**, including each stage's validation
+corrections. Nested provider/transport waits do not renew these budgets.
+Local rendering/publication is outside the model-stage deadlines. Input
 preflight uses serialized UTF-8 bytes plus a reserve as a conservative token
 bound; actual provider usage is recorded separately. If needed, it removes
 optional compact records first, then oldest recent task detail and optional
@@ -486,8 +530,8 @@ exceeds the bound, a local error reports the measured bound and limit before
 dispatch, without using a call allowance or changing the baseline. Replay
 captures retain the effective context after size trimming. SDK/transport retries,
 tools, hosted history, response storage, and unexpected extra inference are
-disabled/rejected. High reasoning effort is explicitly requested and checked
-on the outbound request; reasoning tokens share the 25,000-token output cap.
+disabled/rejected. The selected reasoning effort is explicitly requested and
+checked on the outbound request; reasoning tokens share the 25,000-token output cap.
 Storage-off is not a promise about all service logging.
 
 There are at most three validation-guided corrections for completed invalid

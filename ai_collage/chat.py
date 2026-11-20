@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .agent_requests import RequestLog
-from .agent_models import Controls
+from .agent_models import Controls, Reasoning, ResolvedIntent
 from .conversation import Conversation
 from .models import CollageError
 from .projects import ProjectStore
@@ -35,6 +35,42 @@ def open_preview(path: Path) -> None:
         os.startfile(path)
     except OSError as exc:
         print(f"Warning: preview could not be opened: {exc}. Open {path}", file=sys.stderr)
+
+
+def show_usage(requests: RequestLog) -> None:
+    usage = requests.summary()
+    print(
+        f"Project requests: {usage['attempts']}. Known usage: "
+        f"{usage['input_tokens']:,} input / {usage['output_tokens']:,} output tokens."
+    )
+    unknown = usage["unknown_usage_attempts"]
+    if unknown:
+        identifiers = ", ".join(str(number) for number in unknown)
+        print(
+            f"Usage unavailable for {len(unknown)} request{'s' if len(unknown) != 1 else ''} "
+            f"(attempt{'s' if len(unknown) != 1 else ''} {identifiers}); totals are incomplete."
+        )
+
+
+def show_progress(kind: str, intent: ResolvedIntent | None) -> None:
+    if kind == "generation":
+        print("Generating layout...", flush=True)
+    elif intent is None:
+        print(
+            "Intent: clarification needed." if kind == "question" else "Intent: remember photo names.",
+            flush=True,
+        )
+    else:
+        source = intent.source
+        label = (
+            source.proposal_id or f"accepted version {source.accepted_version}"
+            if source is not None else "no editing source"
+        )
+        targets = sorted({item.photo_id for item in intent.references if item.photo_id is not None})
+        suffix = f"; target photo{'s' if len(targets) != 1 else ''} " + ", ".join(
+            str(number) for number in targets
+        ) if targets else ""
+        print(f"Intent: {intent.action}; source {label}{suffix}.", flush=True)
 
 
 def local_command(
@@ -81,8 +117,8 @@ def local_command(
             "accepted_version": conversation.store.load(conversation.project_id).current_version,
             "controls": conversation.state.controls.model_dump(),
             "preferences": conversation.state.preferences.model_dump(),
-            "requests": requests.summary(),
         }, indent=2))
+        show_usage(requests)
     else:
         raise CollageError("Unknown command or invalid arguments. Use /help.")
     return True
@@ -91,11 +127,13 @@ def local_command(
 def run_chat(
     store: ProjectStore, project_id: str, *, canvas: tuple[int, int] | None,
     preferences: Path | None, live: bool, no_open: bool,
+    generation_reasoning: Reasoning = "high",
 ) -> int:
     conversation = Conversation(store, project_id, canvas=canvas, preferences=preferences)
-    requests = RequestLog(store, project_id)
+    requests = RequestLog(store, project_id, generation_reasoning=generation_reasoning)
     print("Conversation resumed. Use /help. Generated previews are not accepted automatically.")
     print(f"Editing baseline: {conversation.state.baseline or conversation.state.initial_version or 'none'}")
+    print(f"Generation reasoning: {generation_reasoning}; interpretation reasoning: high.")
     if not live:
         print("Local-only mode: omit model requests, or restart with --live.")
 
@@ -116,23 +154,25 @@ def run_chat(
                         raise CollageError("Model requests are disabled; restart chat with --live.")
                     from .agent_provider import FoundryModel
 
-                    result = await conversation.request(text, FoundryModel(), requests)
+                    result = await conversation.request(
+                        text, FoundryModel(), requests, progress=show_progress,
+                    )
                     if result.kind == "question":
                         print(result.question)
                     elif result.kind == "acknowledgement":
                         print(result.acknowledgement)
-                        print(json.dumps(requests.summary()))
                     else:
                         assert result.proposal_id is not None
                         label = "Generated" if result.kind == "proposal" else "Restored"
                         print(f"{label} {result.proposal_id}")
                         path = conversation.preview_path(result.proposal_id)
                         print(path)
-                        print(json.dumps(requests.summary()))
                         if not no_open:
                             open_preview(path)
+                    show_usage(requests)
             except (CollageError, ValidationError, OSError, ValueError) as exc:
                 print(f"Error: {exc}", file=sys.stderr)
+                show_usage(requests)
 
     try:
         asyncio.run(loop())

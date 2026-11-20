@@ -4,12 +4,13 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from time import monotonic
 from typing import Iterator
 
 from pydantic import Field
 
 from .agent_files import child, save
-from .agent_models import Attempt, Limits, Record
+from .agent_models import Attempt, Limits, Reasoning, Record
 from .models import CollageError
 from .projects import ProjectStore, read_json
 
@@ -55,10 +56,43 @@ def _reserve_budget() -> None:
     save(path, state.model_copy(update={"used": state.used + 1}))
 
 
+class StageTimeout(CollageError):
+    """A confirmed model-stage timeout, not a publication or generic I/O error."""
+
+
 class RequestLog:
-    def __init__(self, store: ProjectStore, project_id: str):
+    def __init__(
+        self, store: ProjectStore, project_id: str, *, generation_reasoning: Reasoning = "high",
+    ):
+        if generation_reasoning not in {"high", "low"}:
+            raise CollageError("Generation reasoning must be high or low.")
         self.root = child(store.project_dir(project_id), "conversation", "requests")
         self.limits = Limits()
+        self.generation_reasoning = generation_reasoning
+        self.stage: str | None = None
+        self._deadline: float | None = None
+
+    def begin_stage(self, stage: str) -> None:
+        if stage not in {"interpretation", "generation"}:
+            raise CollageError("Unknown model stage.")
+        self.stage = stage
+        seconds = (
+            self.limits.generation_timeout_seconds if stage == "generation"
+            else self.limits.timeout_seconds
+        )
+        self._deadline = monotonic() + seconds
+
+    def remaining_seconds(self) -> float:
+        remaining = (
+            self._deadline - monotonic() if self._deadline is not None
+            else self.limits.timeout_seconds
+        )
+        if remaining <= 0:
+            raise StageTimeout(f"{self.stage or 'Model'} stage deadline exhausted; no automatic retry.")
+        return remaining
+
+    def reasoning(self, stage: str | None = None) -> Reasoning:
+        return self.generation_reasoning if (stage or self.stage) == "generation" else "high"
 
     def attempts(self) -> list[Attempt]:
         paths = sorted(self.root.glob("attempt-*.json"), key=lambda path: (len(path.name), path.name))
@@ -83,6 +117,8 @@ class RequestLog:
         attempt = Attempt(
             number=len(records) + 1, purpose=purpose, input_bound=input_bound,
             started=time.time(),
+            stage=self.stage, reasoning_effort=self.reasoning() if self.stage else None,
+            timeout_seconds=self.remaining_seconds(),
         )
         _reserve_budget()
         save(child(self.root, f"attempt-{attempt.number:04d}.json"), attempt)

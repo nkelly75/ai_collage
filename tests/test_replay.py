@@ -35,6 +35,49 @@ def execute(store, path, model, **options):
     return asyncio.run(replay(store, "demo", path, client=model, **options))
 
 
+def test_reasoning_candidate_is_fixed_on_resume_and_verified_offline(store, scenario):
+    from ai_collage.assess import assess
+
+    path, _ = scenario
+    model = FakeModel(*turns(reply(), reply()))
+    first = execute(store, path, model, generation_reasoning="low")
+    assert first.generation_reasoning == "low"
+    captured = (store.project_dir("demo") / "replay" / "report.json").read_bytes()
+    with pytest.raises(CollageError, match="reasoning changed"):
+        execute(store, path, model, resume=True)
+    assert len(model.contexts) == 2
+    assert (store.project_dir("demo") / "replay" / "report.json").read_bytes() == captured
+    report = execute(store, path, model, resume=True, generation_reasoning="low")
+    assert report.next_step == 2 and assess(store, "demo").passed
+    request_path = store.project_dir("demo") / "conversation" / "requests" / "attempt-0002.json"
+    data = read_json(request_path)
+    data["reasoning_effort"] = "high"
+    request_path.write_text(json.dumps(data), encoding="utf-8")
+    assert not assess(store, "demo").passed
+
+
+def test_timeout_retry_preserves_original_answer_and_auditable_task(store, scenario):
+    from ai_collage.agent_requests import StageTimeout
+    from ai_collage.assess import assess
+
+    path, _ = scenario
+    model = FakeModel(
+        intent("question", question="Which photo?"),
+        intent("fresh"), StageTimeout("offline timeout"),
+        intent("resume"), reply(),
+        intent("edit", source="current"), reply(),
+    )
+    assert execute(store, path, model).executions[-1].status == "question"
+    failed = execute(store, path, model, resume=True, answer="2", answer_origin="user")
+    assert failed.executions[-1].status == "failed"
+    resumed = execute(store, path, model, resume=True, retry=True, remaining=True)
+    assert resumed.next_step == 2
+    assert resumed.executions[2].answer == "2"
+    assert model.contexts[4]["original_task"] == "Make a collage."
+    assert model.contexts[4]["active_task"]["answers"] == ["2"]
+    assert assess(store, "demo").passed
+
+
 @pytest.mark.parametrize("naming_first", [False, True])
 def test_naming_acknowledgement_advances_replay_without_proposal_or_baseline_change(
     store, scenario, naming_first,

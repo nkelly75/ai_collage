@@ -108,7 +108,7 @@ class CaseAssessment(BaseModel):
 
 
 class AssessmentReport(BaseModel):
-    record_version: Literal[4] = 4
+    record_version: Literal[5] = 5
     project_id: str
     profile: Profile
     replay_sha256: str
@@ -323,6 +323,10 @@ def assess(
                 )))
                 if attempt.number != index or attempt.purpose != f"{project_id}: {stages[index - before - 1]}":
                     raise CollageError("Request accounting does not match the captured stages.")
+                stage = stages[index - before - 1]
+                expected_reasoning = replay.generation_reasoning if stage == "generation" else "high"
+                if attempt.stage != stage or attempt.reasoning_effort != expected_reasoning:
+                    raise CollageError("Request reasoning/stage does not match the replay candidate.")
             if result.status in {"proposal", "selection", "question", "acknowledgement"}:
                 event = events.get(result.event_id)
                 if (

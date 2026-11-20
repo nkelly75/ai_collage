@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 
-from .agent_requests import RequestLog
+from .agent_requests import RequestLog, StageTimeout
 from .agent_models import INTENT
 from .models import CollageError, InputLayout
 from .projects import parse_json
@@ -48,7 +48,7 @@ def response_format(stage: str = "generation") -> dict[str, object]:
             definition = definitions[branch["$ref"].rsplit("/", 1)[-1]]
             properties.update(definition["properties"])
         properties["action"] = {
-            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question", "remember"],
+            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question", "remember", "resume"],
         }
         schema = {
             "$defs": definitions, "type": "object", "properties": properties,
@@ -83,23 +83,27 @@ class FoundryModel:
         from azure.core.exceptions import ClientAuthenticationError
         from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
         from agent_framework.exceptions import AgentFrameworkException
-        from openai import APIError, AsyncOpenAI
+        from openai import APIError, APITimeoutError, AsyncOpenAI
         import httpx
 
+        if requests.stage is None:
+            requests.begin_stage(context["stage"])
         gate = guarded_transport(requests, purpose, httpx.AsyncHTTPTransport(retries=0), context=context)
         try:
             async with DefaultAzureCredential(exclude_interactive_browser_credential=True) as credential:
                 token = get_bearer_token_provider(credential, AUDIENCE)
                 async with AsyncOpenAI(
                     base_url=ENDPOINT, api_key=token, max_retries=0,
-                    timeout=requests.limits.timeout_seconds,
+                    timeout=requests.remaining_seconds(),
                     http_client=httpx.AsyncClient(transport=gate, follow_redirects=False),
                 ) as sdk:
-                    async with asyncio.timeout(requests.limits.timeout_seconds):
+                    async with asyncio.timeout(requests.remaining_seconds()):
                         return await run_agent(context, sdk, requests)
         except (APIError, ClientAuthenticationError, AgentFrameworkException, TimeoutError) as exc:
             if gate.local_error is not None:
                 raise gate.local_error from exc
+            if gate.timed_out or isinstance(exc, (TimeoutError, APITimeoutError, httpx.TimeoutException)):
+                raise StageTimeout("Model stage timed out; no automatic retry.") from exc
             status = getattr(exc, "status_code", None)
             raise CollageError(
                 f"Foundry request stopped ({type(exc).__name__}"
@@ -119,7 +123,7 @@ async def run_agent(context: dict[str, object], sdk: object, requests: RequestLo
         name="CollageDesigner", instructions=instructions(stage),
         default_options={
             "store": False, "max_tokens": requests.limits.output_tokens,
-            "reasoning": {"effort": "high"},
+            "reasoning": {"effort": requests.reasoning(stage)},
             "response_format": response_format(stage),
         },
     )
@@ -142,6 +146,7 @@ def guarded_transport(
     class Guard(httpx.AsyncBaseTransport):
         used = False
         local_error: CollageError | None = None
+        timed_out = False
 
         async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
             try:
@@ -161,11 +166,15 @@ def guarded_transport(
             body = parse_json(request.content)
             if not isinstance(body, dict):
                 raise CollageError("Provider request must be a JSON object.")
+            if requests.stage is None and context is not None:
+                requests.begin_stage(context["stage"])
             limits = requests.limits
             if (
                 body.get("model") != DEPLOYMENT or body.get("store") is not False
                 or body.get("max_output_tokens") != limits.output_tokens
-                or body.get("reasoning") != {"effort": "high"}
+                or body.get("reasoning") != {
+                    "effort": requests.reasoning(context.get("stage") if context else None)
+                }
                 or body.get("stream", False) is not False
                 or body.get("tools") or body.get("previous_response_id")
                 or body.get("conversation") or body.get("background", False)
@@ -222,10 +231,10 @@ def guarded_transport(
             self.used = True
             started = time.monotonic()
             try:
-                async with asyncio.timeout(limits.timeout_seconds):
-                    response = await transport.handle_async_request(request)
-                    await response.aread()
-            except (httpx.HTTPError, TimeoutError, asyncio.CancelledError):
+                response = await transport.handle_async_request(request)
+                await response.aread()
+            except (httpx.HTTPError, TimeoutError, asyncio.CancelledError) as exc:
+                self.timed_out = isinstance(exc, (httpx.TimeoutException, TimeoutError))
                 requests.finish(attempt.model_copy(update={
                     "status": "error", "duration": time.monotonic() - started,
                     "error": "transport interrupted or timed out",

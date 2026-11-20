@@ -451,7 +451,7 @@ def test_chat_live_opt_in_needs_no_allowance(agent_project, monkeypatch, capsys)
         "chat", "--project", "demo", "--live", "--no-open",
     ]) == 0
     output = capsys.readouterr()
-    assert not output.err and '"requests"' in output.out
+    assert not output.err and "Project requests: 2." in output.out
     assert len(model.contexts) == len(requests.attempts()) == 2
     assert not (conversation.store.owner_dir / "agent-runs").exists()
     assert conversation.store.load("demo").current_version is None
@@ -639,6 +639,9 @@ def test_actual_payload_trims_optional_history_before_reserving(store, essential
         "compact_tasks_omitted": 2,
         "required_tasks": [{"task_id": 8, "request": "before thicker borders", "proposal_id": "P001"}],
         "active_task": {"request": "Return to before thicker borders", "answers": ["Yes"]},
+        "failed_task": {
+            "task_id": 8, "resolved_intent": {"action": "edit", "source": {"proposal_id": "P001"}},
+        },
         "proposals": [{"proposal_id": "P001"}],
         "user_request": "x" * 60_000 if essential_oversize else "Make photo 2 smaller",
         "editing_baseline": layout_data(), "original_task": "Make photo 2 smaller",
@@ -1043,6 +1046,96 @@ def photo_reference(text, photo_id, source="name", **fields):
 
 def photo_name(name, photo_id, quote, **fields):
     return {"name": name, "photo_id": photo_id, "quote": quote, **fields}
+
+
+@pytest.mark.parametrize("wording,ids", [
+    ("Swap the positions of photos 1 and 4.", [1, 4]),
+    ("Arrange photos 1, 3 and 4 on the left.", [1, 3, 4]),
+    ("Arrange images 1,3,4 together.", [1, 3, 4]),
+    ("Swap pictures 1 & 4.", [1, 4]),
+])
+def test_normalized_numbered_references_ground_in_explicit_lists(wording, ids):
+    from ai_collage.photo_references import ground_references
+
+    action = INTENT.validate_json(intent("fresh", references=[
+        photo_reference(f"photo {number}", number, "number") for number in ids
+    ]))
+    assert ground_references(
+        action, wording, task_request=wording, photos={1, 2, 3, 4}, names=[],
+        event_id=1, pending=None, reference_history={},
+    ) == []
+
+
+@pytest.mark.parametrize("wording,reference,photos", [
+    ("Move photo 1 right by 4 pixels.", photo_reference("photo 4", 4, "number"), {1, 2, 3, 4}),
+    ("Move photo 1 and use 4px borders.", photo_reference("photo 4", 4, "number"), {1, 2, 3, 4}),
+    ("Use photos 1 and 4.5 as a size.", photo_reference("photo 4", 4, "number"), {1, 2, 3, 4}),
+    ("Use photos 1 and 40.", photo_reference("photo 4", 4, "number"), {1, 2, 3, 4}),
+    ("Swap photos 1 and 4.", photo_reference("photo 4", 4, "number"), {1, 2}),
+    ("Swap photos 1 and 4.", photo_reference("photo 4", 4, "name"), {1, 2, 3, 4}),
+])
+def test_numbered_list_grounding_does_not_invent_identity_or_relax_other_evidence(
+    wording, reference, photos,
+):
+    from ai_collage.photo_references import ground_references
+
+    action = INTENT.validate_json(intent("fresh", references=[reference]))
+    with pytest.raises(CollageError):
+        ground_references(
+            action, wording, task_request=wording, photos=photos, names=[],
+            event_id=1, pending=None, reference_history={},
+        )
+
+
+def test_numbered_list_swap_reaches_generation_after_restart(agent_project):
+    conversation, requests = agent_project
+    initial = layout_data()
+    for layer in initial["layers"]:
+        layer["box"]["center_y"] = 0.4
+    first, _ = ask(conversation, requests, reply(initial))
+    changed = copy.deepcopy(initial)
+    changed["layers"][0]["box"], changed["layers"][1]["box"] = (
+        changed["layers"][1]["box"], changed["layers"][0]["box"],
+    )
+    client = FakeModel(
+        intent("edit", source="current", references=[
+            photo_reference("photo 1", 1, "number"), photo_reference("photo 2", 2, "number"),
+        ]),
+        reply(changed),
+    )
+    result = asyncio.run(Conversation(conversation.store, "demo").request(
+        "Swap the positions of photos 1 and 2. Keep their sizes and styling unchanged.",
+        client, requests,
+    ))
+    assert result.kind == "proposal" and len(client.contexts) == 2
+    assert client.contexts[1]["resolved_intent"]["source"]["proposal_id"] == first
+    assert {item["photo_id"] for item in client.contexts[1]["resolved_intent"]["references"]} == {1, 2}
+
+
+@pytest.mark.parametrize("invented", [
+    photo_reference("photo 1", 1, "number"),
+    photo_reference("the others", 1, "unknown"),
+])
+def test_collective_comparison_corrects_individual_bindings_without_losing_task(
+    agent_project, invented,
+):
+    conversation, requests = agent_project
+    prompt = "Make a collage with a dark grey background. Make photo 2 smaller than the others."
+    target = photo_reference("photo 2", 2, "number")
+    client = FakeModel(
+        intent("fresh", references=[target, invented]),
+        intent("fresh", references=[target]),
+        reply(),
+    )
+    result = asyncio.run(conversation.request(prompt, client, requests))
+    assert result.kind == "proposal" and len(client.contexts) == 3
+    assert "collective instructions" in client.contexts[1]["validation_feedback"]
+    generation = client.contexts[2]
+    assert generation["original_task"] == generation["user_request"] == prompt
+    assert generation["resolved_intent"]["references"] == [
+        {**target, "event_id": None},
+    ]
+    assert [event.outcome for event in conversation.history()] == ["invalid", "intent", "proposal"]
 
 
 def remember(conversation, requests, name="breakfast", photo_id=2):
