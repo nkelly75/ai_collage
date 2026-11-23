@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .agent_files import canonical, child, digest, save
 from .agent_models import (
-    HISTORY, INTENT, Attempt, ConversationState, Exchange, Proposal, QuestionIntent, RememberIntent,
+    HISTORY, INTENT, Attempt, ConversationState, Exchange, NamesIntent, Proposal, QuestionIntent, RememberIntent,
 )
 from .geometry import resolve_layout
 from .models import CollageError, ResolvedLayout
 from .projects import ProjectStore, read_json
-from .photo_references import name_history
+from .photo_references import name_history, name_key, receipt_question
 from .task_history import task_records
 from .replay import ReplayReport, StepResult, authored_changes
 
@@ -108,7 +108,7 @@ class CaseAssessment(BaseModel):
 
 
 class AssessmentReport(BaseModel):
-    record_version: Literal[5] = 5
+    record_version: Literal[6] = 6
     project_id: str
     profile: Profile
     replay_sha256: str
@@ -211,7 +211,13 @@ def assess(
     if digest(canonical(state)) != replay.conversation_sha256:
         report.errors.append("Conversation state does not match the recorded replay identity.")
     try:
-        name_history(state.photo_names, events, {photo.photo_id for photo in project.photos})
+        pending = name_history(state.photo_names, events, {photo.photo_id for photo in project.photos})
+        if pending != (state.pending_names.event_id if state.pending_names else None):
+            raise CollageError("Pending naming pointer does not match its history.")
+        if state.pending_names is not None and digest(canonical(
+            events[state.pending_names.event_id]
+        )) != state.pending_names.sha256:
+            raise CollageError("Pending naming receipt changed.")
         proposals = {
             event.proposal_id: Proposal.model_validate(read_json(child(
                 store.project_dir(project_id), "conversation", "proposals",
@@ -256,7 +262,7 @@ def assess(
                         and preceding.answer_origin == result.answer_origin
                     )
                     if (
-                        question.status != "question" or question.step != result.step
+                        question.status not in {"question", "name_confirmation"} or question.step != result.step
                         or (reference != number - 1 and not repeated_answer)
                     ):
                         case.errors.append("Answer does not continue the pending question.")
@@ -312,7 +318,7 @@ def assess(
                 not 1 <= interpretations <= 2
                 or stages != ["interpretation"] * interpretations
                 + ["generation"] * (len(stages) - interpretations)
-                or (result.status in {"selection", "question", "acknowledgement"} and "generation" in stages)
+                or (result.status in {"selection", "question", "name_confirmation", "acknowledgement"} and "generation" in stages)
                 or (result.status == "proposal" and "generation" not in stages)
             ):
                 raise CollageError("Execution stage order or limits are inconsistent.")
@@ -330,7 +336,25 @@ def assess(
                 )
                 if attempt.stage != stage or attempt.reasoning_effort != expected_reasoning:
                     raise CollageError("Request reasoning/stage does not match the replay candidate.")
-            if result.status in {"proposal", "selection", "question", "acknowledgement"}:
+            previous_event = replay.executions[number - 2].event_id if number > 1 else 0
+            decision_events = [
+                event for turn, event in events.items()
+                if isinstance(event, Exchange) and event.receipt_event is not None
+                and (previous_event or 0) < turn <= (result.event_id or 0)
+            ]
+            if decision_events:
+                decision = INTENT.validate_json(decision_events[0].response or "")
+                if (
+                    len(decision_events) != 1 or not isinstance(decision, NamesIntent)
+                    or result.name_decision != decision.decision
+                    or result.receipt_event != decision.receipt_event
+                ):
+                    case.errors.append("Recorded naming decision differs from its actual receipt event.")
+            elif result.name_decision is not None or (
+                result.receipt_event is not None and result.status != "name_confirmation"
+            ):
+                case.errors.append("Naming decision has no actual approval/rejection event.")
+            if result.status in {"proposal", "selection", "question", "name_confirmation", "acknowledgement"}:
                 event = events.get(result.event_id)
                 if (
                     not isinstance(event, Exchange)
@@ -343,13 +367,33 @@ def assess(
                     question_reply = INTENT.validate_json(event.response or "")
                     if not isinstance(question_reply, QuestionIntent) or question_reply.question != result.question:
                         case.errors.append("Recorded question does not match its conversation event.")
+                elif result.status == "name_confirmation":
+                    prior_names = {
+                        name_key(item.name): item for turn, earlier in events.items()
+                        if turn < result.event_id and isinstance(earlier, Exchange)
+                        for item in earlier.name_updates
+                    }
+                    if (
+                        event.name_receipt is None or result.receipt_event != result.event_id
+                        or result.question != receipt_question(event.name_receipt, list(prior_names.values()))
+                        or result.proposal_id is not None or result.source is not None
+                        or result.intent is not None or result.changes
+                        or result.preview_path is not None or result.proposal_path is not None
+                    ):
+                        case.errors.append("Pending naming receipt does not match its recorded code-rendered question.")
                 elif result.status == "acknowledgement":
                     reply = INTENT.validate_json(event.response or "")
-                    expected = "Remembered: " + "; ".join(
-                        f"{item.name} = photo {item.photo_id}" for item in event.name_updates
-                    ) + "."
+                    rejected = isinstance(reply, NamesIntent) and reply.decision == "reject"
+                    expected = (
+                        "Names not saved; the associated edit was not applied. You can rephrase your request."
+                        if rejected else "Remembered: " + "; ".join(
+                            f"{item.name} = photo {item.photo_id}" for item in (
+                                reply.name_updates if isinstance(reply, RememberIntent) else event.name_updates
+                            )
+                        ) + "."
+                    )
                     if (
-                        not isinstance(reply, RememberIntent) or not event.name_updates
+                        not isinstance(reply, (RememberIntent, NamesIntent))
                         or result.acknowledgement != expected or result.intent is not None
                         or result.source is not None or result.changes
                         or result.preview_path is not None or result.proposal_path is not None
@@ -394,7 +438,7 @@ def assess(
                 case.status = "failed" if case.errors else "passed"
             elif result.status == "pending" and number != len(replay.executions):
                 case.errors.append("Replay continued after an interrupted execution.")
-            elif result.status == "question" and number != len(replay.executions):
+            elif result.status in {"question", "name_confirmation"} and number != len(replay.executions):
                 following = replay.executions[number]
                 if following.answers_execution != number or following.answer is None:
                     case.errors.append("Replay continued without answering its pending question.")

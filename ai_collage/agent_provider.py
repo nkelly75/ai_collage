@@ -55,14 +55,6 @@ def response_format(stage: str = "generation") -> dict[str, object]:
 
         positive = {"type": "integer", "exclusiveMinimum": 0}
         null = {"type": "null"}
-        reference = definitions["PhotoReference"]
-        definitions["PhotoReference"] = {"anyOf": [
-            branch(reference, "source", "number", {"photo_id": positive, "event_id": null}),
-            branch(reference, "source", "name", {"event_id": null}),
-            branch(reference, "source", "unknown", {"photo_id": null, "event_id": null}),
-            branch(reference, "source", "history", {"photo_id": positive, "event_id": positive},
-                   ("event_id",)),
-        ]}
         navigation = definitions["NavigationEvidence"]
         definitions["NavigationEvidence"] = {"anyOf": [
             branch(navigation, "kind", kind, {"task_id": null, "field": null, "steps": null})
@@ -81,7 +73,7 @@ def response_format(stage: str = "generation") -> dict[str, object]:
             definition = definitions[branch["$ref"].rsplit("/", 1)[-1]]
             properties.update(definition["properties"])
         properties["action"] = {
-            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question", "remember", "resume"],
+            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question", "remember", "resume", "names"],
         }
         schema = {
             "$defs": definitions, "type": "object", "properties": properties,

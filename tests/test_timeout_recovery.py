@@ -92,11 +92,11 @@ def test_timeout_continuation_keeps_original_task_answers_and_source_after_resta
     ask(
         conversation, requests, prompt="Make breakfast smaller",
         action=intent("question", question="Which photo is breakfast?",
-                      references=[photo_reference("breakfast", None, "name")]),
+                      references=[photo_reference("breakfast", None)]),
     )
     before = conversation.preview_path(original).read_bytes()
     model = FakeModel(
-        intent("edit", source="current", references=[photo_reference("2", 2, "number")]),
+        intent("edit", source="current", references=[photo_reference("2", 2)]),
         StageTimeout("simulated timeout"),
     )
     with pytest.raises(StageTimeout, match='baseline is unchanged.*try again'):
@@ -249,7 +249,7 @@ def test_chat_progress_low_candidate_and_readable_status_are_terminal_only(
     from ai_collage.__main__ import main
 
     conversation, requests = agent_project
-    model = FakeModel("{}", intent("fresh", references=[photo_reference("photo 2", 2, "number")]), reply())
+    model = FakeModel("{}", intent("fresh", references=[photo_reference("photo 2", 2)]), reply())
     lines = iter(["Make photo 2 stand out", "/status", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
     monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: model)

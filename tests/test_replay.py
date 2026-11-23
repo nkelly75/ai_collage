@@ -97,7 +97,7 @@ def test_timeout_retry_preserves_original_answer_and_auditable_task(store, scena
 
 
 @pytest.mark.parametrize("naming_first", [False, True])
-def test_naming_acknowledgement_advances_replay_without_proposal_or_baseline_change(
+def test_naming_receipt_pauses_replay_until_explicit_approval_without_changing_baseline(
     store, scenario, naming_first,
 ):
     from ai_collage.assess import assess
@@ -109,29 +109,95 @@ def test_naming_acknowledgement_advances_replay_without_proposal_or_baseline_cha
         {"name": "initial", "prompt": "Make a collage.", "reopen_before": True},
     ]
     naming = intent("remember", name_updates=[photo_name("breakfast", 2, naming_prompt)])
-    if naming_first:
-        responses = [naming, intent("fresh"), reply()]
-    else:
+    if not naming_first:
         messages.reverse()
-        responses = [intent("fresh"), reply(), naming]
     data["messages"] = messages
     path.write_text(json.dumps(data), encoding="utf-8")
-    first = execute(store, path, FakeModel(*responses[:1 if naming_first else 2]))
-    assert first.next_step == 1
-    client = FakeModel(*responses[1 if naming_first else 2:])
-    report = execute(store, path, client, resume=True)
+    if not naming_first:
+        first = execute(store, path, FakeModel(intent("fresh"), reply()))
+        assert first.next_step == 1
+    paused = execute(store, path, FakeModel(naming), resume=not naming_first)
+    gate = paused.executions[-1]
+    assert gate.status == "name_confirmation" and paused.next_step == (0 if naming_first else 1)
+    assert gate.attempts == 1 and gate.receipt_event == gate.event_id
+    pending = Conversation(store, "demo")
+    assert not pending.state.photo_names and pending.state.baseline == (None if naming_first else "P001")
+    assessment = assess(store, "demo")
+    assert not assessment.complete and assessment.cases[-1].status == "not_assessed"
+    assert not assessment.cases[-1].errors
+    with pytest.raises(CollageError, match="paused"):
+        execute(store, path, FakeModel(), resume=True)
+    responses = [intent("names", decision="approve", receipt_event=gate.event_id)]
+    if naming_first:
+        responses.extend([intent("fresh"), reply()])
+    client = FakeModel(*responses)
+    report = execute(
+        store, path, client, resume=True, remaining=True,
+        answer="Yes, remember those", answer_origin="user",
+    )
     acknowledged = next(item for item in report.executions if item.status == "acknowledgement")
     assert report.next_step == 2 and acknowledged.attempts == 1
     assert acknowledged.proposal_id is None and acknowledged.source is None
     assert acknowledged.intent is None and acknowledged.preview_path is None
     assert acknowledged.changes == [] and "breakfast = photo 2" in acknowledged.acknowledgement
+    assert acknowledged.name_decision == "approve" and acknowledged.receipt_event == gate.event_id
+    assert acknowledged.answers_execution == (1 if naming_first else 2)
     conversation = Conversation(store, "demo")
     assert conversation.state.baseline == "P001" and conversation.state.photo_names[0].photo_id == 2
     assert len(list((conversation.root / "proposals").iterdir())) == 1
     assert assess(store, "demo").passed
     assert [item.name for item in conversation.state.photo_names] == ["breakfast"]
     if naming_first:
-        assert client.contexts[0]["photo_names"][0]["name"] == "breakfast"
+        assert client.contexts[1]["photo_names"][0]["name"] == "breakfast"
+
+
+def test_rejected_naming_replay_records_a_discarded_task_without_a_proposal(store, scenario):
+    from ai_collage.assess import assess
+
+    path, data = scenario
+    prompt = "Photo 2 is breakfast; move breakfast higher"
+    data["messages"] = [{"name": "teach-and-edit", "prompt": prompt}]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    paused = execute(store, path, FakeModel(intent(
+        "fresh", references=[photo_reference("breakfast", 2)],
+        name_updates=[photo_name("breakfast", 2, "Photo 2 is breakfast")],
+    )))
+    gate = paused.executions[-1]
+    report = execute(
+        store, path, FakeModel(intent("names", decision="reject", receipt_event=gate.event_id)),
+        resume=True, answer="No, that's not right", answer_origin="user",
+    )
+    result = report.executions[-1]
+    assert report.next_step == 1 and result.status == "acknowledgement"
+    assert result.name_decision == "reject" and result.attempts == 1
+    assert "not applied" in result.acknowledgement
+    conversation = Conversation(store, "demo")
+    assert not conversation.state.photo_names and conversation.state.baseline is None
+    assert assess(store, "demo").passed
+
+
+def test_confirmed_teaching_with_exact_return_assesses_as_selection_not_generation(store, scenario):
+    from ai_collage.assess import assess
+
+    path, data = scenario
+    prompt = "Photo 2 is castle; return to P001"
+    data["messages"].append({"name": "teach-and-return", "prompt": prompt})
+    path.write_text(json.dumps(data), encoding="utf-8")
+    paused = execute(store, path, FakeModel(
+        *turns(reply(), reply()),
+        intent("select", proposal_id="P001", navigation={"kind": "id", "text": "P001"},
+               name_updates=[photo_name("castle", 2, "Photo 2 is castle")]),
+    ), remaining=True)
+    gate = paused.executions[-1]
+    report = execute(
+        store, path, FakeModel(intent("names", decision="approve", receipt_event=gate.event_id)),
+        resume=True, answer="Yes, remember those", answer_origin="user",
+    )
+    result = report.executions[-1]
+    assert result.status == "selection" and result.proposal_id == "P001"
+    assert result.name_decision == "approve" and result.attempts == 1
+    assert Conversation(store, "demo").state.baseline == "P001"
+    assert assess(store, "demo").passed
 
 
 def test_stepwise_resume_allows_only_future_edits_and_captures_evidence(store, scenario, tmp_path):
@@ -328,7 +394,7 @@ def test_four_message_batch_cannot_make_more_than_sixteen_calls(store, scenario)
     assert len(model.contexts) == 16
 
 
-@pytest.mark.parametrize("version", [1, 5, 6])
+@pytest.mark.parametrize("version", [1, 5, 6, 7])
 def test_legacy_replay_version_is_rejected_without_rewriting(store, scenario, version):
     path, _ = scenario
     model = FakeModel(*turns(reply(), reply()))

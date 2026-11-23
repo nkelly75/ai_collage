@@ -13,15 +13,16 @@ from .agent_requests import RequestLog, StageTimeout
 from .agent_files import canonical, child, digest, save
 from .agent_models import (
     HISTORY, INTENT, AcceptanceIntent, Controls, ConversationState, EditIntent, Exchange,
-    FreshIntent, Intent, LayoutSource, LocalEvent, Preferences, Proposal, QuestionIntent,
-    RememberIntent, RequestResult, ResolvedIntent, ResumeIntent, RetryIntent, SelectIntent,
+    FreshIntent, Intent, LayoutSource, LocalEvent, NameReceipt, NameUpdate, NamesIntent,
+    PhotoName, Preferences, Proposal, QuestionIntent, RememberIntent, RequestResult,
+    ReceiptPointer, ResolvedIntent, ResumeIntent, RetryIntent, SelectIntent,
 )
 from .geometry import LayoutBoundsError, resolve_layout
 from .imaging import render_layout
 from .models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
 from .projects import ProjectStore, parse_json, read_json
 from .photo_references import (
-    PhotoReferenceError, affirmative, ground_references, name_history, name_key,
+    PhotoReferenceError, ground_references, name_history, name_key, names_digest, receipt_question,
 )
 from .task_history import (
     TaskRecord, ordinals, retrieve, task_records, undo_steps, undo_target, validate_navigation,
@@ -86,10 +87,14 @@ class Conversation:
             if self.root.exists() and any(self.root.iterdir()):
                 raise CollageError("Incomplete conversation initialization; inspect local state.")
             save(self.state_path, self.state)
-        name_history(
+        pending = name_history(
             self.state.photo_names, dict(zip(self.state.history, self.history(), strict=True)),
             {photo.photo_id for photo in project.photos},
         )
+        if pending != (self.state.pending_names.event_id if self.state.pending_names else None):
+            raise CollageError("Pending naming pointer does not match its history.")
+        self._check_name_writes()
+        self._pending_names()
         self.baseline()
         self.tasks()
 
@@ -105,6 +110,18 @@ class Conversation:
             raise CollageError("Accepted project changed outside this conversation; inspect local state.")
         if self.intent_path.exists():
             raise CollageError("Acceptance needs reconciliation; restart the conversation.")
+        self._check_name_writes()
+
+    def _check_name_writes(self) -> None:
+        referenced = set(self.state.history)
+        for path in child(self.root, "events").glob("*.json"):
+            if re.fullmatch(r"[0-9]{6,}", path.stem) and int(path.stem) not in referenced:
+                event = HISTORY.validate_python(read_json(path))
+                if isinstance(event, Exchange) and (
+                    event.name_receipt is not None or event.receipt_event is not None
+                    or event.name_updates
+                ):
+                    raise CollageError("Interrupted naming write; inspect its preserved event/state before continuing.")
 
     def history(self) -> list[Exchange | LocalEvent]:
         return [
@@ -129,6 +146,12 @@ class Conversation:
                 "task_id": self._active_task,
                 "baseline_before": self._current_source(),
             })
+            if event.name_receipt is not None:
+                updates["pending_names"] = ReceiptPointer(event_id=number, sha256=digest(canonical(event)))
+            elif event.receipt_event is not None or (
+                event.task_id == number and event.outcome not in {"invalid", "error"}
+            ):
+                updates["pending_names"] = None
         save(child(self.root, "events", f"{number:06d}.json"), event)
         state = self.state.model_copy(update={
             **updates, "history": [*self.state.history, number],
@@ -214,7 +237,7 @@ class Conversation:
             )
             or not isinstance(task, Exchange) or task.prompt != proposal.intent.task_request
             or task.stage != "interpretation" or not (
-                task.outcome in {"intent", "question"}
+                task.outcome in {"intent", "question", "name_confirmation"}
                 or task.outcome == "invalid" and corrected_origin
             )
             or not confirmed_intent
@@ -269,6 +292,9 @@ class Conversation:
         ]
         records = self.tasks()
         failure = self._pending_failure()
+        pending_names = self._pending_names()
+        if pending_names is not None:
+            self._check_receipt(pending_names[1].name_receipt)
         prior_records = [
             record for record in records
             if request_start is None or record.task_id < request_start
@@ -323,6 +349,11 @@ class Conversation:
                 source.proposal_id for source in (failure.intent.source, failure.intent.reference)
                 if source is not None
             )
+        held = pending_names[1].name_receipt.intent if pending_names else None
+        if held is not None:
+            selected.update(
+                source.proposal_id for source in (held.source, held.reference) if source is not None
+            )
         catalogue = []
         for ordinal, proposal_id in enumerate(published, 1):
             if proposal_id not in selected:
@@ -375,6 +406,11 @@ class Conversation:
                  "response": previous.response}
                 if previous is not None and previous.outcome == "question" else None
             ),
+            "pending_names": (
+                {"receipt_event": pending_names[0],
+                 **pending_names[1].name_receipt.model_dump(mode="json")}
+                if pending_names is not None else None
+            ),
             "failed_candidate": active[-1].response if active and active[-1].outcome == "invalid" else None,
             "prior_validation_feedback": [
                 event.error for event in active[:-1]
@@ -390,6 +426,7 @@ class Conversation:
                 pending.return_confirmation.evidence
                 if isinstance(pending, QuestionIntent) and pending.return_confirmation else None,
                 intent.navigation if intent else None,
+                held.navigation if held else None,
             ) if evidence is not None and evidence.task_id is not None
         }
         context["required_tasks"] = [
@@ -491,6 +528,10 @@ class Conversation:
         if failure is not None:
             history = dict(zip(self.state.history, self.history(), strict=True))
             return failure.task_id, history[failure.task_id].prompt
+        receipt = self._pending_names()
+        if receipt is not None:
+            history = dict(zip(self.state.history, self.history(), strict=True))
+            return receipt[1].task_id, history[receipt[1].task_id].prompt
         pending = self._pending_question()
         if pending is not None:
             history = dict(zip(self.state.history, self.history(), strict=True))
@@ -508,6 +549,75 @@ class Conversation:
                 continue
             return (number, event) if event.outcome == "question" else None
         return None
+
+    def _pending_names(self) -> tuple[int, Exchange] | None:
+        pointer = self.state.pending_names
+        if pointer is None:
+            return None
+        if pointer.event_id not in self.state.history:
+            raise CollageError("Pending naming receipt is outside recorded history.")
+        event = HISTORY.validate_python(read_json(child(
+            self.root, "events", f"{pointer.event_id:06d}.json",
+        )))
+        if (
+            not isinstance(event, Exchange) or event.name_receipt is None
+            or digest(canonical(event)) != pointer.sha256
+        ):
+            raise CollageError("Pending naming receipt changed; no names or edit applied.")
+        return pointer.event_id, event
+
+    def _check_receipt(self, receipt: NameReceipt) -> None:
+        self._fresh()
+        if (
+            receipt.baseline != self._current_source()
+            or receipt.controls != self.state.controls
+            or receipt.names_digest != names_digest(self.state.photo_names)
+        ):
+            raise CollageError("Naming receipt conflicts with current state; no names or edit applied.")
+        if receipt.intent is not None and receipt.intent.source is not None:
+            recipe = self.source_recipe(receipt.intent.source)
+            assert recipe is not None
+            self._validate_recipe(recipe)
+
+    def pending_name_question(self) -> str | None:
+        pending = self._pending_names()
+        return receipt_question(pending[1].name_receipt, self.state.photo_names) if pending else None
+
+    def _name_receipt(
+        self, prompt: str, raw: str, updates: list[NameUpdate],
+        intent: ResolvedIntent | None, requests: RequestLog,
+    ) -> RequestResult:
+        receipt = NameReceipt(
+            updates=[item.model_copy(update={"name": " ".join(item.name.split())}) for item in updates],
+            intent=intent, baseline=self._current_source(),
+            controls=self.state.controls, names_digest=names_digest(self.state.photo_names),
+        )
+        number = self._append(Exchange(
+            prompt=prompt, response=raw, outcome="name_confirmation",
+            stage="interpretation", parent=self.state.baseline, run_id=None,
+            attempt=len(requests.attempts()), name_receipt=receipt,
+        ))
+        return RequestResult(
+            kind="name_confirmation", event_id=number,
+            question=receipt_question(receipt, self.state.photo_names),
+        )
+
+    def _select(
+        self, prompt: str, raw: str, intent: ResolvedIntent, requests: RequestLog, *,
+        updates: list[PhotoName] | None = None, names: list[PhotoName] | None = None,
+        receipt_event: int | None = None,
+    ) -> RequestResult:
+        self._fresh()
+        if intent.action != "select" or intent.source is None or intent.source.proposal_id is None:
+            raise CollageError("Selection requires an exact preserved proposal.")
+        proposal_id = intent.source.proposal_id
+        number = self._append(Exchange(
+            prompt=prompt, response=raw, outcome="selection", stage="interpretation", intent=intent,
+            parent=self.state.baseline, run_id=None, attempt=len(requests.attempts()),
+            proposal_id=proposal_id, references=intent.references,
+            name_updates=updates or [], receipt_event=receipt_event,
+        ), baseline=proposal_id, photo_names=names if names is not None else self.state.photo_names)
+        return RequestResult(kind="selection", event_id=number, proposal_id=proposal_id)
 
     def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
         failure = self._pending_failure()
@@ -581,7 +691,7 @@ class Conversation:
         intent = None
         request_start = self._next_event()
         self._independent_task = False
-        request_task = self._task_origin(prompt)[0]
+        request_task, request_origin = self._task_origin(prompt)
         self._active_task = request_task
         requests.begin_stage("interpretation")
         previous_stage = "interpretation"
@@ -628,6 +738,58 @@ class Conversation:
                 if intent is None:
                     reply = INTENT.validate_python(data)
                     history = dict(zip(self.state.history, self.history(), strict=True))
+                    pending_names = self._pending_names()
+                    if isinstance(reply, NamesIntent):
+                        if pending_names is None or reply.receipt_event != pending_names[0]:
+                            raise PhotoReferenceError("Naming decision has no matching current receipt.")
+                        receipt = pending_names[1].name_receipt
+                        assert receipt is not None
+                        self._check_receipt(receipt)
+                        if reply.decision == "reject":
+                            event_id = self._append(Exchange(
+                                prompt=prompt, response=raw, outcome="acknowledgement",
+                                stage=stage, parent=self.state.baseline, run_id=None,
+                                attempt=len(requests.attempts()), receipt_event=pending_names[0],
+                            ))
+                            return RequestResult(
+                                kind="acknowledgement", event_id=event_id,
+                                acknowledgement="Names not saved; the associated edit was not applied. "
+                                "You can rephrase your request.",
+                            )
+                        updates = [
+                            PhotoName(
+                                name=" ".join(item.name.split()), photo_id=item.photo_id,
+                                event_id=self._next_event(), quote=item.quote,
+                                receipt_event=pending_names[0],
+                            ) for item in receipt.updates
+                        ]
+                        names = {name_key(item.name): item for item in self.state.photo_names}
+                        names.update({name_key(item.name): item for item in updates})
+                        intent = receipt.intent
+                        if intent is not None and intent.action == "select":
+                            if progress is not None:
+                                progress("intent", intent)
+                            return self._select(
+                                prompt, raw, intent, requests, updates=updates,
+                                names=list(names.values()), receipt_event=pending_names[0],
+                            )
+                        event_id = self._append(Exchange(
+                            prompt=prompt, response=raw,
+                            outcome="intent" if intent is not None else "acknowledgement",
+                            intent=intent, stage=stage, parent=self.state.baseline, run_id=None,
+                            attempt=len(requests.attempts()), name_updates=updates,
+                            receipt_event=pending_names[0],
+                            references=intent.references if intent else [],
+                        ), photo_names=list(names.values()))
+                        if intent is None:
+                            return RequestResult(
+                                kind="acknowledgement", event_id=event_id,
+                                acknowledgement="Remembered: " + "; ".join(
+                                    f"{item.name} = photo {item.photo_id}" for item in updates
+                                ) + ".",
+                            )
+                        feedback = None
+                        continue
                     pending_question = context["pending_question"]
                     previous_number = (
                         pending_question["event_id"] if isinstance(pending_question, dict) else None
@@ -638,19 +800,8 @@ class Conversation:
                         if isinstance(previous, Exchange) and previous.outcome == "question" else None
                     )
                     if isinstance(pending_reply, QuestionIntent):
-                        labels = {
-                            name_key(item.text) for item in pending_reply.references
-                            if item.photo_id is None
-                        }
-                        if pending_reply.confirmation is not None:
-                            labels.add(name_key(pending_reply.confirmation.name))
-                        answering = any(name_key(item.name) in labels for item in reply.name_updates) or (
-                            pending_reply.confirmation is not None and affirmative(prompt)
-                        )
-                        if answering and not reply.continues_task:
-                            raise PhotoReferenceError("An identity answer must continue its pending task.")
                         if isinstance(reply, RememberIntent) and pending_reply.continuation == "design" and (
-                            reply.continues_task or answering
+                            reply.continues_task
                         ):
                             raise PhotoReferenceError("The identity answer must continue the original design, not only remember names.")
                     if not reply.continues_task:
@@ -665,55 +816,64 @@ class Conversation:
                     updates = [] if isinstance(reply, ResumeIntent) else ground_references(
                         reply, prompt,
                         photos={photo.photo_id for photo in self.store.load(self.project_id).photos},
-                        names=self.state.photo_names, event_id=self._next_event(),
-                        task_request=pending_question["original_task"]
-                        if isinstance(pending_question, dict) and reply.continues_task else prompt,
-                        pending=(previous_number, previous)
-                        if previous_number is not None and isinstance(previous, Exchange)
-                        and previous.outcome == "question" else None,
+                        names=self.state.photo_names,
+                        task_request=request_origin if reply.continues_task else prompt,
                         reference_history={
                             number: event for number, event in history.items()
                             if number in visible_ids and isinstance(event, Exchange)
                         },
+                        evidence_prompts=[
+                            event.prompt for event in history.values()
+                            if isinstance(event, Exchange) and event.task_id == self._active_task
+                        ] if reply.continues_task else [],
                     )
-                    names = {name_key(item.name): item for item in self.state.photo_names}
-                    names.update({name_key(item.name): item for item in updates})
                     if not isinstance(reply, ResumeIntent):
                         validate_navigation(
                             reply, prompt,
-                            pending_question["original_task"]
-                            if isinstance(pending_question, dict) and reply.continues_task else prompt,
-                            self.tasks(), self._current_source(), list(names.values()), visible_tasks,
+                            request_origin if reply.continues_task else prompt,
+                            self.tasks(), self._current_source(), self.state.photo_names, visible_tasks,
                             pending_reply if isinstance(pending_reply, QuestionIntent) else None,
                         )
                     if not reply.continues_task:
                         self._independent_task = True
                         self._active_task = self._next_event()
+                    if updates:
+                        candidate = None if isinstance(reply, RememberIntent) else self._resolve_intent(reply, prompt)
+                        if pending_names is not None and reply.continues_task:
+                            held = pending_names[1].name_receipt.intent
+                            if (held is None) != (candidate is None) or held is not None and (
+                                candidate.action != held.action or candidate.source != held.source
+                            ):
+                                raise PhotoReferenceError("Naming revision must retain its original action/source.")
+                        if progress is not None:
+                            progress("intent", None)
+                        return self._name_receipt(prompt, raw, updates, candidate, requests)
+                    if pending_names is not None and reply.continues_task and not isinstance(reply, QuestionIntent):
+                        raise PhotoReferenceError("Confirm, correct or reject the pending naming receipt first.")
                     if isinstance(reply, QuestionIntent):
                         event_id = self._append(Exchange(
                             prompt=prompt, response=raw, outcome="question",
                             stage=stage, parent=self.state.baseline,
                             run_id=None, attempt=len(requests.attempts()),
-                            references=reply.references, name_updates=updates,
-                        ), photo_names=list(names.values()))
+                            references=reply.references,
+                        ))
                         if progress is not None:
                             progress("question", None)
                         return RequestResult(
                             kind="question", question=reply.question, event_id=event_id,
-                            identity_question=reply.confirmation is not None or any(
+                            identity_question=any(
                                 item.photo_id is None for item in reply.references
                             ),
                         )
                     if isinstance(reply, RememberIntent):
                         message = "Remembered: " + "; ".join(
-                            f"{item.name} = photo {item.photo_id}" for item in updates
+                            f"{item.name} = photo {item.photo_id}" for item in reply.name_updates
                         ) + "."
                         event_id = self._append(Exchange(
                             prompt=prompt, response=raw, outcome="acknowledgement",
                             stage=stage, parent=self.state.baseline, run_id=None,
                             attempt=len(requests.attempts()), references=reply.references,
-                            name_updates=updates,
-                        ), photo_names=list(names.values()))
+                        ))
                         if progress is not None:
                             progress("remember", None)
                         return RequestResult(
@@ -721,24 +881,15 @@ class Conversation:
                         )
                     intent = self._resolve_intent(reply, prompt)
                     if isinstance(reply, SelectIntent):
-                        self._fresh()
-                        event_id = self._append(Exchange(
-                            prompt=prompt, response=raw, outcome="selection", stage=stage,
-                            intent=intent, parent=self.state.baseline, run_id=None,
-                            attempt=len(requests.attempts()), proposal_id=reply.proposal_id,
-                            references=reply.references, name_updates=updates,
-                        ), baseline=reply.proposal_id, photo_names=list(names.values()))
                         if progress is not None:
                             progress("intent", intent)
-                        return RequestResult(
-                            kind="selection", proposal_id=reply.proposal_id, event_id=event_id,
-                        )
+                        return self._select(prompt, raw, intent, requests)
                     self._append(Exchange(
                         prompt=prompt, response=raw, outcome="intent", stage=stage,
                         intent=intent, parent=self.state.baseline, run_id=None,
                         attempt=len(requests.attempts()),
-                        references=reply.references, name_updates=updates,
-                    ), photo_names=list(names.values()))
+                        references=reply.references,
+                    ))
                     if progress is not None:
                         progress("intent", intent)
                     feedback = None
@@ -823,6 +974,8 @@ class Conversation:
 
     def controls(self, controls: Controls) -> None:
         self._fresh()
+        if self._pending_names() is not None:
+            raise CollageError("Resolve the pending naming receipt before changing controls.")
         self._append(LocalEvent(kind="controls", controls=controls), controls=controls)
 
     def rate(self, proposal_id: str, rating: str, note: str | None) -> None:
@@ -834,6 +987,8 @@ class Conversation:
 
     def accept(self, proposal_id: str) -> int:
         self._fresh()
+        if self._pending_names() is not None:
+            raise CollageError("Resolve the pending naming receipt before changing the accepted source.")
         proposal = self.proposal(proposal_id)
         self._validate_recipe(proposal.recipe)
         if self.state.accepted_proposal == proposal_id:

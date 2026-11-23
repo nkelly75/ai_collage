@@ -16,9 +16,11 @@ background. Captions are not implemented yet.
 
 The deterministic engine runs offline without credentials or model calls.
 An optional metadata-only conversational agent supports natural-language layout
-creation and refinement, user-taught photo names, fresh arrangements, retries,
+creation and refinement, explicitly confirmed photo names, fresh arrangements, retries,
 and returning to earlier proposals. Proposals are preserved separately from
 explicitly accepted versions.
+Clear layout edits proceed directly; teaching a durable name pauses that name
+and any associated edit for a natural-language confirmation.
 See the [conversation guide](docs/cli-guide.md#conversational-proposals-optional).
 Live model requests require explicit bounded authorization. A graphical UI,
 image understanding, and cloud hosting remain future work.
@@ -156,10 +158,13 @@ $sequence = '.\examples\sequences\02_landscape_staggered_adjustments.json'
 
 Repeat the live command with `--resume` to advance that project by one message.
 Add `--remaining` only to run all remaining messages without pausing. If the
-sequence has four messages, that means at most **16 model calls**, including
-validation corrections (at most four per message). There is no shared allowance
+sequence has four uninterrupted messages, that means at most **16 model calls**,
+including validation corrections (at most four per attempt). Explicit answers
+have their own bounded attempts. There is no shared allowance
 to provision or replenish. A failed step needs an explicit `--resume --retry`;
-questions and interrupted steps stop for inspection. Live execution still needs
+questions, naming receipts and interrupted steps stop for inspection. Naming
+receipts require an explicit recorded answer; replay never approves them for you.
+Live execution still needs
 authorization; this tooling change does not authorize service calls.
 
 Find the cursor and execution summaries in the project's `replay\report.json`,

@@ -143,6 +143,9 @@ def local_command(
             "controls": conversation.state.controls.model_dump(),
             "preferences": conversation.state.preferences.model_dump(),
         }, indent=2))
+        pending = conversation.pending_name_question()
+        if pending is not None:
+            print(pending)
         show_usage(requests)
     else:
         raise CollageError("Unknown command or invalid arguments. Use /help.")
@@ -162,6 +165,9 @@ def run_chat(
     print("Conversation resumed. Use /help. Generated previews are not accepted automatically.")
     print(f"Editing baseline: {conversation.state.baseline or conversation.state.initial_version or 'none'}")
     print(f"Generation reasoning: {generation_reasoning}; interpretation reasoning: {interpretation_reasoning}.")
+    pending = conversation.pending_name_question()
+    if pending is not None:
+        print(pending)
     if not live:
         print("Local-only mode: omit model requests, or restart with --live.")
 
@@ -185,7 +191,7 @@ def run_chat(
                     result = await conversation.request(
                         text, FoundryModel(), requests, progress=show_progress,
                     )
-                    if result.kind == "question":
+                    if result.kind in {"question", "name_confirmation"}:
                         print(result.question)
                         if result.identity_question:
                             print(known_names(conversation))

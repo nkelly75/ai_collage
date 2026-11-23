@@ -73,8 +73,20 @@ def task_records(
                 baseline_before=baseline,
             )
         task = records[event.task_id]
+        receipt = next((
+            turn for turn in reversed(task.events)
+            if isinstance(events[turn], Exchange) and events[turn].name_receipt is not None
+        ), None)
+        pending_receipt = receipt is not None and not any(
+            isinstance(events[turn], Exchange) and events[turn].receipt_event == receipt
+            for turn in task.events
+        )
         resumable = task.events and isinstance(events[task.events[-1]], Exchange) and (
             events[task.events[-1]].generation_timeout
+            or events[task.events[-1]].stage == "interpretation" and pending_receipt and (
+                event.outcome in {"invalid", "error", "question", "name_confirmation"}
+                or event.receipt_event == receipt
+            )
         )
         if task.outcome in {"proposal", "selection", "acknowledgement", "error"} and not resumable:
             raise CollageError("A completed task cannot acquire unrelated events.")
@@ -157,11 +169,13 @@ def followup_edit(text: str) -> bool:
     ) is not None
 
 
-def change_matches(text: str, change: RecipeChange, names: list[PhotoName]) -> bool:
+def change_matches(
+    text: str, change: RecipeChange, names: list[PhotoName], photo_ids: set[int] | None = None,
+) -> bool:
     """Conservative vocabulary links to actual fields, not promises in old prompts."""
     field = change.field
     match = re.search(r"\.photos\.(\d+)\.", field)
-    numbers = numbered_photos(text)
+    numbers = numbered_photos(text) | (photo_ids or set())
     for key in mentioned_names(text, reference_names(names)):
         targets = {item.photo_id for item in name_candidates(key, names)}
         if len(targets) != 1:
@@ -220,10 +234,11 @@ def ancestry(records: list[TaskRecord], current: LayoutSource | None) -> set[str
 
 def matching_records(
     text: str, records: list[TaskRecord], current: LayoutSource | None, names: list[PhotoName],
+    photo_ids: set[int] | None = None,
 ) -> list[TaskRecord]:
     matches = [
         record for record in records if record.outcome == "proposal"
-        and any(change_matches(text, change, names) for change in record.changes)
+        and any(change_matches(text, change, names, photo_ids) for change in record.changes)
     ]
     latest = re.search(r"\b(?:last|latest|most recent)\b", text, re.I) is not None
     if latest or re.search(r"\b(?:current|this)\s+(?:branch|lineage)\b", text, re.I):
@@ -258,14 +273,23 @@ def retrieve(
 def navigation_target(
     evidence: NavigationEvidence, text: str, records: list[TaskRecord],
     current: LayoutSource | None, names: list[PhotoName], visible: set[int],
+    photo_ids: set[int] | None = None,
 ) -> str:
     if not contains(text, evidence.text):
-        raise CollageError("Navigation quote is absent from the task/answer.")
+        raise CollageError(
+            "Navigation quote is absent from the task/answer. Quote the actual user wording, "
+            "not the resolved proposal ID. For creation-ordinal wording such as 'first proposal', "
+            "use kind 'ordinal' with that wording; keep the resolved ID in proposal_id/source."
+        )
     published = [record for record in records if record.outcome == "proposal"]
     if evidence.kind == "id":
         ids = re.findall(r"\bP[0-9]{3,}\b", evidence.text)
         if len(set(ids)) != 1 or ids[0] not in {record.proposal_id for record in published}:
-            raise CollageError("Navigation requires one explicit published proposal ID.")
+            raise CollageError(
+                "Navigation requires one explicit published proposal ID. Use kind 'id' only "
+                "when the quoted user wording contains that ID. For creation-ordinal wording "
+                "such as 'first proposal', use kind 'ordinal', not 'id'."
+            )
         target = ids[0]
     elif evidence.kind == "ordinal":
         positions = ordinals(evidence.text)
@@ -282,9 +306,9 @@ def navigation_target(
         if record is None or record.task_id not in visible or record.outcome != "proposal":
             raise CollageError("Descriptive navigation requires visible task evidence.")
         changes = [change for change in record.changes if change.field == evidence.field]
-        if not changes or not any(change_matches(text, change, names) for change in changes):
+        if not changes or not any(change_matches(text, change, names, photo_ids) for change in changes):
             raise CollageError("Navigation field evidence does not support this description.")
-        if record not in matching_records(text, records, current, names):
+        if record not in matching_records(text, records, current, names, photo_ids):
             raise CollageError("Navigation evidence contradicts the requested branch/recency.")
         if not re.search(rf"\b{evidence.kind}\b", evidence.text, re.I):
             raise CollageError("Navigation before/after relationship is absent from the quote.")
@@ -306,8 +330,6 @@ def validate_navigation(
     ) is not None
     negative = re.fullmatch(r"(?:no|no thanks|not that one)[.! ]*", prompt.strip(), re.I) is not None
     candidate = reply.return_confirmation if isinstance(reply, QuestionIntent) else None
-    if isinstance(reply, QuestionIntent) and reply.confirmation and candidate:
-        raise CollageError("Clarify one confirmation at a time.")
     target = (
         candidate.proposal_id if candidate else reply.proposal_id if isinstance(reply, SelectIntent)
         else reply.source if isinstance(reply, EditIntent) and reply.source != "current" else None
@@ -346,12 +368,13 @@ def validate_navigation(
         if target and re.search(r"\b" + re.escape(target) + r"\b", text):
             return
         raise CollageError("A return/older-source edit requires grounded destination evidence.")
-    resolved = navigation_target(evidence, text, records, current, names, visible)
+    photo_ids = {item.photo_id for item in reply.references if item.photo_id is not None}
+    resolved = navigation_target(evidence, text, records, current, names, visible, photo_ids)
     if resolved != target:
         raise CollageError("Navigation destination contradicts its cited evidence.")
     if evidence.kind in {"before", "after"} and not candidate:
         alternatives = set()
-        for record in matching_records(text, records, current, names):
+        for record in matching_records(text, records, current, names, photo_ids):
             source = record.predecessor
             alternative = record.proposal_id if evidence.kind == "after" else source.proposal_id if source else None
             if alternative:

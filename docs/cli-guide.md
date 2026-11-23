@@ -130,10 +130,12 @@ All lifecycle branches have offline coverage. The separately authorized
 also completed initial composition and three targeted edits with the live model;
 later user-led observations are recorded in [009 results](../planning/009_results.md).
 
-Photo references use stable numbers, explicit user-taught names, and clear
-recent conversational references such as "make it bigger" after discussing one
-photo. The model cannot see image contents; positional descriptions such as
-"top-right" are not identity evidence, and broader synonyms need confirmation.
+Photo references use stable numbers, confirmed user-taught labels and bounded
+real task evidence. Interpretation uses the model's language capabilities for
+spacing variations, paraphrases and conversational references. It cannot see
+photo contents or invent untaught visual knowledge. Structural checks retain
+real IDs, actual quoted wording/evidence and numeric/exact-label conflicts;
+they do not prove the model understood the request.
 Qualitative amounts such as "a bit right" do not require exact distances.
 Collective instructions such as "photo 2 smaller than the others" or "remove all
 borders" do not need individual bindings for every group member. Interpretation
@@ -142,37 +144,45 @@ an actually unclear group may still need clarification.
 Explicit lists such as "photos 1 and 4" or "photos 1, 3 and 4" support individual
 normalized numbered references. Numbers must identify photos in the task, not
 be borrowed from unrelated quantities; photo IDs still must exist. Named and
-historical references retain their existing evidence checks.
+historical references require valid IDs and genuine cited evidence when supplied.
+Padded numeric tokens such as `photo 01` mean photo 1.
+Literal photo numbers and confirmed labels inside a quoted reference cannot
+contradict its binding. A label that itself denotes a photo number cannot
+reassign that stable ID.
 
-Teach a name with "photo 2 is breakfast", or answer "2" when asked which photo
-is breakfast. Naming alone produces a **Remembered** acknowledgement, without
-generation, a new proposal or a baseline change; ordinary text still requires
-`--live` and uses interpretation. Naming plus an edit can do both. Names are
-project-local and survive compaction, restarts and returns to older proposals.
-They compare case-insensitively with normalized whitespace; one photo may have
-several taught names. Unique suffix shortenings also work: "bridge" or "the
-bridge photo" can refer to "london bridge". All taught names participate in
-collision checks; ambiguous forms need clarification, not a recency-based guess.
-The actual wording and original name evidence are retained separately. Optional
-model-proposed short forms are derived aliases, not new user-taught facts.
-Broader synonyms can be proposed in a structured identity confirmation, naming
-both the candidate photo number and an established label; only the user's
-affirmative answer establishes that additional name. Unconfirmed suggestions
-never appear as learned names. A matching explicit number can provide redundant
-name evidence; conflicting identities still require clarity.
-Conflicting assignments require confirmation unless explicitly corrected, e.g.
-"breakfast is actually photo 3, not photo 2"; other names do not move with it.
-An unresolved target holds the whole edit until clarification is complete.
-An unambiguous identity answer (`2` or `photo 2`) can bind the unknown label
-whether interpretation represented it as an unresolved name or an unknown
-reference. Multiple candidate numbers require clarification, not a guessed
-binding. Answering an edit's identity question must retain and complete the
-original edit; it is not a naming-only acknowledgement.
-This pending task survives a rejected/typo answer and restart. Questions retain
-whether their originating task is design or naming-only; a design answer
-cannot silently become a naming-only acknowledgement. "Yes" uses only the exact
-pending structured identity candidate; rejection clarifies without generation.
-Explicit name facts are saved independently of subsequent generation success.
+Teach a durable label with "photo 2 is breakfast" or "map Daunt Books to photo 4".
+The application displays its exact proposed mappings, including old/new IDs for
+replacements, then **pauses names and any associated edit**. Reply naturally,
+for example "Yes, remember those" or "No, that's not right"; users need not
+learn commands or quote internal receipt IDs. Approval interpretation requires
+`--live`, uses the same existing model stage and can consume a call.
+Only the application's current receipt can be approved. Revisions display a new
+receipt; rejection saves nothing and cancels the unapplied associated edit.
+Unclear replies and invalid answers do not silently approve.
+
+After approval, teaching-only requests produce **Remembered**, without a
+proposal or baseline change. Teaching-plus-editing continues the original task
+from its pinned source. One photo may have several confirmed labels: adding
+Daunt Books preserves bookshop; reassigning bookshop changes only that label.
+Labels compare case-insensitively with normalized whitespace and survive
+compaction, restart and proposal returns. Repeating an unchanged assignment
+needs no new write or confirmation.
+Teaching combined with a return selects the exact saved PNG after approval,
+without generating another image.
+
+Ordinary layout changes need no naming gate. For confirmed `tower bridge`,
+model-led `bridge` can bind the same photo; `book shop` can bind `bookshop`
+without writing an alias. Genuine uncertainty or competing targets still asks
+for clarification. A bare `2` or `Photo 2` answering an identity question is
+task-local, **not automatic durable teaching**. It continues the whole original
+edit, including after an invalid answer or restart.
+
+Pending receipts are redisplayed on chat resume/status without calls. Local
+canvas/cropping or acceptance changes are blocked until the receipt is resolved;
+read-only commands remain available. External receipt/state conflicts and
+interrupted naming writes fail explicitly, without automatic reconciliation,
+approval or dispatch. Approved names may remain saved when later generation
+fails; that does not mean the working collage changed or an image was accepted.
 
 An ordinary enlargement permits minimal necessary inward movement of resized
 photos, retaining centres when the requested size fits. Explicit fixed positions
@@ -218,10 +228,10 @@ Names, current task/answers, pending confirmations, resolved sources and require
 evidence survive optional-history size fitting. If essential input cannot fit,
 the request fails explicitly instead of silently forgetting it.
 
-Replay reports use **record version 7**, retaining explicit generation and
+Replay reports use **record version 8**, retaining explicit generation and
 interpretation reasoning selections. Conversation, proposal, event and
-acceptance-intent records use **version 6**, including distinct alias evidence
-and clarification purpose. Replay-step and assessment records remain **version 5**;
+acceptance-intent records use **version 7**, including exact receipt/approval
+evidence and clarification purpose. Replay-step and assessment records use **version 6**;
 request-attempt records use **version 2**, recording
 their stage, actual reasoning selection and remaining deadline at dispatch.
 Layout/project format remains **3**; sequence definitions, preferences and
@@ -229,6 +239,16 @@ controls retain their own unchanged versions. Old conversation/replay and
 request-attempt records are untouched archives:
 use fresh projects, not a legacy loader or
 migration. Existing supported deterministic recipes/snapshots remain usable.
+
+[012 results](../planning/012_results.md) record offline verification of this
+model-led reference/confirmed-name boundary. A separately authorized
+[replay follow-up](../planning/012_replay_results.md) exercised basic naming
+confirmation but recorded an exact-return failure; the subsequent
+[return repair/retest](../planning/012_return_repair_results.md) completed three
+fresh exact-return runs without corrections.
+[Human-led trial 05](../planning/012_trial05_results.md) then supported the user's
+successful phase sign-off and positive predictability feedback. Broader semantic
+reliability remains unproven; phase closure authorizes no further live calls.
 
 **Format 3 prompt/context adaptation is covered offline.** The agent now edits
 authored centres directly instead of calculating resize position offsets.
@@ -286,7 +306,7 @@ A resume uses the captured preferences and effective controls. Omit
 
 Chat shows a concise action/source/photo summary only after interpretation is
 validated, then `Generating layout...` before waiting for generation. Questions,
-name acknowledgements and exact returns do not announce generation. This is
+pending naming receipts, name acknowledgements and exact returns do not announce generation. This is
 terminal feedback, not an extra model call or model-generated explanation.
 
 When validation is exhausted before publication and the actual working source
@@ -441,20 +461,26 @@ messages may be edited, appended or removed; each execution preserves its
 own complete sequence snapshot. Manual chat/control/acceptance changes cause
 resume to stop rather than silently adopt a different baseline.
 
-Naming-only acknowledgements advance one scripted step without creating a
+Confirmed or unchanged naming-only acknowledgements advance one scripted step without creating a
 proposal, preview, source-relative layout difference or baseline change.
-A question pauses without advancing the sequence or answering on your behalf.
-After reviewing the question, supply a recorded supplemental answer:
+A question or naming receipt pauses without advancing the sequence or answering
+on your behalf. Explicit teaching sequences may now stop at this gate; scripts
+without durable teaching do not acquire routine approval stops.
+After reviewing the question/receipt, supply a recorded supplemental answer:
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --resume --answer "Photo 2" --answer-origin user
 ```
 
 Use `--answer-origin copilot` only for an answer actually authored by Copilot.
-The answer, origin and preceding question execution are captured separately;
+For a naming receipt use, for example, `--answer "Yes, remember those"`, after
+reviewing every proposed mapping. Approval/rejection, the exact receipt and
+the actual answer/origin are retained; replay never approves automatically.
+Rejection records a discarded task, not a generated layout.
+The answer, origin and preceding question/receipt execution are captured separately;
 the original scripted message is not replaced. Each answer has a new four-call
 attempt limit and consumes the same optional outer allowance. At most two
-clarification-answer turns are allowed per scripted step. `--remaining` may
+question/receipt-answer turns are allowed per scripted step. `--remaining` may
 continue subsequent scripted messages after successful completion. The runner
 never invents an answer. Manual chat/control changes still block replay resume;
 do not bypass that check to answer a question.
@@ -527,9 +553,11 @@ rendering new previews, accepting anything, or making model requests.
 
 The default `integrity` profile checks source/instruction hashes, proposal
 identity/actual source relationships, schema/controls/recomputed geometry, saved recipe/PNG
-digests, audited name-state updates, naming acknowledgements, per-execution
+digests, audited receipt/name-state updates, approval/rejection and naming acknowledgements, per-execution
 result consistency and sequence completion. It does
 **not** check whether a move, swap or styling change followed the user's intent.
+An intact pending naming receipt is unassessed/incomplete, not a service failure
+or a completed edit. A discarded task can pass integrity without producing an image.
 
 The `dark-portrait-adjustments` profile additionally preserves the old fixed
 checks: dark-neutral background, photo 2 smaller than the others, subtle

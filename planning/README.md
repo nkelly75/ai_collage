@@ -45,6 +45,27 @@ live-retested. Further work needs separate approval; neither an accepted image
 nor phase closure establishes general reliability. The blueprint's broader
 Phase 1 is not complete.
 
+[011: Interpretation and naming reassessment](011-interpretation-and-naming-reassessment.md)
+is reviewed and closed; see [011 results](011_results.md).
+The recommendation keeps separate interpretation and layout stages, with
+task-local model-led binding and deliberately confirmed durable labels.
+The selected direction was separately approved and implemented in 012;
+the review itself did not authorize implementation or live evaluation.
+
+[012: Model-led references and confirmed names](012-model-led-references-and-confirmed-names.md)
+is **successfully completed and closed with the user's sign-off**.
+One natural-language confirmation gate precedes durable teaching and any
+associated edit; ordinary resolvable edits proceed directly.
+See [012 results](012_results.md) for verification and the simplicity trade-off.
+The [replay follow-up](012_replay_results.md) and
+[return repair/retest](012_return_repair_results.md) retain their separate
+outcomes and closed budgets. [Human-led trial 05 / phase closeout](012_trial05_results.md)
+records the user's positive reliability/predictability feedback and acceptance
+of the final compliment blip; see its [collage story](012_result_05.png).
+This closes the bounded phase, not general reliability or broader Phase 1.
+The user will handle the commit; further trials, refactoring and branch
+integration are not initiated by this closeout.
+
 ## Planning records
 
 Numbering is reading order, not phase numbering. These records are snapshots
@@ -71,6 +92,8 @@ and record 003 spans several feature increments.
 | [010f: Interpretation efficiency and reasoning comparison](010f-interpretation-reasoning-comparison.md) | Executed and closed; see [010f results](010f_results.md). Generation defaults low with high override; interpretation remains high. | Follow-up to 010e; further trials/default changes need approval. |
 | [010g: User-led natural-language trial](010g-user-led-natural-language-trial.md) | Trials [03](010g_results.md) and [04](010g_trial04_results.md) stopped; trial 04 includes accepted P007 and later challenges. | Human-led evidence; further trials require separate approval. |
 | [010h: Useful, recoverable progress](010h-useful-recoverable-progress.md) | Implemented and verified offline; [results](010h_results.md), [live replay follow-up](010h_replay_results.md) and [human feedback](010g_trial04_results.md) recorded separately. | Bounded pass and replay follow-up closed. |
+| [011: Interpretation and naming reassessment](011-interpretation-and-naming-reassessment.md) | Review complete; [results](011_results.md) recommend a simpler boundary and explicit durable naming. | Selected direction separately approved and implemented in 012. |
+| [012: Model-led references and confirmed names](012-model-led-references-and-confirmed-names.md) | Successfully completed and closed with user sign-off; see [results](012_results.md). | Separate [replay](012_replay_results.md), [return repair/retest](012_return_repair_results.md) and [human-led trial 05 / closeout](012_trial05_results.md) evidence; commit remains user-managed. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

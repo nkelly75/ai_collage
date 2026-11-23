@@ -35,7 +35,6 @@ class PhotoReference(BaseModel):
     model_config = Record.model_config
     text: Annotated[str, Field(min_length=1, max_length=200)]
     photo_id: PositiveInt | None
-    source: Literal["number", "name", "history", "unknown"]
     event_id: PositiveInt | None = None
 
 
@@ -44,16 +43,6 @@ class NameUpdate(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
     photo_id: PositiveInt
     quote: Annotated[str, Field(min_length=1, max_length=1000, pattern=r"\S")]
-    replaces_photo_id: PositiveInt | None = None
-    evidence_event: PositiveInt | None = Field(
-        default=None,
-        description="Only an explicit correction of an existing name may cite this prior event. "
-        "Omit/null for an unknown-name identity answer; the application links its pending question.",
-    )
-    aliases: Annotated[list[Annotated[str, Field(min_length=1, max_length=200)]], Field(max_length=4)] = Field(
-        default_factory=list,
-        description="Optional obvious shortened forms only; broader synonyms need user confirmation.",
-    )
 
 
 class PhotoName(BaseModel):
@@ -62,8 +51,7 @@ class PhotoName(BaseModel):
     photo_id: PositiveInt
     event_id: PositiveInt
     quote: str
-    question_event: PositiveInt | None = None
-    aliases: list[str] = Field(default_factory=list)
+    receipt_event: PositiveInt
 
 
 class NavigationEvidence(BaseModel):
@@ -127,12 +115,23 @@ class QuestionIntent(GroundedIntent):
     continuation: Literal["design", "naming"] = Field(
         default="design", description="Whether the originating task changes a layout or only teaches names.",
     )
-    confirmation: NameUpdate | None = None
     return_confirmation: ReturnConfirmation | None = None
 
 
 class RememberIntent(GroundedIntent):
     action: Literal["remember"]
+
+
+class NamesIntent(GroundedIntent):
+    action: Literal["names"]
+    decision: Literal["approve", "reject"]
+    receipt_event: PositiveInt
+
+    @model_validator(mode="after")
+    def exact_receipt(self) -> "NamesIntent":
+        if self.references or self.name_updates or self.navigation or not self.continues_task:
+            raise ValueError("Naming approval/rejection uses the exact pending receipt, not new bindings.")
+        return self
 
 
 class ResumeIntent(GroundedIntent):
@@ -146,14 +145,14 @@ class ResumeIntent(GroundedIntent):
 
 
 Intent = Annotated[
-    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent | RememberIntent | ResumeIntent,
+    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent | RememberIntent | ResumeIntent | NamesIntent,
     Field(discriminator="action"),
 ]
 INTENT = TypeAdapter(Intent)
 
 
 class ConversationRecord(Record):
-    record_version: Literal[6] = 6
+    record_version: Literal[7] = 7
 
 
 class LayoutSource(BaseModel):
@@ -195,9 +194,24 @@ class ResolvedIntent(BaseModel):
         return self
 
 
+class NameReceipt(BaseModel):
+    model_config = Record.model_config
+    updates: Annotated[list[NameUpdate], Field(min_length=1)]
+    intent: ResolvedIntent | None
+    baseline: LayoutSource | None
+    controls: Controls
+    names_digest: Digest
+
+    @model_validator(mode="after")
+    def unique_labels(self) -> "NameReceipt":
+        if len({" ".join(item.name.split()).casefold() for item in self.updates}) != len(self.updates):
+            raise ValueError("Naming receipt repeats a label.")
+        return self
+
+
 class RequestResult(BaseModel):
     model_config = Record.model_config
-    kind: Literal["proposal", "selection", "question", "acknowledgement"]
+    kind: Literal["proposal", "selection", "question", "name_confirmation", "acknowledgement"]
     event_id: PositiveInt
     proposal_id: ProposalId | None = None
     question: Question | None = None
@@ -206,7 +220,7 @@ class RequestResult(BaseModel):
 
     @model_validator(mode="after")
     def matching_fields(self) -> "RequestResult":
-        if self.kind == "question":
+        if self.kind in {"question", "name_confirmation"}:
             valid = self.question is not None and self.proposal_id is None and self.acknowledgement is None
         elif self.kind == "acknowledgement":
             valid = self.acknowledgement is not None and self.proposal_id is None and self.question is None
@@ -215,6 +229,12 @@ class RequestResult(BaseModel):
         if not valid:
             raise ValueError("Result fields do not match its kind.")
         return self
+
+
+class ReceiptPointer(BaseModel):
+    model_config = Record.model_config
+    event_id: PositiveInt
+    sha256: Digest
 
 
 class ConversationState(ConversationRecord):
@@ -228,6 +248,7 @@ class ConversationState(ConversationRecord):
     accepted_proposal: ProposalId | None = None
     history: list[PositiveInt] = Field(default_factory=list)
     photo_names: list[PhotoName] = Field(default_factory=list)
+    pending_names: ReceiptPointer | None = None
 
 
 class Proposal(ConversationRecord):
@@ -246,7 +267,7 @@ class Exchange(ConversationRecord):
     kind: Literal["turn"] = "turn"
     prompt: str
     response: str | None = None
-    outcome: Literal["intent", "proposal", "selection", "question", "acknowledgement", "invalid", "error"]
+    outcome: Literal["intent", "proposal", "selection", "question", "name_confirmation", "acknowledgement", "invalid", "error"]
     stage: Literal["interpretation", "generation"]
     intent: ResolvedIntent | None = None
     parent: ProposalId | None
@@ -259,9 +280,13 @@ class Exchange(ConversationRecord):
     task_id: PositiveInt | None = None
     baseline_before: LayoutSource | None = None
     generation_timeout: bool = False
+    name_receipt: NameReceipt | None = None
+    receipt_event: PositiveInt | None = None
 
     @model_validator(mode="after")
     def timeout_evidence(self) -> "Exchange":
+        if (self.outcome == "name_confirmation") != (self.name_receipt is not None):
+            raise ValueError("A naming receipt belongs only to its confirmation event.")
         if self.generation_timeout and (
             self.stage != "generation" or self.outcome != "error" or self.intent is None
         ):

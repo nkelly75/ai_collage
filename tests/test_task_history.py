@@ -58,17 +58,17 @@ def test_descriptive_evidence_does_not_confuse_fields_or_reverse_direction(text,
     assert not change_matches(text, RecipeChange(field=field, before=before, after=after), [])
 
 
-def test_descriptive_return_aliases_share_unique_identity_rules_with_edit_grounding(agent_project):
+def test_descriptive_returns_use_interpreted_ids_without_a_second_synonym_engine(agent_project):
     conversation, requests = agent_project
     remember(conversation, requests, "london bridge", 1)
     text = "before the bridge photo became smaller"
     first = RecipeChange(field="recipe.photos.1.box.width", before=0.3, after=0.2)
     other = first.model_copy(update={"field": "recipe.photos.2.box.width"})
-    assert change_matches(text, first, conversation.state.photo_names)
-    assert not change_matches(text, other, conversation.state.photo_names)
+    assert change_matches(text, first, conversation.state.photo_names, {1})
+    assert not change_matches(text, other, conversation.state.photo_names, {1})
     remember(conversation, requests, "stone bridge", 2)
-    assert not change_matches(text, first, conversation.state.photo_names)
-    assert not change_matches(text, other, conversation.state.photo_names)
+    assert change_matches(text, first, conversation.state.photo_names, {1})
+    assert not change_matches(text, other, conversation.state.photo_names, {1})
 
 
 @pytest.mark.parametrize("wording", [

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, RootModel, ValidationError, model_validat
 
 from .agent_requests import RequestLog, call_budget
 from .agent_files import canonical, child, digest, save
-from .agent_models import Controls, Digest, Exchange, LayoutSource, Reasoning, Record, ResolvedIntent
+from .agent_models import INTENT, Controls, Digest, Exchange, LayoutSource, NamesIntent, Reasoning, Record, ResolvedIntent
 from .agent_provider import FoundryModel, instruction_bundle
 from .conversation import Conversation, ModelClient
 from .models import MAX_FILE_BYTES, CollageError, InputLayout
@@ -49,12 +49,12 @@ class Source(Record):
 
 class StepResult(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[5] = 5
+    record_version: Literal[6] = 6
     step: int
     name: str
     prompt: str
     reopened: bool
-    status: Literal["pending", "proposal", "selection", "question", "acknowledgement", "failed"] = "pending"
+    status: Literal["pending", "proposal", "selection", "question", "name_confirmation", "acknowledgement", "failed"] = "pending"
     baseline_before: str | None = None
     source: LayoutSource | None = None
     intent: ResolvedIntent | None = None
@@ -67,6 +67,8 @@ class StepResult(BaseModel):
     preview_path: str | None = None
     question: str | None = None
     acknowledgement: str | None = None
+    receipt_event: int | None = None
+    name_decision: Literal["approve", "reject"] | None = None
     error: str | None = None
     contexts: list[str] = Field(default_factory=list)
     changes: list[Change] = Field(default_factory=list)
@@ -79,7 +81,7 @@ class StepResult(BaseModel):
 
 class ReplayReport(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[7] = 7
+    record_version: Literal[8] = 8
     project_id: str
     sequence: Sequence
     sources: list[Source]
@@ -161,9 +163,9 @@ async def replay(
             "proposal", "selection", "acknowledgement",
         }:
             last = report.executions[-1]
-            if last.status == "question":
+            if last.status in {"question", "name_confirmation"}:
                 if answer is None:
-                    raise CollageError("Replay paused for a question; supply --answer and --answer-origin.")
+                    raise CollageError("Replay paused for a question/naming receipt; supply --answer and --answer-origin.")
                 answered = {
                     item.answers_execution for item in report.executions
                     if item.step == report.next_step and item.answer is not None
@@ -247,9 +249,11 @@ async def replay(
             result.event_id = reply.event_id
             result.intent = event.intent
             result.source = event.intent.source if event.intent else None
-            if reply.kind == "question" and event.outcome == "question":
-                result.status = "question"
+            if reply.kind in {"question", "name_confirmation"} and event.outcome == reply.kind:
+                result.status = reply.kind
                 result.question = reply.question
+                if reply.kind == "name_confirmation":
+                    result.receipt_event = reply.event_id
             elif reply.kind == "acknowledgement" and event.outcome == "acknowledgement":
                 result.status = "acknowledgement"
                 result.acknowledgement = reply.acknowledgement
@@ -284,6 +288,12 @@ async def replay(
             result.error = f"{type(exc).__name__}: {exc}"
         finally:
             new_events = conversation.history()[history_start:]
+            for event in new_events:
+                if isinstance(event, Exchange) and event.receipt_event is not None:
+                    decision = INTENT.validate_json(event.response or "")
+                    if isinstance(decision, NamesIntent):
+                        result.receipt_event = event.receipt_event
+                        result.name_decision = decision.decision
             if new_events and isinstance(new_events[-1], Exchange):
                 last_event = new_events[-1]
                 result.event_id = conversation.state.history[-1]
@@ -316,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--retry", action="store_true")
     parser.add_argument("--remaining", action="store_true", help="Run all remaining messages, not just one.")
-    parser.add_argument("--answer", help="Supplement the pending question; do not replace the script.")
+    parser.add_argument("--answer", help="Answer the pending question/naming receipt; do not replace the script.")
     parser.add_argument("--answer-origin", choices=["user", "copilot"])
     parser.add_argument("--generation-reasoning", choices=["high", "low"], default="low")
     parser.add_argument("--interpretation-reasoning", choices=["high", "low"], default="high")

@@ -7,8 +7,12 @@ is genuinely unclear. Make reasonable creative choices rather than asking
 the user to design every detail.
 
 Actions:
-- `remember`: the message only teaches/corrects photo names; acknowledge without
-  generating a collage. For a name plus an edit, use `edit`/`fresh` instead.
+- `remember`: explicit teaching/correction only; propose a durable naming receipt.
+  For teaching plus an edit use `edit`/`fresh` instead.
+- `names`, with `decision: "approve"` or `"reject"` and the exact
+  `receipt_event` supplied in `pending_names`: interpret natural approval or
+  rejection of that receipt. Use empty `references`/`name_updates`, no navigation
+  and `continues_task: true`. Never substitute mappings in an approval.
 - `edit`, with `source: "current"` or a published proposal ID: a targeted edit,
   including "go back to the first one and make photo 2 smaller".
 - `fresh`: an initial composition or a substantially different arrangement.
@@ -31,15 +35,15 @@ Actions:
 Every action includes `references` and `name_updates` arrays (empty when not
 applicable). Only `edit` supplies the action-level `source` field. Omit it
 entirely for every other action, including `fresh` and `question`; even
-`"source": null` is invalid there. A reference's nested `source` is separate.
+`"source": null` is invalid there.
 Ground all photo references, including relation/anchor photos,
 before generation. Do not equate choosing edit/current with understanding targets.
 
 `references` binds individually identified photos, not every member of a group.
 Collective instructions such as "all the photos", "the others" or "the remaining
 photos" stay in the original task for generation; do not enumerate them as
-individual references or mark known photos `unknown`. For "Make photo 2 smaller
-than the others", return only `{"text":"photo 2","photo_id":2,"source":"number"}`
+individual references or mark known photos unresolved. For "Make photo 2 smaller
+than the others", return only `{"text":"photo 2","photo_id":2}`
 in `references`; generation receives the complete comparison. Clarify only if
 the intended group is genuinely unclear, not merely because the wording is plural.
 For an initial "Make a collage using all four photos", return
@@ -51,79 +55,47 @@ so old questions/confirmations are not silently applied to the new task.
 The same applies when `failed_task` is present: use `resume` to continue it,
 or set `continues_task: false` for an independent replacement request.
 
-Each reference has `text` (the relevant user wording), `photo_id`,
-`source`, and optional `event_id`:
-- `number`: the wording contains that photo number. An explicit numbered list
-  such as "photos 1 and 4" may use individual normalized texts "photo 1" and
-  "photo 4". Only numbers explicitly identifying photos qualify, not quantities.
-- `name`: bind the actual user wording to a taught name in `photo_names`, or a
-  name established by a validated update here. Obvious suffix shortenings
-  ("bridge" from "london bridge") and surrounding articles/photo wrappers are
-  allowed when unique across all taught names. If several photos match, clarify.
-  Unknown names have null `photo_id`; do not guess a number.
-- `history`: clear conversational wording such as "it", citing the `event_id`
-  of an unambiguous single-photo target in `reference_history`.
-- `unknown`: another unresolved reference; null `photo_id`, then clarify.
-Only history references cite an event ID: omit/null it for learned names,
-even when `photo_names` supplies their establishing event. Except for normalized numbered
-references, the wording must occur in the current message or the pending
-question's original user prompt. Do not resolve photos
-by layout descriptions such as "top-right" or invent image-content synonyms.
-"The breakfast photo" can refer to the learned label "breakfast"; a newly
-guessed "croissant" cannot without confirmation. Keep `text` as the user's
-actual wording, not its expanded canonical label. A matching name and explicit
-photo number are redundant evidence, not an error; conflicting identities need
-clarification. Ask only for unknown essentials, not exact amounts
-for qualitative instructions such as "a bit right".
+Each reference has `text` (actual user wording), `photo_id` (a known number or
+null when unresolved), and optional `event_id` citing real supplied reference
+evidence containing that photo. Except for normalized explicit numbered lists,
+the text must occur in the current message or original task. Padded photo
+numbers such as 01 mean 1. Do not confuse quantities with photo identities.
+Use your language capabilities over confirmed labels, the current layout and
+real task evidence. Spacing variations, contextual paraphrases and conversational
+references need no synonym list or persistent alias: "book shop" can refer to
+"bookshop"; "bridge" may refer to "tower bridge" when context supports it.
+You still cannot see image contents. User-taught descriptions are knowledge;
+untaught visual guesses are not. Clarify genuine uncertainty or competing
+targets instead of choosing by recency alone. Photo numbers always remain usable.
+Exact confirmed labels and explicit photo numbers must not contradict bindings.
 
-Each name update has `name`, `photo_id`, `quote` (an exact current user quote),
-and optional `replaces_photo_id`. Learn only explicit user-established names,
-including an answer to a pending photo-number question. Do not turn a guessed
-reference into a learned fact. Multiple names may identify one photo. Names
-survive compaction, restarts and proposal returns independently of layouts.
-Apply explicit corrections, e.g. "breakfast is actually photo 3, not 2", with
-`replaces_photo_id: 2`; do not move that photo's other names.
-For "I meant photo 3, not photo 2" without repeating the name, cite
-`evidence_event` from unambiguous named evidence in `reference_history`.
-You may propose up to four optional `aliases` on a name update, but only
-distinct suffix shortenings of that taught wording. Automatic short forms are
-derived references, not separately user-taught names. Do not put broader
-synonyms in `aliases` or silently store them as facts.
+Each `name_updates` item has only `name`, `photo_id` and `quote`: actual user
+wording that teaches that label, in this message or earlier in this same task.
+Propose updates only for explicit teaching/correction, not inferred synonyms
+or a bare numeric answer to an identity question. Several labels can identify
+one photo; adding a label preserves others. The application displays additions
+and replacements, then pauses names AND any associated edit for approval.
+Do not commit names or infer approval from image acceptance.
 
-For a conflicting assignment without an explicit correction, ask whether to
-replace the existing mapping. Put the proposed update (with its original exact
-user quote and `replaces_photo_id`) in question-only `confirmation`, NOT in
-`name_updates`. After an affirmative answer, copy the confirmed assignment into
-`name_updates`, using the actual affirmative answer as its quote. For a question
-about an unknown name, include that label as an unresolved name reference so a
-subsequent numeric answer can establish the binding.
-
-An identity question inviting "Yes" MUST have a question-only `confirmation`.
-For a broader synonym, quote the current user's unknown wording in that
-candidate and explicitly name the candidate photo number AND an established
-label in the question, e.g. "Do you mean photo 1 (london bridge) by river crossing?"
-Keep the unknown wording unresolved until confirmation. On Yes, learn exactly
-that candidate using the answer's real quote and continue the original edit;
-on No, clarify without changing the layout. Never invite Yes to an identity
-that lacks a supported structured candidate; ask for a photo number instead.
-
-An unknown label may use `source: "name"` or `"unknown"` with null photo_id.
-When its identity is answered, use `name_updates` with the actual answer quote,
-no `evidence_event` and no `replaces_photo_id`: this is establishing a name,
-not correcting an existing one. Reference the newly bound label as `source: "name"`.
-A single numeric identity answer can also use normalized `photo N` wording.
-Do not guess between multiple candidate numbers.
+When `pending_names` exists, interpret approval/rejection with `names`.
+For a correction, propose a revised receipt using the original action/source
+and complete corrected bindings; it still requires approval. An unclear reply
+can ask a short question, without any name updates. A clearly independent
+replacement sets `continues_task: false` and must not inherit the old approval.
+Code resumes an approved edit from its pinned task/source; "Yes, remember those"
+is not a new layout instruction. Never fabricate a receipt ID or approve with
+no pending receipt. Confirmation interpretation can consume a model call.
 
 Answering a pending edit/composition question is NOT a naming-only task.
 Keep `continues_task: true`, resolve the original task as `edit`/`fresh` with
-the appropriate source, and include the name update in that action. Use `remember`
+the appropriate source and task-local bindings. Use `remember`
 only if the original task itself solely requested naming; do not drop the edit.
 An initially invalid or mistyped answer does not cancel that pending task.
 
 Do not partially execute an edit with unresolved references. Retain the whole
 original task through questions (`pending_question.original_task`, even after
-multiple answers). A clarification may record independently clear
-explicit names, but must not generate the known part of the edit on its own.
+multiple answers). Resolve essential questions before proposing a naming
+receipt; do not generate the known part of the edit on its own.
 
 Context retains the original request, current layout and up to three recent
 logical tasks, not the full transcript. Answers and validation corrections
@@ -172,6 +144,13 @@ Use null/omit unused evidence fields.
 For `id`/`ordinal`, task_id, field and steps must all be null/absent; never copy
 a catalogue task ID into ordinal evidence. Quote the user's ordinal wording,
 not the proposal ID inferred from it.
+The resolved destination and quoted evidence are separate. If the first published
+proposal is P001, "Go back to the first proposal" uses
+`{"action":"select","proposal_id":"P001","references":[],"name_updates":[],
+"navigation":{"kind":"ordinal","text":"first proposal"}}`.
+"Go back to P001" instead uses `navigation: {"kind":"id","text":"P001"}`.
+On correction, repair both the quote and its evidence kind; a valid destination
+ID does not make ordinal wording into ID evidence.
 A pure return MUST use `select`, not an
 edit restoring fields. Only a return with an additional requested edit generates.
 The application checks the cited relationship/count and loads the exact source.
