@@ -130,7 +130,7 @@ All lifecycle branches have offline coverage. The separately authorized
 also completed initial composition and three targeted edits with the live model;
 later user-led observations are recorded in [009 results](../planning/009_results.md).
 
-Photo references use stable numbers, confirmed user-taught labels and bounded
+Photo references use stable numbers, saved user-taught labels and bounded
 real task evidence. Interpretation uses the model's language capabilities for
 spacing variations, paraphrases and conversational references. It cannot see
 photo contents or invent untaught visual knowledge. Structural checks retain
@@ -146,13 +146,20 @@ normalized numbered references. Numbers must identify photos in the task, not
 be borrowed from unrelated quantities; photo IDs still must exist. Named and
 historical references require valid IDs and genuine cited evidence when supplied.
 Padded numeric tokens such as `photo 01` mean photo 1.
-Literal photo numbers and confirmed labels inside a quoted reference cannot
+Literal photo numbers and saved labels inside a quoted reference cannot
 contradict its binding. A label that itself denotes a photo number cannot
 reassign that stable ID.
 
 Teach a durable label with "photo 2 is breakfast" or "map Daunt Books to photo 4".
-The application displays its exact proposed mappings, including old/new IDs for
-replacements, then **pauses names and any associated edit**. Reply naturally,
+Clear new identities are saved automatically, with a concise **Remembered**
+acknowledgement. Answering "Which photo is breakfast?" with `2` or `Photo 2`
+also remembers breakfast and continues the complete original edit, including
+after invalid answers or restart. Hypothetical, explicitly temporary and
+unresolved wording must not install lasting names. Interpretation is still
+fallible: actual quotes/IDs cannot prove arbitrary language was understood.
+
+Only a conflicting reassignment displays the exact old/new mappings and
+**pauses that complete memory batch and any associated edit**. Reply naturally,
 for example "Yes, remember those" or "No, that's not right"; users need not
 learn commands or quote internal receipt IDs. Approval interpretation requires
 `--live`, uses the same existing model stage and can consume a call.
@@ -160,28 +167,38 @@ Only the application's current receipt can be approved. Revisions display a new
 receipt; rejection saves nothing and cancels the unapplied associated edit.
 Unclear replies and invalid answers do not silently approve.
 
-After approval, teaching-only requests produce **Remembered**, without a
-proposal or baseline change. Teaching-plus-editing continues the original task
-from its pinned source. One photo may have several confirmed labels: adding
+Memory-only requests produce acknowledgements without a proposal or baseline
+change. Learning-plus-editing continues the original task from its pinned source.
+One photo may have several saved labels: adding
 Daunt Books preserves bookshop; reassigning bookshop changes only that label.
 Labels compare case-insensitively with normalized whitespace and survive
 compaction, restart and proposal returns. Repeating an unchanged assignment
 needs no new write or confirmation.
-Teaching combined with a return selects the exact saved PNG after approval,
-without generating another image.
+Learning combined with a return selects the exact saved PNG, without generating
+another image; a conflicting assignment still needs approval first.
 
-Ordinary layout changes need no naming gate. For confirmed `tower bridge`,
+Ordinary layout changes need no naming gate. For saved `tower bridge`,
 model-led `bridge` can bind the same photo; `book shop` can bind `bookshop`
 without writing an alias. Genuine uncertainty or competing targets still asks
-for clarification. A bare `2` or `Photo 2` answering an identity question is
-task-local, **not automatic durable teaching**. It continues the whole original
-edit, including after an invalid answer or restart.
+for clarification. Only user-established additional labels become saved aliases.
+
+Ask "What photo names do you know?" for every active label and photo number,
+including multiple labels per photo. The application renders the list from
+state, without layout generation. It preserves any pending question,
+reassignment receipt or generation-timeout continuation.
+Say "Forget the name breakfast" to remove only that normalized label, not its
+photo, other labels or edits. Repeated forgetting is idempotent. A minimal
+per-label forgotten record in the same name table prevents old raw/compact
+history, supporting citations, retries or proposal returns from reviving it.
+This also works for a name found only in older task evidence. Using it again
+requires fresh user identity evidence; merely mentioning it is not teaching.
+Historical audit records remain untouched.
 
 Pending receipts are redisplayed on chat resume/status without calls. Local
 canvas/cropping or acceptance changes are blocked until the receipt is resolved;
 read-only commands remain available. External receipt/state conflicts and
 interrupted naming writes fail explicitly, without automatic reconciliation,
-approval or dispatch. Approved names may remain saved when later generation
+approval or dispatch. Validated names may remain saved when later generation
 fails; that does not mean the working collage changed or an image was accepted.
 
 An ordinary enlargement permits minimal necessary inward movement of resized
@@ -207,6 +224,12 @@ wording and actual change facts; no model-written memory summaries, extra model
 stage or retrieval calls are used. Full audit history and proposals stay on disk.
 Omission counts distinguish unavailable detail from nonexistent history.
 
+When visible photo-reference evidence cites an older binding, its supporting
+reference records remain available to both the model and validator, recursively.
+Only reference/name-update metadata is carried across that boundary, not the
+older transcript or recipes. This does not create durable names or increase the
+three-task/twelve-record windows; existing input-size guards still apply.
+
 "Undo the last two edits" follows the current proposal's ancestry, skipping
 no-ops and non-edit outcomes, rather than counting the latest two created
 proposals. Fresh arrangements retain a navigation predecessor without acquiring
@@ -226,14 +249,15 @@ A pure return reuses the saved proposal/PNG without rerendering or acceptance.
 Return-and-edit selects an old generation source but leaves the current baseline
 unchanged if generation fails. Older wording is not maintained as standing
 instructions; preserve current recipe effects rather than replaying old requests.
-Names, current task/answers, pending confirmations, resolved sources and required
+Active names, forgotten-name status, current task/answers, pending confirmations, resolved sources and required
 evidence survive optional-history size fitting. If essential input cannot fit,
 the request fails explicitly instead of silently forgetting it.
 
-Replay reports use **record version 8**, retaining explicit generation and
+Replay reports use **record version 9**, retaining explicit generation and
 interpretation reasoning selections. Conversation, proposal, event and
-acceptance-intent records use **version 7**, including exact receipt/approval
-evidence and clarification purpose. Replay-step and assessment records use **version 6**;
+acceptance-intent records use **version 8**, including automatic/approved writes,
+forgetting and read-only inspections. Replay-step and assessment records use
+**version 7**; step results include audited before/after identity snapshots;
 request-attempt records use **version 2**, recording
 their stage, actual reasoning selection and remaining deadline at dispatch.
 Layout/project format remains **3**; sequence definitions, preferences and
@@ -242,8 +266,9 @@ request-attempt records are untouched archives:
 use fresh projects, not a legacy loader or
 migration. Existing supported deterministic recipes/snapshots remain usable.
 
-[012 results](../planning/012_results.md) record offline verification of this
-model-led reference/confirmed-name boundary. A separately authorized
+[017](../planning/017-conversational-photo-identity-memory.md) defines the current
+conversational memory policy. [012 results](../planning/012_results.md) retain
+the earlier deliberately confirmed-name policy. A separately authorized
 [replay follow-up](../planning/012_replay_results.md) exercised basic naming
 confirmation but recorded an exact-return failure; the subsequent
 [return repair/retest](../planning/012_return_repair_results.md) completed three
@@ -425,6 +450,10 @@ The supplied sequences are:
   name; pause for the planned identity answer `2` via `--answer`, not a scripted
   third message. See [010d](../planning/010d-bounded-reasoning-evaluation.md)
   for the frozen comparison and its separate live-execution boundary.
+- `examples\sequences\06_photo_identity_memory.json`: the ten-step learning,
+  listing, reassignment, forgetting and fresh re-establishment story from
+  [017](../planning/017-conversational-photo-identity-memory.md). Its required
+  questions and conflicting-name receipt need separately recorded replies.
 
 A sequence contains `record_version: 1`, a `name`, ordered `images` paths
 relative to the sequence file, `canvas` width/height, and `messages`.
@@ -465,11 +494,11 @@ messages may be edited, appended or removed; each execution preserves its
 own complete sequence snapshot. Manual chat/control/acceptance changes cause
 resume to stop rather than silently adopt a different baseline.
 
-Confirmed or unchanged naming-only acknowledgements advance one scripted step without creating a
+Learning, forgetting and read-only listing acknowledgements advance one scripted step without creating a
 proposal, preview, source-relative layout difference or baseline change.
 A question or naming receipt pauses without advancing the sequence or answering
-on your behalf. Explicit teaching sequences may now stop at this gate; scripts
-without durable teaching do not acquire routine approval stops.
+on your behalf. New non-conflicting teaching does not create an approval stop;
+conflicting assignments still do.
 After reviewing the question/receipt, supply a recorded supplemental answer:
 
 ```powershell
@@ -513,7 +542,8 @@ failures/retries/questions. Per-execution results contain proposal/preview
 paths, resolved source/task, previous working baseline, authored-field differences
 from the actual edit source, each stage's request context path,
 attempt/correction counts, cumulative project request usage before/after,
-and elapsed stage time including validation/rendering. Raw model responses
+before/after identity-state snapshots, and elapsed stage time including
+validation/rendering. Raw model responses
 remain in the normal conversation events; individual request usage remains
 in the project's request records. Selection is a completed step, not a new
 proposal; it has no authored changes or generation call. Both prompts are
@@ -572,6 +602,17 @@ requirements. It requires the four corresponding
 named messages on a 1200x1800 four-photo replay, with reopening before
 straightening; it is not a landscape profile.
 No prompts or live execution are duplicated in the assessor.
+
+The `photo-identity-memory` profile additionally checks sequence 06's ten memory
+milestones, read-only listings, pre-answer questions with unchanged state, exact
+reassignment approval and both fresh identity answers. Each resize must bind the
+intended photo and reduce its normalized width by 10% (absolute tolerance
+0.000001), preserving centres, other authored fields and stacking. It checks
+actual events and recipes, not just final names or cursor completion:
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_collage.cli.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --profile photo-identity-memory
+```
 
 Each invocation appends `replay\assessments\0001.json`, then `0002.json`, etc.,
 with the assessed replay report's hash, profile, completion flag and per-execution

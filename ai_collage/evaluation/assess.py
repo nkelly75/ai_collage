@@ -1,22 +1,36 @@
 """Assess saved replay evidence offline; never generate or accept a layout."""
 
 from pathlib import Path
+from math import isclose
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
 from ..agent.files import canonical, child, digest, save
 from ..agent.models import (
-    HISTORY, INTENT, Attempt, ConversationState, Exchange, NamesIntent, Proposal, QuestionIntent, RememberIntent,
+    HISTORY, INTENT, Attempt, ConversationState, Exchange, InspectNamesIntent, MemoryIntent,
+    LocalEvent, NamesIntent, PhotoName, Proposal, QuestionIntent,
 )
 from ..engine.geometry import resolve_layout
 from ..engine.models import CollageError, ResolvedLayout
 from ..engine.projects import ProjectStore, read_json
-from ..agent.photo_references import name_history, name_key, receipt_question
+from ..agent.photo_references import memory_message, name_history, name_key, names_message, receipt_question
 from ..agent.task_history import task_records
 from .replay import ReplayReport, StepResult, authored_changes
 
-Profile = Literal["integrity", "dark-portrait-adjustments"]
+Profile = Literal["integrity", "dark-portrait-adjustments", "photo-identity-memory"]
+
+IDENTITY_STEPS = [
+    "initial", "learn-breakfast", "list-breakfast", "learn-favourite", "correct-favourite",
+    "resize-favourite", "forget-breakfast", "list-after-forgetting", "relearn-breakfast", "list-final",
+]
+
+
+def _memory_at(events: dict[int, Exchange | LocalEvent], turn: int) -> list[PhotoName]:
+    return list({
+        name_key(item.name): item for event_id, entry in events.items()
+        if event_id <= turn and isinstance(entry, Exchange) for item in entry.name_updates
+    }.values())
 
 
 def _semantic(resolved: ResolvedLayout) -> dict:
@@ -96,6 +110,86 @@ def dark_portrait_errors(
     return errors
 
 
+def identity_memory_errors(
+    result: StepResult, earlier: list[StepResult], current: ResolvedLayout | None,
+    previous: ResolvedLayout | None, events: dict[int, Exchange | LocalEvent],
+) -> list[str]:
+    """Check this replay's fixed memory story, including its pre-answer gates."""
+    errors = []
+    expected = [
+        {}, {"breakfast": 2}, {"breakfast": 2},
+        {"breakfast": 2, "favourite": 1}, {"breakfast": 2, "favourite": 4},
+        {"breakfast": 2, "favourite": 4}, {"breakfast": None, "favourite": 4},
+        {"breakfast": None, "favourite": 4}, {"breakfast": 2, "favourite": 4},
+        {"breakfast": 2, "favourite": 4},
+    ]
+    if not 0 <= result.step < len(expected):
+        return ["Unknown photo identity story step."]
+    before = {name_key(item.name): item.photo_id for item in result.memory_before}
+    after = {name_key(item.name): item.photo_id for item in result.memory_after}
+    waiting = result.status in {"question", "name_confirmation"}
+    wanted = expected[result.step - 1] if waiting and result.step else expected[result.step]
+    if after != wanted:
+        errors.append("Memory does not match the required identity milestone.")
+    if waiting:
+        if after != before or result.changes or result.proposal_id is not None:
+            errors.append("Question/receipt changed memory or the collage before an answer.")
+        if result.status == "name_confirmation" and result.step != 4:
+            errors.append("A non-conflicting identity acquired an unnecessary naming gate.")
+        return errors
+    if result.status not in {"proposal", "acknowledgement"}:
+        return [*errors, "Required identity operation did not complete."]
+    event = events.get(result.event_id)
+    if result.step in {0, 1, 5, 8}:
+        if result.status != "proposal" or current is None or result.intent is None:
+            return [*errors, "This identity step requires a generated proposal."]
+        if result.step == 0:
+            if after or result.intent.references:
+                errors.append("Initial composition invented photo identities.")
+            return errors
+        target = 4 if result.step == 5 else 2
+        if not any(item.photo_id == target for item in result.intent.references):
+            errors.append("The resize does not bind its intended photo.")
+        if result.step in {1, 8} and not any(
+            item.step == result.step and item.status == "question"
+            and result.answer is not None and result.answers_execution == execution
+            and isinstance(events.get(item.event_id), Exchange)
+            and events[item.event_id].outcome == "question"
+            and isinstance(event, Exchange)
+            and events[item.event_id].task_id is not None
+            and events[item.event_id].task_id == event.task_id
+            for execution, item in enumerate(earlier, 1)
+        ):
+            errors.append("Breakfast identity was used without the required preceding question.")
+        if previous is None:
+            return [*errors, "Resize has no preserved source."]
+        old, now = _semantic(previous), _semantic(current)
+        a = next(layer for layer in old["layers"] if layer["photo_id"] == target)
+        b = next(layer for layer in now["layers"] if layer["photo_id"] == target)
+        if not isclose(b["box"]["width"], a["box"]["width"] * 0.9, rel_tol=0, abs_tol=0.000001):
+            errors.append("Intended photo width did not decrease by 10% (tolerance 0.000001).")
+        a["box"]["width"] = b["box"]["width"] = None
+        if old != now:
+            errors.append("Resize changed unrelated authored fields, centres or stacking.")
+    else:
+        if result.status != "acknowledgement" or result.changes or not isinstance(event, Exchange):
+            return [*errors, "Memory-only operation changed the collage or failed to acknowledge."]
+        reply = INTENT.validate_json(event.response or "")
+        if result.step in {2, 7, 9}:
+            if not isinstance(reply, InspectNamesIntent) or after != before:
+                errors.append("Name listing was not a read-only inspection.")
+        elif result.step == 4:
+            if result.name_decision != "approve" or not any(
+                item.step == 4 and item.status == "name_confirmation" for item in earlier
+            ):
+                errors.append("Favourite reassignment has no reviewed exact receipt.")
+        elif not isinstance(reply, MemoryIntent) or reply.action != (
+            "forget" if result.step == 6 else "remember"
+        ):
+            errors.append("Recorded memory action does not match the required operation.")
+    return errors
+
+
 class CaseAssessment(BaseModel):
     execution: int
     step: int
@@ -106,7 +200,7 @@ class CaseAssessment(BaseModel):
 
 
 class AssessmentReport(BaseModel):
-    record_version: Literal[6] = 6
+    record_version: Literal[7] = 7
     project_id: str
     profile: Profile
     replay_sha256: str
@@ -179,6 +273,17 @@ def assess(
         report.errors.append(f"Cannot read captured instructions or imported photos: {exc}")
 
     profile_matches = True
+    if profile == "photo-identity-memory":
+        profile_matches = (
+            replay.sequence.name == "photo-identity-memory"
+            and [message.name for message in replay.sequence.messages] == IDENTITY_STEPS
+            and (replay.sequence.canvas.width, replay.sequence.canvas.height) == (1200, 1800)
+            and not replay.sequence.canvas.cropping
+            and {photo.photo_id for photo in project.photos} == {1, 2, 3, 4}
+            and all(replay.sequence.messages[step].reopen_before for step in (5, 7, 9))
+        )
+        if not profile_matches:
+            report.errors.append("Photo identity profile requires its ten-step, four-photo, whole-photo story.")
     if profile == "dark-portrait-adjustments":
         profile_matches = (
             [message.name for message in replay.sequence.messages]
@@ -228,6 +333,7 @@ def assess(
         report.errors.append(str(exc))
     previous_attempts = 0
     for number, result in enumerate(replay.executions, 1):
+        current = previous = None
         case = CaseAssessment(
             execution=number, step=result.step, name=result.name, recorded_outcome=result.status,
         )
@@ -335,6 +441,11 @@ def assess(
                 if attempt.stage != stage or attempt.reasoning_effort != expected_reasoning:
                     raise CollageError("Request reasoning/stage does not match the replay candidate.")
             previous_event = replay.executions[number - 2].event_id if number > 1 else 0
+            if (
+                result.memory_before != _memory_at(events, previous_event or 0)
+                or result.memory_after != _memory_at(events, result.event_id or previous_event or 0)
+            ):
+                case.errors.append("Memory snapshots differ from actual audited events.")
             decision_events = [
                 event for turn, event in events.items()
                 if isinstance(event, Exchange) and event.receipt_event is not None
@@ -356,7 +467,10 @@ def assess(
                 event = events.get(result.event_id)
                 if (
                     not isinstance(event, Exchange)
-                    or event.outcome != result.status or event.proposal_id != result.proposal_id
+                    or (
+                        event.outcome != result.status
+                        and not (result.status == "acknowledgement" and event.outcome == "inspection")
+                    ) or event.proposal_id != result.proposal_id
                     or event.intent != result.intent
                     or event.prompt != (result.answer if result.answer is not None else result.prompt)
                 ):
@@ -382,16 +496,17 @@ def assess(
                 elif result.status == "acknowledgement":
                     reply = INTENT.validate_json(event.response or "")
                     rejected = isinstance(reply, NamesIntent) and reply.decision == "reject"
+                    current_names = _memory_at(events, result.event_id)
                     expected = (
                         "Names not saved; the associated edit was not applied. You can rephrase your request."
-                        if rejected else "Remembered: " + "; ".join(
-                            f"{item.name} = photo {item.photo_id}" for item in (
-                                reply.name_updates if isinstance(reply, RememberIntent) else event.name_updates
-                            )
-                        ) + "."
+                        if rejected else names_message(current_names)
+                        if isinstance(reply, InspectNamesIntent) else memory_message(
+                            event.name_updates or (reply.name_updates if isinstance(reply, MemoryIntent) else [])
+                        )
                     )
                     if (
-                        not isinstance(reply, (RememberIntent, NamesIntent))
+                        not isinstance(reply, (MemoryIntent, NamesIntent, InspectNamesIntent))
+                        or isinstance(reply, InspectNamesIntent) != (event.outcome == "inspection")
                         or result.acknowledgement != expected or result.intent is not None
                         or result.source is not None or result.changes
                         or result.preview_path is not None or result.proposal_path is not None
@@ -440,6 +555,10 @@ def assess(
                 following = replay.executions[number]
                 if following.answers_execution != number or following.answer is None:
                     case.errors.append("Replay continued without answering its pending question.")
+            if profile == "photo-identity-memory" and profile_matches:
+                case.errors.extend(identity_memory_errors(
+                    result, replay.executions[:number - 1], current, previous, events,
+                ))
         except (CollageError, ValidationError, OSError) as exc:
             case.errors.append(f"{type(exc).__name__}: {exc}")
         if case.errors:

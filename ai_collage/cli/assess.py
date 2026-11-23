@@ -16,7 +16,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path(".collage-data-v3"))
     parser.add_argument("--project", required=True)
-    parser.add_argument("--profile", choices=["integrity", "dark-portrait-adjustments"], default="integrity")
+    parser.add_argument("--profile", choices=[
+        "integrity", "dark-portrait-adjustments", "photo-identity-memory",
+    ], default="integrity")
     args = parser.parse_args(argv)
     try:
         store = ProjectStore(args.data_dir)

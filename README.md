@@ -16,11 +16,12 @@ background. Captions are not implemented yet.
 
 The deterministic engine runs offline without credentials or model calls.
 An optional metadata-only conversational agent supports natural-language layout
-creation and refinement, explicitly confirmed photo names, fresh arrangements, retries,
+creation and refinement, remembered photo names, fresh arrangements, retries,
 and returning to earlier proposals. Proposals are preserved separately from
 explicitly accepted versions.
-Clear layout edits proceed directly; teaching a durable name pauses that name
-and any associated edit for a natural-language confirmation.
+Clear user-supplied names and identity answers are remembered automatically.
+Ask to list, correct or forget them; only conflicting reassignments pause for
+confirmation. Casual references need not create additional saved aliases.
 See the [conversation guide](docs/cli-guide.md#conversational-proposals-optional).
 Live model requests require explicit bounded authorization. A graphical UI,
 image understanding, and cloud hosting remain future work.

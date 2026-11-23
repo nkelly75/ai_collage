@@ -86,11 +86,27 @@ is **implemented and closed offline**. The structure separates `engine`,
 `agent`, `evaluation` and `cli`, with corresponding test directories.
 [015 results](015_results.md) record preservation of all 588 existing cases,
 four added boundary checks and unchanged instructions/contracts/command help.
-Changes remain uncommitted for the user; execution has stopped for review.
 The separately authorized [01-05 replay follow-up](015_replay_results.md)
 is also complete and closed; all five completed with their requested edits
-and exact-return behavior verified. Human-led trials and further live work
-still require separate authorization.
+and exact-return behavior verified. The user committed this checkpoint.
+
+[016: Human-led trial 06](016-user-led-natural-language-trial.md) is a short
+user-run guide with create/chat/resume commands and three suggested starter
+prompts. The user reached P009 after a separately approved offline
+evidence-handoff repair; see [016 observations and repair](016_results.md).
+The three-task policy is unchanged. The trial is not closed or an Autopilot
+assignment; further Copilot-initiated live work requires separate authorization.
+
+[017: Conversational photo identity memory](017-conversational-photo-identity-memory.md)
+is **implemented**, and the latest separately authorized replay completed all ten
+objectives after a focused assessment repair. The subsequently authorized full
+offline regression passed; earlier stopped runs are preserved.
+See [017 results](017_results.md).
+It adds automatic learning of clear user-supplied identities, natural-language
+listing/correction/forgetting, and protection against forgotten names resurfacing
+from old evidence. All replay passes and their unused allowances are closed; further fixes
+or live evaluation require separate authorization. No human trial or phase
+sign-off is implied.
 
 ## Planning records
 
@@ -122,7 +138,9 @@ and record 003 spans several feature increments.
 | [012: Model-led references and confirmed names](012-model-led-references-and-confirmed-names.md) | Successfully completed and closed with user sign-off; see [results](012_results.md). | Separate [replay](012_replay_results.md), [return repair/retest](012_return_repair_results.md) and [human-led trial 05 / closeout](012_trial05_results.md) evidence; commit remains user-managed. |
 | [013: Branch correctness and security review](013-branch-correctness-and-security-review.md) | Executed and closed; see [results](013_results.md). | Full branch delta reviewed; one correctness repair/re-review, no confirmed security vulnerabilities. Subsequently committed/merged by the user. |
 | [014: Correctness and security review before main](014-main-readiness-review.md) | Executed and closed; see [results](014_results.md). | Full main-to-target delta reviewed; two correctness repairs/re-review, no confirmed security vulnerabilities. Subsequently committed by the user; no merge. |
-| [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Changes uncommitted; human-led trials remain separately gated. |
+| [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Checkpoint committed by the user. |
+| [016: Human-led trial 06](016-user-led-natural-language-trial.md) | User reached P009 after the repair; not an Autopilot assignment. | [Observations and separately approved offline evidence-handoff repair](016_results.md); three-task policy unchanged. Human-led continuation remains separate. |
+| [017: Conversational photo identity memory](017-conversational-photo-identity-memory.md) | Implemented; complete replay-06 story and full offline regression passed. | See [017 results](017_results.md); human-led trial and phase sign-off remain outstanding, with all live allowances closed. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

@@ -678,6 +678,7 @@ def test_actual_payload_trims_optional_history_before_reserving(store, essential
         "pending_question": {"prompt": "Make one smaller", "response": "Which photo?"},
         "failed_candidate": reply(), "validation_feedback": "The box is outside the canvas",
         "photo_names": [{"name": "breakfast", "photo_id": 2, "event_id": 1, "quote": "photo 2 is breakfast"}],
+        "forgotten_names": [{"name": "bookshop", "event_id": 7}],
         "resolved_intent": {"references": [photo_reference("breakfast", 2)]},
     }
     original = copy.deepcopy(context)
@@ -1163,14 +1164,14 @@ def test_concurrent_state_change_during_inference_is_not_overwritten(agent_proje
     assert len(resumed.history()) == 1 and resumed.state.baseline is None
 
 
-@pytest.mark.parametrize("old_version", [1, 2, 3, 4, 5, 6])
+@pytest.mark.parametrize("old_version", [1, 2, 3, 4, 5, 6, 7])
 def test_old_conversation_rejected_without_writing(agent_project, old_version):
     conversation, requests = agent_project
     state = read_json(conversation.state_path)
     state["record_version"] = old_version
     conversation.state_path.write_text(json.dumps(state), encoding="utf-8")
     before = conversation.state_path.read_bytes()
-    with pytest.raises(ValidationError, match="record_version"):
+    with pytest.raises(CollageError, match="Unsupported conversation version; use a fresh project"):
         Conversation(conversation.store, "demo")
     assert conversation.state_path.read_bytes() == before and not requests.attempts()
 
@@ -1387,7 +1388,7 @@ def test_names_survive_compaction_restart_selection_and_ground_generation(agent_
     assert conversation.store.load("demo").current_version is None
 
 
-def test_grounding_clarifies_whole_task_without_learning_numeric_answer(agent_project):
+def test_grounding_learns_numeric_answer_and_continues_whole_task(agent_project):
     conversation, requests = agent_project
     prompt = "Move photo 1 right and breakfast higher"
     first = FakeModel(intent(
@@ -1399,11 +1400,76 @@ def test_grounding_clarifies_whole_task_without_learning_numeric_answer(agent_pr
     client = FakeModel(intent(
         "fresh",
         references=[photo_reference("photo 1", 1), photo_reference("breakfast", 2)],
+        name_updates=[photo_name("breakfast", 2, prompt)],
     ), reply())
     result = asyncio.run(Conversation(conversation.store, "demo").request("2", client, requests))
     assert result.kind == "proposal" and client.contexts[1]["original_task"] == prompt
-    assert not client.contexts[1]["photo_names"] and conversation.state.pending_names is None
+    assert client.contexts[1]["photo_names"][0]["name"] == "breakfast"
+    assert conversation.state.pending_names is None
+    saved = Conversation(conversation.store, "demo").state.photo_names[0]
+    assert saved.photo_id == 2 and saved.quote == prompt and saved.receipt_event is None
     assert {item["photo_id"] for item in client.contexts[1]["resolved_intent"]["references"]} == {1, 2}
+
+
+@pytest.mark.parametrize("corrected", [False, True])
+def test_numeric_answer_rejects_question_citation_and_guides_correction(agent_project, corrected):
+    conversation, requests = agent_project
+    initial = layout_data()
+    first, _ = ask(conversation, requests, reply(initial))
+    preview = conversation.preview_path(first).read_bytes()
+    prompt = (
+        "Make breakfast 10% smaller by reducing its width by 10%. "
+        "Keep its centre and everything else unchanged."
+    )
+    question = asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "question", question="Which numbered photo is breakfast?",
+    )), requests))
+    bad = intent(
+        "edit", source="current", continues_task=True,
+        references=[photo_reference("Photo 2", 2, event_id=question.event_id)],
+        name_updates=[photo_name("breakfast", 2, "Make breakfast 10% smaller")],
+    )
+    repaired = json.loads(bad)
+    repaired["references"][0].pop("event_id")
+    smaller = conversation.proposal(first).recipe.model_dump(mode="json")
+    next(layer for layer in smaller["layers"] if layer["photo_id"] == 2)["box"]["width"] *= 0.9
+    client = FakeModel(*(
+        (bad, json.dumps(repaired), reply(smaller)) if corrected else (bad, bad)
+    ))
+    resumed = Conversation(conversation.store, "demo")
+    if corrected:
+        result = asyncio.run(resumed.request("Photo 2", client, requests))
+        assert result.kind == "proposal"
+        proposal = resumed.proposal(result.proposal_id)
+        assert proposal.intent.source.proposal_id == first
+        assert proposal.intent.task_request == prompt
+        assert proposal.recipe.model_dump(mode="json") == smaller
+        assert [context["stage"] for context in client.contexts] == [
+            "interpretation", "interpretation", "generation",
+        ]
+        saved = Conversation(conversation.store, "demo").state.photo_names
+        assert [(item.name, item.photo_id, item.receipt_event) for item in saved] == [
+            ("breakfast", 2, None),
+        ]
+    else:
+        with pytest.raises(CollageError, match="correction failed"):
+            asyncio.run(resumed.request("Photo 2", client, requests))
+        reopened = Conversation(conversation.store, "demo")
+        assert reopened.state.photo_names == [] and reopened.state.baseline == first
+        assert all(context["stage"] == "interpretation" for context in client.contexts)
+
+    correction = client.contexts[1]
+    assert correction["photo_names"] == []
+    assert correction["current_baseline"]["proposal_id"] == first
+    assert correction["reference_history"] == []
+    assert correction["active_task"] == {"request": prompt, "answers": ["Photo 2"]}
+    assert json.loads(correction["failed_candidate"]) == json.loads(bad)
+    feedback = correction["validation_feedback"]
+    assert "references[0].event_id" in feedback
+    assert f"event {question.event_id}" in feedback and "photo 2" in feedback
+    assert "reference_history" in feedback and "omit event_id" in feedback
+    assert conversation.preview_path(first).read_bytes() == preview
+    assert conversation.store.load("demo").current_version is None
 
 
 def test_multiple_name_questions_retain_the_original_complete_task(agent_project):
@@ -1424,11 +1490,12 @@ def test_multiple_name_questions_retain_the_original_complete_task(agent_project
     conversation = Conversation(conversation.store, "demo")
     client = FakeModel(intent(
         "fresh", references=[photo_reference("breakfast", 2), photo_reference("bookshop", 1)],
+        name_updates=[photo_name("breakfast", 2, prompt), photo_name("bookshop", 1, prompt)],
     ), reply())
     asyncio.run(conversation.request("1", client, requests))
     assert client.contexts[0]["pending_question"]["original_task"] == prompt
     assert client.contexts[1]["original_task"] == prompt
-    assert not conversation.state.photo_names
+    assert {item.name: item.photo_id for item in conversation.state.photo_names} == {"breakfast": 2, "bookshop": 1}
 
 
 def test_longer_learned_name_is_not_confused_with_a_shorter_name(agent_project):
@@ -1495,11 +1562,8 @@ def test_chat_acknowledgement_does_not_open_a_preview(agent_project, monkeypatch
 
     conversation, _ = agent_project
     prompt = "Photo 2 is breakfast"
-    client = FakeModel(
-        intent("remember", name_updates=[photo_name("breakfast", 2, prompt)]),
-        intent("names", decision="approve", receipt_event=1),
-    )
-    inputs = iter([prompt, "Yes, remember those", "/quit"])
+    client = FakeModel(intent("remember", name_updates=[photo_name("breakfast", 2, prompt)]))
+    inputs = iter([prompt, "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
     monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: client)
     monkeypatch.setattr("ai_collage.cli.chat.open_preview", lambda _: pytest.fail("No naming preview"))
@@ -1508,8 +1572,8 @@ def test_chat_acknowledgement_does_not_open_a_preview(agent_project, monkeypatch
     ) == 0
     output = capsys.readouterr().out
     assert "Remembered: breakfast = photo 2." in output
-    assert "Remember these names: breakfast = photo 2" in output
-    assert "Generated P" not in output and len(client.contexts) == 2
+    assert "Remember these names:" not in output
+    assert "Generated P" not in output and len(client.contexts) == 1
     assert not (conversation.root / "proposals").exists()
 
 
@@ -1751,6 +1815,9 @@ def test_additions_replacements_and_unchanged_names_preserve_other_labels_and_ac
 
 def test_swapped_candidate_batch_is_displayed_but_never_saved_or_edited_without_approval(agent_project):
     conversation, requests = agent_project
+    remember(conversation, requests, "bridge", 1)
+    remember(conversation, requests, "bookshop", 2)
+    original = conversation.state.photo_names
     prompt = "Photo 1 is bridge; photo 2 is bookshop. Move bridge higher."
     client = FakeModel(intent(
         "fresh", references=[photo_reference("bridge", 2), photo_reference("bookshop", 1)],
@@ -1758,19 +1825,20 @@ def test_swapped_candidate_batch_is_displayed_but_never_saved_or_edited_without_
     ))
     gate = asyncio.run(conversation.request(prompt, client, requests))
     assert gate.kind == "name_confirmation" and len(client.contexts) == 1
-    assert "bridge = photo 2; bookshop = photo 1" in gate.question
-    assert not conversation.state.photo_names and conversation.state.baseline is None
+    assert "bridge = photo 2 (was photo 1); bookshop = photo 1 (was photo 2)" in gate.question
+    assert conversation.state.photo_names == original and conversation.state.baseline is None
     assert not (conversation.root / "proposals").exists()
     resumed = Conversation(conversation.store, "demo")
     assert resumed.state.pending_names == conversation.state.pending_names
     declined, model = name_decision(resumed, requests, gate, decision="reject")
     assert declined.kind == "acknowledgement" and "not applied" in declined.acknowledgement
-    assert len(model.contexts) == 1 and not resumed.state.photo_names
+    assert len(model.contexts) == 1 and resumed.state.photo_names == original
     assert resumed.state.pending_names is None and resumed.state.baseline is None
 
 
 def test_combined_approval_after_restart_keeps_original_task_and_older_source(agent_project):
     conversation, requests = agent_project
+    remember(conversation, requests, "bookshop", 1)
     first, _ = ask(conversation, requests, reply())
     second_data = layout_data()
     second_data["canvas"]["background"] = "#112233"
@@ -1783,7 +1851,7 @@ def test_combined_approval_after_restart_keeps_original_task_and_older_source(ag
     ))
     gate = asyncio.run(conversation.request(prompt, gate_client, requests))
     assert len(gate_client.contexts) == 1 and conversation.state.baseline == second
-    assert not conversation.state.photo_names
+    assert conversation.state.photo_names[0].photo_id == 1
     changed = layout_data()
     changed["layers"][1]["box"]["center_y"] -= 0.02
     resumed = Conversation(conversation.store, "demo")
@@ -1801,6 +1869,7 @@ def test_combined_approval_after_restart_keeps_original_task_and_older_source(ag
 @pytest.mark.parametrize("action", ["fresh", "edit"])
 def test_corrected_teaching_task_publishes_after_approval_and_restart(agent_project, action):
     conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
     if action == "edit":
         ask(conversation, requests, reply())
     baseline = conversation.state.baseline
@@ -1814,7 +1883,7 @@ def test_corrected_teaching_task_publishes_after_approval_and_restart(agent_proj
     ))
     gate = asyncio.run(conversation.request(prompt, gate_client, requests))
     assert gate.kind == "name_confirmation" and len(gate_client.contexts) == 2
-    assert conversation.state.baseline == baseline and not conversation.state.photo_names
+    assert conversation.state.baseline == baseline and conversation.state.photo_names[0].photo_id == 1
 
     changed = layout_data()
     changed["layers"][1]["box"]["center_y"] -= 0.02
@@ -1836,19 +1905,20 @@ def test_corrected_teaching_task_publishes_after_approval_and_restart(agent_proj
 
 def test_revised_batch_needs_new_approval_and_rejects_the_stale_receipt(agent_project):
     conversation, requests = agent_project
-    prompt = "Map bridge to photo 1"
+    remember(conversation, requests, "bridge", 1)
+    prompt = "Map bridge to photo 2"
     first = asyncio.run(conversation.request(prompt, FakeModel(intent(
-        "remember", name_updates=[photo_name("bridge", 1, prompt)],
+        "remember", name_updates=[photo_name("bridge", 2, prompt)],
     )), requests))
-    revision = "Actually bridge is photo 2"
+    revision = "Bridge is photo 2; also call photo 1 castle"
     revised = asyncio.run(conversation.request(revision, FakeModel(intent(
-        "remember", name_updates=[photo_name("bridge", 2, revision)],
+        "remember", name_updates=[photo_name("bridge", 2, revision), photo_name("castle", 1, revision)],
     )), requests))
     assert revised.event_id != first.event_id and "bridge = photo 2" in revised.question
     stale = intent("names", decision="approve", receipt_event=first.event_id)
     with pytest.raises(CollageError, match="correction failed"):
         asyncio.run(conversation.request("Yes", FakeModel(stale, stale), requests))
-    assert not conversation.state.photo_names
+    assert conversation.state.photo_names[0].photo_id == 1
     assert conversation.state.pending_names.event_id == revised.event_id
     resumed = Conversation(conversation.store, "demo")
     name_decision(resumed, requests, revised)
@@ -1859,6 +1929,7 @@ def test_revised_batch_needs_new_approval_and_rejects_the_stale_receipt(agent_pr
 @pytest.mark.parametrize("bad_kind", ["wrong-receipt", "substitution", "ready-edit"])
 def test_unapproved_or_substituted_batch_cannot_write_names_or_generate(agent_project, bad_kind):
     conversation, requests = agent_project
+    remember(conversation, requests, "bookshop", 1)
     prompt = "Photo 2 is bookshop; move bookshop higher"
     gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
         "fresh", references=[photo_reference("bookshop", 2)],
@@ -1874,7 +1945,7 @@ def test_unapproved_or_substituted_batch_cannot_write_names_or_generate(agent_pr
     with pytest.raises(CollageError, match="correction failed"):
         asyncio.run(conversation.request("Yes", client, requests))
     assert all(item["stage"] == "interpretation" for item in client.contexts)
-    assert not conversation.state.photo_names and conversation.state.baseline is None
+    assert conversation.state.photo_names[0].photo_id == 1 and conversation.state.baseline is None
     assert conversation.state.pending_names.event_id == gate.event_id
     assert not (conversation.root / "proposals").exists()
 
@@ -1882,6 +1953,7 @@ def test_unapproved_or_substituted_batch_cannot_write_names_or_generate(agent_pr
 @pytest.mark.parametrize("with_edit", [False, True])
 def test_unclear_reply_and_interpretation_failure_retain_the_same_pending_receipt(agent_project, with_edit):
     conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
     prompt = "Map castle to photo 2" + (" and move castle higher" if with_edit else "")
     gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
         "fresh" if with_edit else "remember",
@@ -1896,16 +1968,17 @@ def test_unclear_reply_and_interpretation_failure_retain_the_same_pending_receip
     with pytest.raises(CollageError, match="offline interpretation failure"):
         asyncio.run(conversation.request("Yes", FakeModel(CollageError("offline interpretation failure")), requests))
     resumed = Conversation(conversation.store, "demo")
-    assert resumed.state.pending_names.event_id == gate.event_id and not resumed.state.photo_names
+    assert resumed.state.pending_names.event_id == gate.event_id and resumed.state.photo_names[0].photo_id == 1
     result, _ = name_decision(resumed, requests, gate, *([reply()] if with_edit else []))
     assert result.kind == ("proposal" if with_edit else "acknowledgement")
     reopened = Conversation(conversation.store, "demo")
     assert reopened.state.photo_names[0].name == "castle"
-    assert len(reopened.tasks()) == 1 and reopened.state.pending_names is None
+    assert len(reopened.tasks()) == 2 and reopened.state.pending_names is None
 
 
 def test_approved_teaching_and_return_selects_the_exact_saved_preview_without_generation(agent_project):
     conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
     first, _ = ask(conversation, requests, reply())
     first_png = conversation.preview_path(first).read_bytes()
     second, _ = ask(conversation, requests, reply())
@@ -1914,7 +1987,7 @@ def test_approved_teaching_and_return_selects_the_exact_saved_preview_without_ge
         "select", proposal_id=first, navigation={"kind": "id", "text": first},
         name_updates=[photo_name("castle", 2, "Photo 2 is castle")],
     )), requests))
-    assert conversation.state.baseline == second and not conversation.state.photo_names
+    assert conversation.state.baseline == second and conversation.state.photo_names[0].photo_id == 1
     result, client = name_decision(conversation, requests, gate)
     assert result.kind == "selection" and result.proposal_id == first
     assert len(client.contexts) == 1 and client.contexts[0]["stage"] == "interpretation"
@@ -1927,6 +2000,7 @@ def test_approved_teaching_and_return_selects_the_exact_saved_preview_without_ge
 
 def test_teaching_with_retry_retains_the_rejected_proposals_original_task_and_source(agent_project):
     conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
     first, _ = ask(conversation, requests, reply())
     original_task = "Move photo 2 higher"
     second, _ = ask(conversation, requests, reply(), prompt=original_task)
@@ -1959,6 +2033,7 @@ def test_approval_without_a_pending_receipt_or_reusing_an_approved_one_is_reject
 @pytest.mark.parametrize("question_first", [False, True])
 def test_independent_replacement_cannot_inherit_a_pending_name_approval(agent_project, question_first):
     conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
     prompt = "Map castle to photo 2 and move castle higher"
     gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
         "fresh", references=[photo_reference("castle", 2)],
@@ -1977,7 +2052,7 @@ def test_independent_replacement_cannot_inherit_a_pending_name_approval(agent_pr
         result = asyncio.run(conversation.request("Use photo 1 instead", FakeModel(intent(
             "fresh", references=[photo_reference("photo 1", 1)], continues_task=False,
         ), reply()), requests))
-    assert result.kind == "proposal" and not conversation.state.photo_names
+    assert result.kind == "proposal" and conversation.state.photo_names[0].photo_id == 1
     assert conversation.state.pending_names is None
     stale = intent("names", decision="approve", receipt_event=gate.event_id)
     with pytest.raises(CollageError, match="correction failed"):
@@ -2017,6 +2092,7 @@ def test_structural_binding_conflicts_fail_before_generation(agent_project, fiel
 
 def test_pending_names_block_local_source_changes_and_detect_receipt_tampering(agent_project):
     conversation, requests = agent_project
+    remember(conversation, requests, "bookshop", 1)
     baseline, _ = ask(conversation, requests, reply())
     prompt = "Photo 2 is bookshop"
     gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
@@ -2031,14 +2107,15 @@ def test_pending_names_block_local_source_changes_and_detect_receipt_tampering(a
     data["name_receipt"]["updates"][0]["photo_id"] = 1
     path.write_text(json.dumps(data), encoding="utf-8")
     before = len(requests.attempts())
-    with pytest.raises(CollageError, match="receipt changed"):
+    with pytest.raises(CollageError, match="receipt changed|receipt differs"):
         Conversation(conversation.store, "demo")
     assert len(requests.attempts()) == before and conversation.state.baseline == baseline
-    assert not conversation.state.photo_names and conversation.store.load("demo").current_version is None
+    assert conversation.state.photo_names[0].photo_id == 1 and conversation.store.load("demo").current_version is None
 
 
 def test_external_controls_cannot_retarget_the_receipt_after_restart(agent_project):
     conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
     prompt = "Map castle to photo 2"
     gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
         "remember", name_updates=[photo_name("castle", 2, prompt)],
@@ -2050,7 +2127,7 @@ def test_external_controls_cannot_retarget_the_receipt_after_restart(agent_proje
     client = FakeModel(intent("names", decision="approve", receipt_event=gate.event_id))
     with pytest.raises(CollageError, match="receipt conflicts"):
         asyncio.run(resumed.request("Yes", client, requests))
-    assert not client.contexts and not resumed.state.photo_names
+    assert not client.contexts and resumed.state.photo_names[0].photo_id == 1
     assert resumed.state.pending_names.event_id == gate.event_id
 
 
@@ -2058,6 +2135,7 @@ def test_local_chat_resume_and_status_redisplay_the_receipt_without_approval_or_
     from ai_collage.cli.chat import run_chat
 
     conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
     prompt = "Map castle to photo 2"
     gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
         "remember", name_updates=[photo_name("castle", 2, prompt)],
@@ -2077,6 +2155,7 @@ def test_interrupted_naming_state_commit_preserves_evidence_and_blocks_duplicate
     prompt = "Map castle to photo 2"
     response = intent("remember", name_updates=[photo_name("castle", 2, prompt)])
     if approval:
+        remember(conversation, requests, "castle", 1)
         gate = asyncio.run(conversation.request(prompt, FakeModel(response), requests))
         response = intent("names", decision="approve", receipt_event=gate.event_id)
         prompt = "Yes, remember those"
@@ -2092,7 +2171,8 @@ def test_interrupted_naming_state_commit_preserves_evidence_and_blocks_duplicate
     with pytest.raises(CollageError, match="Interrupted naming write"):
         Conversation(conversation.store, "demo")
     assert conversation.state_path.read_bytes() == state_bytes
-    assert len(requests.attempts()) == before and not conversation.state.photo_names
+    assert len(requests.attempts()) == before
+    assert [item.photo_id for item in conversation.state.photo_names] == ([1] if approval else [])
     assert not (conversation.root / "proposals").exists()
 
 
@@ -2100,6 +2180,7 @@ def test_approved_name_survives_generation_timeout_with_unchanged_layout_and_pin
     from ai_collage.agent.requests import StageTimeout
 
     conversation, requests = agent_project
+    remember(conversation, requests, "bookshop", 1)
     baseline, _ = ask(conversation, requests, reply())
     png = conversation.preview_path(baseline).read_bytes()
     prompt = "Photo 2 is bookshop; move bookshop higher"
@@ -2147,3 +2228,223 @@ def test_four_similar_photos_use_confirmed_descriptions_or_task_local_questions(
     )), requests))
     assert question.kind == "question" and beach.state.baseline == result
     assert [(item.name, item.photo_id) for item in beach.state.photo_names] == [("sand castle", 4)]
+
+
+def forget(conversation, requests, name="breakfast"):
+    prompt = f"Forget the name {name}"
+    return asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "forget", name_updates=[photo_name(name, None, prompt)],
+    )), requests))
+
+
+def test_memory_listing_forgetting_and_repetition_preserve_layout_and_all_other_labels(agent_project):
+    conversation, requests = agent_project
+    baseline, _ = ask(conversation, requests, reply())
+    conversation.accept(baseline)
+    png = conversation.preview_path(baseline).read_bytes()
+    remember(conversation, requests, "breakfast", 2)
+    remember(conversation, requests, "croissant", 2)
+    result = asyncio.run(conversation.request("List names", FakeModel(intent("list_names")), requests))
+    assert result.acknowledgement == "Names I know: breakfast = photo 2; croissant = photo 2."
+    assert forget(conversation, requests).acknowledgement == "Forgot: breakfast."
+    names = conversation.state.photo_names
+    assert forget(conversation, requests).acknowledgement == "Forgot: breakfast."
+    assert conversation.state.photo_names == names
+    reopened = Conversation(conversation.store, "demo")
+    result = asyncio.run(reopened.request("List names", FakeModel(intent("list_names")), requests))
+    assert result.acknowledgement == "Names I know: croissant = photo 2."
+    assert [(item.name, item.photo_id) for item in reopened.state.photo_names] == [
+        ("breakfast", None), ("croissant", 2),
+    ]
+    assert reopened.state.baseline == baseline and reopened.store.load("demo").current_version == 1
+    assert reopened.preview_path(baseline).read_bytes() == png
+    assert len(list((reopened.root / "proposals").iterdir())) == 1
+
+
+@pytest.mark.parametrize("saved", [False, True])
+def test_forgotten_identity_cannot_return_from_windows_citations_retry_or_selection(agent_project, saved):
+    from ai_collage.agent.photo_references import check_forgotten
+
+    conversation, requests = agent_project
+    if saved:
+        remember(conversation, requests)
+    prompt = "For this task, photo 2 is breakfast. Make breakfast smaller"
+    first, _ = ask(conversation, requests, reply(), prompt=prompt, action=intent(
+        "fresh", references=[photo_reference("breakfast", 2)],
+    ))
+    original = conversation.preview_path(first).read_bytes()
+    source = conversation.state.history[-1]
+    second, _ = ask(conversation, requests, reply(), prompt="Move it higher", action=intent(
+        "edit", source="current", references=[photo_reference("it", 2, event_id=source)],
+    ))
+    leaf = conversation.state.history[-1]
+    forget(conversation, requests)
+    for _ in range(16):
+        asyncio.run(conversation.request("List names", FakeModel(intent("list_names")), requests))
+    conversation = Conversation(conversation.store, "demo")
+    names = conversation.state.photo_names
+    history = dict(zip(conversation.state.history, conversation.history(), strict=True))
+    with pytest.raises(CollageError, match="historical identity was forgotten"):
+        check_forgotten(
+            INTENT.validate_json(intent("edit", source="current", references=[
+                photo_reference("it", 2, event_id=leaf),
+            ])).references, names, history,
+        )
+    for bad in (
+        intent("edit", source="current", references=[photo_reference("breakfast", 2)]),
+        intent("retry", proposal_id=second),
+        intent("remember", name_updates=[photo_name("breakfast", 2, "Move breakfast higher")]),
+    ):
+        model = FakeModel(bad, bad)
+        with pytest.raises(CollageError, match="correction failed"):
+            asyncio.run(conversation.request("Move breakfast higher", model, requests))
+        assert all(context["stage"] == "interpretation" for context in model.contexts)
+        assert model.contexts[0]["forgotten_names"] and not model.contexts[0]["photo_names"]
+        assert conversation.state.photo_names == names and conversation.state.baseline == second
+    selected, _ = ask(conversation, requests, prompt=f"Return to {first}", action=intent(
+        "select", proposal_id=first, navigation={"kind": "id", "text": first},
+    ))
+    assert selected == first and conversation.state.photo_names == names
+    assert conversation.preview_path(first).read_bytes() == original
+    remember(conversation, requests, "croissant", 1)
+    with pytest.raises(CollageError, match="historical identity was forgotten"):
+        check_forgotten(
+            INTENT.validate_json(intent("edit", source="current", references=[
+                photo_reference("croissant", 2, event_id=leaf),
+            ])).references, conversation.state.photo_names, history,
+        )
+    prompt = "Move breakfast higher"
+    asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "question", question="Which photo is breakfast?", references=[photo_reference("breakfast", None)],
+    )), requests))
+    client = FakeModel(intent(
+        "edit", source="current", references=[photo_reference("breakfast", 2)],
+        name_updates=[photo_name("breakfast", 2, prompt)],
+    ), reply())
+    result = asyncio.run(Conversation(conversation.store, "demo").request("Photo 2", client, requests))
+    assert result.kind == "proposal" and client.contexts[1]["original_task"] == prompt
+    assert Conversation(conversation.store, "demo").state.photo_names[0].photo_id == 2
+
+
+@pytest.mark.parametrize("pending", ["question", "confirmation", "timeout"])
+def test_name_inspection_preserves_pending_task_across_restart(agent_project, pending):
+    from ai_collage.agent.requests import StageTimeout
+
+    conversation, requests = agent_project
+    remember(conversation, requests, "breakfast", 1)
+    baseline, _ = ask(conversation, requests, reply())
+    if pending == "question":
+        prompt = "Move bookshop higher"
+        asyncio.run(conversation.request(prompt, FakeModel(intent(
+            "question", question="Which photo is bookshop?", references=[photo_reference("bookshop", None)],
+        )), requests))
+        continuation = FakeModel(intent(
+            "edit", source="current", references=[photo_reference("bookshop", 2)],
+            name_updates=[photo_name("bookshop", 2, prompt)],
+        ), reply())
+        answer = "Photo 2"
+    elif pending == "confirmation":
+        prompt = "Actually breakfast is photo 2"
+        gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
+            "remember", name_updates=[photo_name("breakfast", 2, prompt)],
+        )), requests))
+        continuation = FakeModel(intent("names", decision="approve", receipt_event=gate.event_id))
+        answer = "Yes"
+    else:
+        prompt = "Move photo 1 higher"
+        with pytest.raises(StageTimeout):
+            asyncio.run(conversation.request(prompt, FakeModel(
+                intent("edit", source="current", references=[photo_reference("photo 1", 1)]),
+                StageTimeout("offline timeout"),
+            ), requests))
+        continuation = FakeModel(intent("resume"), reply())
+        answer = "Try again"
+    pointer = conversation.state.pending_names
+    result = asyncio.run(Conversation(conversation.store, "demo").request(
+        "Which names do you know?", FakeModel(intent("list_names")), requests,
+    ))
+    assert result.acknowledgement == "Names I know: breakfast = photo 1."
+    reopened = Conversation(conversation.store, "demo")
+    assert reopened.state.baseline == baseline and reopened.state.pending_names == pointer
+    result = asyncio.run(reopened.request(answer, continuation, requests))
+    assert result.kind == ("acknowledgement" if pending == "confirmation" else "proposal")
+    if pending != "confirmation":
+        assert continuation.contexts[1]["original_task"] == prompt
+        assert continuation.contexts[1]["resolved_intent"]["source"]["proposal_id"] == baseline
+    Conversation(conversation.store, "demo")
+
+
+def test_automatic_memory_is_visible_and_persists_when_generation_fails(agent_project):
+    from ai_collage.agent.requests import StageTimeout
+
+    conversation, requests = agent_project
+    prompt = "Photo 2 is breakfast; move breakfast higher"
+    progress = []
+    with pytest.raises(StageTimeout):
+        asyncio.run(conversation.request(prompt, FakeModel(
+            intent("fresh", references=[photo_reference("breakfast", 2)],
+                   name_updates=[photo_name("breakfast", 2, "Photo 2 is breakfast")]),
+            StageTimeout("offline timeout"),
+        ), requests, progress=lambda kind, value: progress.append((kind, value))))
+    assert progress[0] == ("memory", "Remembered: breakfast = photo 2.")
+    assert progress[1][0] == "intent"
+    reopened = Conversation(conversation.store, "demo")
+    assert reopened.state.photo_names[0].photo_id == 2 and reopened.state.baseline is None
+    assert reopened.state.pending_names is None
+
+
+def test_identity_answer_can_confirm_a_real_explicit_question_candidate(agent_project):
+    conversation, requests = agent_project
+    prompt = "Make breakfast smaller"
+    asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "question", question="Do you mean photo 2 by breakfast?",
+        references=[photo_reference("breakfast", 2)],
+    )), requests))
+    result = asyncio.run(Conversation(conversation.store, "demo").request("Yes", FakeModel(intent(
+        "fresh", references=[photo_reference("breakfast", 2)],
+        name_updates=[photo_name("breakfast", 2, prompt)],
+    ), reply()), requests))
+    assert result.kind == "proposal"
+    saved = Conversation(conversation.store, "demo").state.photo_names[0]
+    assert saved.photo_id == 2 and saved.quote == prompt and saved.receipt_event is None
+
+
+def test_conflicting_mixed_memory_batch_holds_removals_and_additions_until_exact_approval(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests, "bookshop", 1)
+    remember(conversation, requests)
+    original = conversation.state.photo_names
+    prompt = "Forget breakfast; bookshop is photo 2; call photo 1 favourite"
+    response = intent("remember", name_updates=[
+        photo_name("breakfast", None, prompt), photo_name("bookshop", 2, prompt),
+        photo_name("favourite", 1, prompt),
+    ])
+    gate = asyncio.run(conversation.request(prompt, FakeModel(response), requests))
+    assert gate.kind == "name_confirmation" and conversation.state.photo_names == original
+    name_decision(conversation, requests, gate, decision="reject")
+    assert conversation.state.photo_names == original
+    gate = asyncio.run(conversation.request(prompt, FakeModel(response), requests))
+    result, _ = name_decision(Conversation(conversation.store, "demo"), requests, gate)
+    assert result.acknowledgement == "Remembered: bookshop = photo 2; favourite = photo 1. Forgot: breakfast."
+    reopened = Conversation(conversation.store, "demo")
+    assert {item.name: item.photo_id for item in reopened.state.photo_names} == {
+        "bookshop": 2, "breakfast": None, "favourite": 1,
+    }
+    assert reopened.state.baseline is None and not (reopened.root / "proposals").exists()
+
+
+def test_independent_nonconflicting_learning_does_not_inherit_pending_approval(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests, "castle", 1)
+    prompt = "Castle is photo 2"
+    gate = asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "remember", name_updates=[photo_name("castle", 2, prompt)],
+    )), requests))
+    assert gate.kind == "name_confirmation"
+    prompt = "Separately, call photo 2 breakfast"
+    result = asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "remember", continues_task=False, name_updates=[photo_name("breakfast", 2, prompt)],
+    )), requests))
+    reopened = Conversation(conversation.store, "demo")
+    assert result.kind == "acknowledgement" and reopened.state.pending_names is None
+    assert {item.name: item.photo_id for item in reopened.state.photo_names} == {"castle": 1, "breakfast": 2}

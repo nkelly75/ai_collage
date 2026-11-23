@@ -13,8 +13,8 @@ from .requests import RequestLog, StageTimeout
 from .files import canonical, child, digest, save
 from .models import (
     HISTORY, INTENT, AcceptanceIntent, Controls, ConversationState, EditIntent, Exchange,
-    FreshIntent, Intent, LayoutSource, LocalEvent, NameReceipt, NameUpdate, NamesIntent,
-    PhotoName, Preferences, Proposal, QuestionIntent, RememberIntent, RequestResult,
+    FreshIntent, InspectNamesIntent, Intent, LayoutSource, LocalEvent, MemoryIntent,
+    NameReceipt, NameUpdate, NamesIntent, PhotoName, Preferences, Proposal, QuestionIntent, RequestResult,
     ReceiptPointer, ResolvedIntent, ResumeIntent, RetryIntent, SelectIntent,
 )
 from ..engine.geometry import LayoutBoundsError, resolve_layout
@@ -22,7 +22,8 @@ from ..engine.imaging import render_layout
 from ..engine.models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
 from ..engine.projects import ProjectStore, parse_json, read_json
 from .photo_references import (
-    PhotoReferenceError, ground_references, name_history, name_key, names_digest, receipt_question,
+    PhotoReferenceError, active_names, check_forgotten, conflicting_names, ground_references, memory_changes,
+    memory_message, name_history, names_digest, names_message, receipt_question,
 )
 from .task_history import (
     TaskRecord, ordinals, retrieve, task_records, undo_steps, undo_target, validate_navigation,
@@ -31,6 +32,9 @@ from .task_history import (
 
 class ModelClient(Protocol):
     async def complete(self, context: dict[str, object], requests: RequestLog, purpose: str) -> str: ...
+
+
+Progress = Callable[[str, ResolvedIntent | str | None], None]
 
 
 class RequestRejected(CollageError):
@@ -57,7 +61,10 @@ class Conversation:
             json.dumps([p.model_dump() for p in project.photos], sort_keys=True).encode()
         )
         if self.state_path.exists():
-            self.state = ConversationState.model_validate(read_json(self.state_path))
+            stored = read_json(self.state_path)
+            if not isinstance(stored, dict) or stored.get("record_version") != ConversationState.model_fields["record_version"].default:
+                raise CollageError("Unsupported conversation version; use a fresh project. Existing data is unchanged.")
+            self.state = ConversationState.model_validate(stored)
             if self.state.project_id != project_id or self.state.photo_digest != self.photo_digest:
                 raise CollageError("Conversation project/photo identity mismatch.")
             if preferences is not None:
@@ -148,9 +155,9 @@ class Conversation:
             })
             if event.name_receipt is not None:
                 updates["pending_names"] = ReceiptPointer(event_id=number, sha256=digest(canonical(event)))
-            elif event.receipt_event is not None or (
+            elif event.outcome != "inspection" and (event.receipt_event is not None or (
                 event.task_id == number and event.outcome not in {"invalid", "error"}
-            ):
+            )):
                 updates["pending_names"] = None
         save(child(self.root, "events", f"{number:06d}.json"), event)
         state = self.state.model_copy(update={
@@ -299,15 +306,14 @@ class Conversation:
             record for record in records
             if request_start is None or record.task_id < request_start
         ]
-        groups: list[list[tuple[int, Exchange]]] = []
+        grouped: dict[int, list[tuple[int, Exchange]]] = {}
         active: list[Exchange] = []
         for number, event in exchanges:
             if request_start is not None and number >= request_start:
                 active.append(event)
                 continue
-            if not groups or groups[-1][0][1].task_id != event.task_id:
-                groups.append([])
-            groups[-1].append((number, event))
+            grouped.setdefault(event.task_id, []).append((number, event))
+        groups = list(grouped.values())
         recent = groups[-3:]
         history = [
             {
@@ -375,7 +381,11 @@ class Conversation:
                  "aspect_ratio": p.width / p.height} for p in project.photos
             ],
             "preferences": self.state.preferences.model_dump(),
-            "photo_names": [item.model_dump(mode="json") for item in self.state.photo_names],
+            "photo_names": [item.model_dump(mode="json") for item in active_names(self.state.photo_names)],
+            "forgotten_names": [
+                {"name": item.name, "event_id": item.event_id}
+                for item in self.state.photo_names if item.photo_id is None
+            ],
             "compact_tasks": [record.model_dump(mode="json") for record in compact],
             "compact_tasks_omitted": max(0, len(prior_records) - len(recent) - len(compact)),
             "recent_tasks": [
@@ -446,6 +456,27 @@ class Conversation:
                 for number, event in exchanges if number in failure_events
                 and number not in visible_reference_ids and (event.references or event.name_updates)
             )
+        # Keep the supporting citations of visible evidence citable after compaction.
+        reference_events = dict(exchanges)
+        reference_history = {item["event_id"]: item for item in context["reference_history"]}
+        pending_references = list(reference_history)
+        while pending_references:
+            number = pending_references.pop()
+            for reference in reference_events[number].references:
+                if reference.event_id is None:
+                    continue
+                source = reference_events.get(reference.event_id)
+                if source is None or reference.event_id >= number:
+                    raise CollageError("Historical photo reference has no earlier supporting event.")
+                if reference.event_id not in reference_history:
+                    reference_history[reference.event_id] = {
+                        "event_id": reference.event_id,
+                        **source.model_dump(mode="json", include={"references", "name_updates"}),
+                    }
+                    pending_references.append(reference.event_id)
+        context["reference_history"] = [
+            reference_history[number] for number in sorted(reference_history)
+        ]
         active_id = getattr(self, "_active_task", None)
         task_id = intent.task_turn if intent is not None else active_id
         active_task = next(
@@ -515,7 +546,7 @@ class Conversation:
             return None
         task_id = None
         for event in reversed(self.history()):
-            if not isinstance(event, Exchange):
+            if not isinstance(event, Exchange) or event.outcome == "inspection":
                 continue
             if task_id is None:
                 task_id = event.task_id
@@ -551,7 +582,7 @@ class Conversation:
         if getattr(self, "_independent_task", False):
             return None
         for number, event in reversed(list(zip(self.state.history, self.history(), strict=True))):
-            if not isinstance(event, Exchange):
+            if not isinstance(event, Exchange) or event.outcome == "inspection":
                 continue
             if event.outcome in {"invalid", "error"} and event.stage == "interpretation":
                 continue
@@ -595,6 +626,9 @@ class Conversation:
         self, prompt: str, raw: str, updates: list[NameUpdate],
         intent: ResolvedIntent | None, requests: RequestLog,
     ) -> RequestResult:
+        if intent is not None:
+            _, names = memory_changes(updates, self.state.photo_names, self._next_event())
+            self._check_memory_references(intent, names)
         receipt = NameReceipt(
             updates=[item.model_copy(update={"name": " ".join(item.name.split())}) for item in updates],
             intent=intent, baseline=self._current_source(),
@@ -609,6 +643,38 @@ class Conversation:
             kind="name_confirmation", event_id=number,
             question=receipt_question(receipt, self.state.photo_names),
         )
+
+    def _remember(
+        self, prompt: str, raw: str, updates: list[NameUpdate], intent: ResolvedIntent | None,
+        requests: RequestLog, progress: Progress | None, *, receipt_event: int | None = None,
+    ) -> RequestResult | None:
+        self._fresh()
+        changes, names = memory_changes(
+            updates, self.state.photo_names, self._next_event(), receipt_event,
+        )
+        if intent is not None:
+            self._check_memory_references(intent, names)
+        if intent is not None and intent.action == "select":
+            result = self._select(
+                prompt, raw, intent, requests, updates=changes, names=names,
+                receipt_event=receipt_event,
+            )
+        else:
+            number = self._append(Exchange(
+                prompt=prompt, response=raw,
+                outcome="intent" if intent is not None else "acknowledgement",
+                intent=intent, stage="interpretation", parent=self.state.baseline,
+                run_id=None, attempt=len(requests.attempts()), name_updates=changes,
+                receipt_event=receipt_event, references=intent.references if intent else [],
+            ), photo_names=names)
+            result = RequestResult(
+                kind="acknowledgement", event_id=number,
+                acknowledgement=memory_message(updates),
+            ) if intent is None else None
+        if progress is not None and intent is not None:
+            progress("memory", memory_message(updates))
+            progress("intent", intent)
+        return result
 
     def _select(
         self, prompt: str, raw: str, intent: ResolvedIntent, requests: RequestLog, *,
@@ -637,7 +703,7 @@ class Conversation:
                 assert recipe is not None
                 self._validate_recipe(recipe)
             return failure.intent
-        if failure is not None and not isinstance(reply, (QuestionIntent, RememberIntent)):
+        if failure is not None and not isinstance(reply, (QuestionIntent, MemoryIntent)):
             raise CollageError("Continue the timed-out task with resume, or mark a new task independent.")
         _, task_request = self._task_origin(prompt)
         task_turn = self._active_task
@@ -674,6 +740,15 @@ class Conversation:
             navigation=reply.navigation,
         )
 
+    def _check_memory_references(
+        self, intent: ResolvedIntent, names: list[PhotoName] | None = None,
+    ) -> None:
+        check_forgotten(
+            intent.references, self.state.photo_names if names is None else names,
+            {number: event for number, event in zip(self.state.history, self.history(), strict=True)
+             if isinstance(event, Exchange)},
+        )
+
     @staticmethod
     def _feedback(exc: CollageError | ValidationError) -> str:
         if isinstance(exc, ValidationError):
@@ -688,7 +763,7 @@ class Conversation:
 
     async def request(
         self, prompt: str, client: ModelClient, requests: RequestLog | None = None,
-        *, progress: Callable[[str, ResolvedIntent | None], None] | None = None,
+        *, progress: Progress | None = None,
     ) -> RequestResult:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_JSON_BYTES // 4:
             raise CollageError("Prompt must be nonempty and at most 256 KiB UTF-8.")
@@ -747,6 +822,16 @@ class Conversation:
                     reply = INTENT.validate_python(data)
                     history = dict(zip(self.state.history, self.history(), strict=True))
                     pending_names = self._pending_names()
+                    if isinstance(reply, InspectNamesIntent):
+                        self._active_task = self._next_event()
+                        event_id = self._append(Exchange(
+                            prompt=prompt, response=raw, outcome="inspection", stage=stage,
+                            parent=self.state.baseline, run_id=None, attempt=len(requests.attempts()),
+                        ))
+                        return RequestResult(
+                            kind="acknowledgement", event_id=event_id,
+                            acknowledgement=names_message(self.state.photo_names),
+                        )
                     if isinstance(reply, NamesIntent):
                         if pending_names is None or reply.receipt_event != pending_names[0]:
                             raise PhotoReferenceError("Naming decision has no matching current receipt.")
@@ -764,38 +849,13 @@ class Conversation:
                                 acknowledgement="Names not saved; the associated edit was not applied. "
                                 "You can rephrase your request.",
                             )
-                        updates = [
-                            PhotoName(
-                                name=" ".join(item.name.split()), photo_id=item.photo_id,
-                                event_id=self._next_event(), quote=item.quote,
-                                receipt_event=pending_names[0],
-                            ) for item in receipt.updates
-                        ]
-                        names = {name_key(item.name): item for item in self.state.photo_names}
-                        names.update({name_key(item.name): item for item in updates})
                         intent = receipt.intent
-                        if intent is not None and intent.action == "select":
-                            if progress is not None:
-                                progress("intent", intent)
-                            return self._select(
-                                prompt, raw, intent, requests, updates=updates,
-                                names=list(names.values()), receipt_event=pending_names[0],
-                            )
-                        event_id = self._append(Exchange(
-                            prompt=prompt, response=raw,
-                            outcome="intent" if intent is not None else "acknowledgement",
-                            intent=intent, stage=stage, parent=self.state.baseline, run_id=None,
-                            attempt=len(requests.attempts()), name_updates=updates,
+                        result = self._remember(
+                            prompt, raw, receipt.updates, intent, requests, progress,
                             receipt_event=pending_names[0],
-                            references=intent.references if intent else [],
-                        ), photo_names=list(names.values()))
-                        if intent is None:
-                            return RequestResult(
-                                kind="acknowledgement", event_id=event_id,
-                                acknowledgement="Remembered: " + "; ".join(
-                                    f"{item.name} = photo {item.photo_id}" for item in updates
-                                ) + ".",
-                            )
+                        )
+                        if result is not None:
+                            return result
                         feedback = None
                         continue
                     pending_question = context["pending_question"]
@@ -808,7 +868,7 @@ class Conversation:
                         if isinstance(previous, Exchange) and previous.outcome == "question" else None
                     )
                     if isinstance(pending_reply, QuestionIntent):
-                        if isinstance(reply, RememberIntent) and pending_reply.continuation == "design" and (
+                        if isinstance(reply, MemoryIntent) and pending_reply.continuation == "design" and (
                             reply.continues_task
                         ):
                             raise PhotoReferenceError("The identity answer must continue the original design, not only remember names.")
@@ -830,10 +890,11 @@ class Conversation:
                             number: event for number, event in history.items()
                             if number in visible_ids and isinstance(event, Exchange)
                         },
-                        evidence_prompts=[
-                            event.prompt for event in history.values()
+                        evidence_events={
+                            number: event for number, event in history.items()
                             if isinstance(event, Exchange) and event.task_id == self._active_task
-                        ] if reply.continues_task else [],
+                        } if reply.continues_task else {},
+                        event_id=self._next_event(),
                     )
                     if not isinstance(reply, ResumeIntent):
                         validate_navigation(
@@ -846,16 +907,26 @@ class Conversation:
                         self._independent_task = True
                         self._active_task = self._next_event()
                     if updates:
-                        candidate = None if isinstance(reply, RememberIntent) else self._resolve_intent(reply, prompt)
+                        candidate = None if isinstance(reply, MemoryIntent) else self._resolve_intent(reply, prompt)
                         if pending_names is not None and reply.continues_task:
                             held = pending_names[1].name_receipt.intent
                             if (held is None) != (candidate is None) or held is not None and (
                                 candidate.action != held.action or candidate.source != held.source
                             ):
                                 raise PhotoReferenceError("Naming revision must retain its original action/source.")
-                        if progress is not None:
-                            progress("intent", None)
-                        return self._name_receipt(prompt, raw, updates, candidate, requests)
+                        if (
+                            pending_names is not None and reply.continues_task
+                            or conflicting_names(updates, self.state.photo_names)
+                        ):
+                            if progress is not None:
+                                progress("intent", None)
+                            return self._name_receipt(prompt, raw, updates, candidate, requests)
+                        intent = candidate
+                        result = self._remember(prompt, raw, updates, intent, requests, progress)
+                        if result is not None:
+                            return result
+                        feedback = None
+                        continue
                     if pending_names is not None and reply.continues_task and not isinstance(reply, QuestionIntent):
                         raise PhotoReferenceError("Confirm, correct or reject the pending naming receipt first.")
                     if isinstance(reply, QuestionIntent):
@@ -873,21 +944,18 @@ class Conversation:
                                 item.photo_id is None for item in reply.references
                             ),
                         )
-                    if isinstance(reply, RememberIntent):
-                        message = "Remembered: " + "; ".join(
-                            f"{item.name} = photo {item.photo_id}" for item in reply.name_updates
-                        ) + "."
+                    if isinstance(reply, MemoryIntent):
                         event_id = self._append(Exchange(
                             prompt=prompt, response=raw, outcome="acknowledgement",
                             stage=stage, parent=self.state.baseline, run_id=None,
                             attempt=len(requests.attempts()), references=reply.references,
                         ))
-                        if progress is not None:
-                            progress("remember", None)
                         return RequestResult(
-                            kind="acknowledgement", acknowledgement=message, event_id=event_id,
+                            kind="acknowledgement", acknowledgement=memory_message(reply.name_updates),
+                            event_id=event_id,
                         )
                     intent = self._resolve_intent(reply, prompt)
+                    self._check_memory_references(intent)
                     if isinstance(reply, SelectIntent):
                         if progress is not None:
                             progress("intent", intent)
@@ -905,6 +973,7 @@ class Conversation:
                 resolved = self._validate_recipe(InputLayout.model_validate(data))
             except (CollageError, ValidationError) as exc:
                 if stage == "interpretation":
+                    intent = None
                     self._independent_task = False
                     self._active_task = request_task
                 feedback = self._feedback(exc)

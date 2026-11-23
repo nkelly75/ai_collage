@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, RootModel, ValidationError, model_validat
 
 from ..agent.requests import RequestLog
 from ..agent.files import canonical, child, digest, save
-from ..agent.models import INTENT, Controls, Digest, Exchange, LayoutSource, NamesIntent, Reasoning, Record, ResolvedIntent
+from ..agent.models import INTENT, Controls, Digest, Exchange, LayoutSource, NamesIntent, PhotoName, Reasoning, Record, ResolvedIntent
 from ..agent.provider import FoundryModel, instruction_bundle
 from ..agent.conversation import Conversation, ModelClient
 from ..engine.models import MAX_FILE_BYTES, CollageError, InputLayout
@@ -46,7 +46,7 @@ class Source(Record):
 
 class StepResult(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[6] = 6
+    record_version: Literal[7] = 7
     step: int
     name: str
     prompt: str
@@ -74,11 +74,13 @@ class StepResult(BaseModel):
     attempts: int = 0
     validation_corrections: int = 0
     duration_seconds: float = 0
+    memory_before: list[PhotoName] = Field(default_factory=list)
+    memory_after: list[PhotoName] = Field(default_factory=list)
 
 
 class ReplayReport(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[8] = 8
+    record_version: Literal[9] = 9
     project_id: str
     sequence: Sequence
     sources: list[Source]
@@ -212,6 +214,7 @@ async def replay(
             reopened=message.reopen_before, usage_before=requests.summary(),
             baseline_before=baseline_before, answer=answer, answer_origin=answer_origin,
             answers_execution=answers_execution,
+            memory_before=conversation.state.photo_names,
         )
         directory = child(root, "steps", f"{len(report.executions) + 1:04d}")
         directory.mkdir(parents=True, exist_ok=False)
@@ -251,7 +254,7 @@ async def replay(
                 result.question = reply.question
                 if reply.kind == "name_confirmation":
                     result.receipt_event = reply.event_id
-            elif reply.kind == "acknowledgement" and event.outcome == "acknowledgement":
+            elif reply.kind == "acknowledgement" and event.outcome in {"acknowledgement", "inspection"}:
                 result.status = "acknowledgement"
                 result.acknowledgement = reply.acknowledgement
             elif (
@@ -284,6 +287,7 @@ async def replay(
             result.status = "failed"
             result.error = f"{type(exc).__name__}: {exc}"
         finally:
+            result.memory_after = conversation.state.photo_names
             new_events = conversation.history()[history_start:]
             for event in new_events:
                 if isinstance(event, Exchange) and event.receipt_event is not None:

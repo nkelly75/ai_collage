@@ -1,0 +1,23 @@
+{
+  "record_version": 1,
+  "name": "photo-identity-memory",
+  "images": [
+    "..\\..\\photos\\01_tower_bridge.jpg",
+    "..\\..\\photos\\02_breakfast.jpg",
+    "..\\..\\photos\\03_london_eye.jpg",
+    "..\\..\\photos\\04_daunt_books.jpg"
+  ],
+  "canvas": {"width": 1200, "height": 1800},
+  "messages": [
+    {"name": "initial", "prompt": "Make a simple collage using all four numbered photos, with a light background and generous margins. Keep each whole photo visible."},
+    {"name": "learn-breakfast", "prompt": "Make breakfast 10% smaller by reducing its width by 10%. Keep its centre and everything else unchanged."},
+    {"name": "list-breakfast", "prompt": "What photo names do you know?"},
+    {"name": "learn-favourite", "prompt": "Call photo 1 favourite."},
+    {"name": "correct-favourite", "prompt": "Actually, favourite should mean photo 4 instead of photo 1."},
+    {"name": "resize-favourite", "prompt": "Make favourite 10% smaller by reducing its width by 10%. Keep its centre and everything else unchanged.", "reopen_before": true},
+    {"name": "forget-breakfast", "prompt": "Forget the name breakfast, but keep the name favourite."},
+    {"name": "list-after-forgetting", "prompt": "What photo names do you know?", "reopen_before": true},
+    {"name": "relearn-breakfast", "prompt": "Make breakfast another 10% smaller by reducing its current width by 10%. Keep its centre and everything else unchanged."},
+    {"name": "list-final", "prompt": "What photo names do you know?", "reopen_before": true}
+  ]
+}

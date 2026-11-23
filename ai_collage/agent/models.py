@@ -41,17 +41,17 @@ class PhotoReference(BaseModel):
 class NameUpdate(BaseModel):
     model_config = Record.model_config
     name: Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
-    photo_id: PositiveInt
+    photo_id: PositiveInt | None
     quote: Annotated[str, Field(min_length=1, max_length=1000, pattern=r"\S")]
 
 
 class PhotoName(BaseModel):
     model_config = Record.model_config
     name: str
-    photo_id: PositiveInt
+    photo_id: PositiveInt | None
     event_id: PositiveInt
     quote: str
-    receipt_event: PositiveInt
+    receipt_event: PositiveInt | None = None
 
 
 class NavigationEvidence(BaseModel):
@@ -118,8 +118,18 @@ class QuestionIntent(GroundedIntent):
     return_confirmation: ReturnConfirmation | None = None
 
 
-class RememberIntent(GroundedIntent):
-    action: Literal["remember"]
+class MemoryIntent(GroundedIntent):
+    action: Literal["remember", "forget"]
+
+
+class InspectNamesIntent(GroundedIntent):
+    action: Literal["list_names"]
+
+    @model_validator(mode="after")
+    def read_only(self) -> "InspectNamesIntent":
+        if self.references or self.name_updates or self.navigation:
+            raise ValueError("Listing names is read-only and requires no bindings or updates.")
+        return self
 
 
 class NamesIntent(GroundedIntent):
@@ -145,14 +155,14 @@ class ResumeIntent(GroundedIntent):
 
 
 Intent = Annotated[
-    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent | RememberIntent | ResumeIntent | NamesIntent,
+    EditIntent | FreshIntent | RetryIntent | SelectIntent | QuestionIntent | MemoryIntent | InspectNamesIntent | ResumeIntent | NamesIntent,
     Field(discriminator="action"),
 ]
 INTENT = TypeAdapter(Intent)
 
 
 class ConversationRecord(Record):
-    record_version: Literal[7] = 7
+    record_version: Literal[8] = 8
 
 
 class LayoutSource(BaseModel):
@@ -267,7 +277,7 @@ class Exchange(ConversationRecord):
     kind: Literal["turn"] = "turn"
     prompt: str
     response: str | None = None
-    outcome: Literal["intent", "proposal", "selection", "question", "name_confirmation", "acknowledgement", "invalid", "error"]
+    outcome: Literal["intent", "proposal", "selection", "question", "name_confirmation", "acknowledgement", "inspection", "invalid", "error"]
     stage: Literal["interpretation", "generation"]
     intent: ResolvedIntent | None = None
     parent: ProposalId | None

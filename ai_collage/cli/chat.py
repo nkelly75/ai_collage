@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from ..agent.requests import RequestLog
 from ..agent.models import Controls, Reasoning, ResolvedIntent
 from ..agent.conversation import Conversation, RequestRejected
+from ..agent.photo_references import active_names
 from ..engine.models import CollageError
 from ..engine.projects import ProjectStore
 
@@ -52,15 +53,17 @@ def show_usage(requests: RequestLog) -> None:
         )
 
 
-def show_progress(kind: str, intent: ResolvedIntent | None) -> None:
-    if kind == "generation":
+def show_progress(kind: str, intent: ResolvedIntent | str | None) -> None:
+    if kind == "memory" and isinstance(intent, str):
+        print(intent, flush=True)
+    elif kind == "generation":
         print("Generating layout...", flush=True)
     elif intent is None:
         print(
             "Intent: clarification needed." if kind == "question" else "Intent: remember photo names.",
             flush=True,
         )
-    else:
+    elif isinstance(intent, ResolvedIntent):
         source = intent.source
         label = (
             source.proposal_id or f"accepted version {source.accepted_version}"
@@ -75,7 +78,7 @@ def show_progress(kind: str, intent: ResolvedIntent | None) -> None:
 
 def known_names(conversation: Conversation) -> str:
     labels: dict[int, str] = {}
-    for item in conversation.state.photo_names:
+    for item in active_names(conversation.state.photo_names):
         labels.setdefault(item.photo_id, item.name)
     if not labels:
         return "No photo names learned yet. You can refer to photos by number."

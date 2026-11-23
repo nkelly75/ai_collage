@@ -5,7 +5,8 @@ import json
 import pytest
 
 from ai_collage.agent.conversation import Conversation
-from ai_collage.agent.models import INTENT, LayoutSource, NavigationEvidence
+from ai_collage.agent.models import INTENT, Exchange, LayoutSource, NavigationEvidence
+from ai_collage.agent.photo_references import ground_references
 from ai_collage.engine.models import CollageError, InputLayout
 from ai_collage.engine.projects import read_json
 from ai_collage.agent.task_history import (
@@ -162,6 +163,90 @@ def test_old_descriptive_task_retrieval_and_exact_return_beyond_windows(agent_pr
     assert before == {path: path.read_bytes() for path in before}
     resumed = Conversation(conversation.store, "demo")
     assert resumed.state.baseline == first and resumed.state.expected_version is None
+
+
+@pytest.mark.parametrize("hops", [1, 16])
+def test_reference_provenance_remains_citable_beyond_recent_and_compact_tasks(
+    agent_project, hops,
+):
+    conversation, requests = agent_project
+    ask(
+        conversation, requests, reply(), prompt="Make photo 2 smaller",
+        action=intent("fresh", references=[{"text": "photo 2", "photo_id": 2}]),
+    )
+    unrelated = conversation.state.history[-1]
+    original = "Move bridge a little right"
+    ask(
+        conversation, requests, prompt=original,
+        action=intent(
+            "question", question="Which photo is bridge?",
+            references=[{"text": "bridge", "photo_id": None}],
+        ),
+    )
+    ask(
+        conversation, requests, reply(), prompt="Photo 1",
+        action=intent("edit", source="current", references=[{"text": "bridge", "photo_id": 1}]),
+    )
+    source = conversation.state.history[-1]
+    source_task = conversation.history()[-1].task_id
+    provenance = [source]
+    for _ in range(2):
+        ask(conversation, requests, reply(), prompt="Keep the background")
+    for _ in range(hops):
+        ask(
+            conversation, requests, reply(), prompt=original,
+            action=intent(
+                "edit", source="current",
+                references=[{"text": "bridge", "photo_id": 1, "event_id": provenance[-1]}],
+            ),
+        )
+        provenance.append(conversation.state.history[-1])
+
+    conversation = Conversation(conversation.store, "demo")
+    before = {path: path.read_bytes() for path in conversation.root.rglob("*") if path.is_file()}
+    prompt = "Bring bridge to the front of the stacking order"
+    context = conversation.context(prompt)
+    assert len(context["history"]) == len(context["recent_tasks"]) == 3
+    compact_ids = {record["task_id"] for record in context["compact_tasks"]}
+    assert (source_task in compact_ids) == (hops == 1)
+    if hops == 16:
+        assert len(context["compact_tasks"]) == 12
+    evidence = {item["event_id"]: item for item in context["reference_history"]}
+    assert set(evidence) == set(provenance) | {
+        number - 1 for number in provenance[-min(hops, 3):]
+    }
+    assert all(set(item) == {"event_id", "references", "name_updates"} for item in evidence.values())
+    assert before == {path: path.read_bytes() for path in before}
+
+    history = dict(zip(conversation.state.history, conversation.history(), strict=True))
+    visible = {number: event for number, event in history.items()
+               if number in evidence and isinstance(event, Exchange)}
+    for photo_id, event_id in ((2, source), (1, 99999), (2, unrelated)):
+        action = INTENT.validate_json(intent(
+            "edit", source="current",
+            references=[{"text": "bridge", "photo_id": photo_id, "event_id": event_id}],
+        ))
+        with pytest.raises(CollageError, match="Cited reference evidence"):
+            ground_references(
+                action, prompt, task_request=prompt, photos={1, 2}, names=[],
+                reference_history=visible,
+            )
+
+    changed = layout_data()
+    changed["layers"].reverse()
+    client = FakeModel(intent(
+        "edit", source="current",
+        references=[{"text": "bridge", "photo_id": 1, "event_id": source}],
+    ), reply(changed))
+    result = asyncio.run(conversation.request(prompt, client, requests))
+    assert result.kind == "proposal" and len(client.contexts) == 2
+    assert conversation.proposal(result.proposal_id).recipe.model_dump(mode="json") == (
+        InputLayout.model_validate(changed).model_dump(mode="json")
+    )
+    assert all(source in {item["event_id"] for item in entry["reference_history"]}
+               for entry in client.contexts)
+    assert not conversation.state.photo_names
+    assert conversation.store.load("demo").current_version is None
 
 
 def test_undo_uses_source_ancestry_skips_noops_and_retains_fresh_predecessor(agent_project):

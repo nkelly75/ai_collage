@@ -112,17 +112,20 @@ def test_naming_receipt_pauses_replay_until_explicit_approval_without_changing_b
     naming = intent("remember", name_updates=[photo_name("breakfast", 2, naming_prompt)])
     if not naming_first:
         messages.reverse()
-    data["messages"] = messages
+    original = "Photo 1 is breakfast"
+    data["messages"] = [{"name": "original-name", "prompt": original}, *messages]
     path.write_text(json.dumps(data), encoding="utf-8")
+    execute(store, path, FakeModel(intent("remember", name_updates=[photo_name("  breakfast  ", 1, original)])))
     if not naming_first:
-        first = execute(store, path, FakeModel(intent("fresh"), reply()))
-        assert first.next_step == 1
-    paused = execute(store, path, FakeModel(naming), resume=not naming_first)
+        first = execute(store, path, FakeModel(intent("fresh"), reply()), resume=True)
+        assert first.next_step == 2
+    paused = execute(store, path, FakeModel(naming), resume=True)
     gate = paused.executions[-1]
-    assert gate.status == "name_confirmation" and paused.next_step == (0 if naming_first else 1)
+    assert gate.status == "name_confirmation" and paused.next_step == (1 if naming_first else 2)
     assert gate.attempts == 1 and gate.receipt_event == gate.event_id
     pending = Conversation(store, "demo")
-    assert not pending.state.photo_names and pending.state.baseline == (None if naming_first else "P001")
+    assert pending.state.photo_names[0].photo_id == 1
+    assert pending.state.baseline == (None if naming_first else "P001")
     assessment = assess(store, "demo")
     assert not assessment.complete and assessment.cases[-1].status == "not_assessed"
     assert not assessment.cases[-1].errors
@@ -136,13 +139,13 @@ def test_naming_receipt_pauses_replay_until_explicit_approval_without_changing_b
         store, path, client, resume=True, remaining=True,
         answer="Yes, remember those", answer_origin="user",
     )
-    acknowledged = next(item for item in report.executions if item.status == "acknowledgement")
-    assert report.next_step == 2 and acknowledged.attempts == 1
+    acknowledged = next(item for item in report.executions if item.name_decision == "approve")
+    assert report.next_step == 3 and acknowledged.attempts == 1
     assert acknowledged.proposal_id is None and acknowledged.source is None
     assert acknowledged.intent is None and acknowledged.preview_path is None
     assert acknowledged.changes == [] and "breakfast = photo 2" in acknowledged.acknowledgement
     assert acknowledged.name_decision == "approve" and acknowledged.receipt_event == gate.event_id
-    assert acknowledged.answers_execution == (1 if naming_first else 2)
+    assert acknowledged.answers_execution == (2 if naming_first else 3)
     conversation = Conversation(store, "demo")
     assert conversation.state.baseline == "P001" and conversation.state.photo_names[0].photo_id == 2
     assert len(list((conversation.root / "proposals").iterdir())) == 1
@@ -157,23 +160,27 @@ def test_rejected_naming_replay_records_a_discarded_task_without_a_proposal(stor
 
     path, data = scenario
     prompt = "Photo 2 is breakfast; move breakfast higher"
-    data["messages"] = [{"name": "teach-and-edit", "prompt": prompt}]
+    original = "Photo 1 is breakfast"
+    data["messages"] = [
+        {"name": "original", "prompt": original}, {"name": "teach-and-edit", "prompt": prompt},
+    ]
     path.write_text(json.dumps(data), encoding="utf-8")
+    execute(store, path, FakeModel(intent("remember", name_updates=[photo_name("breakfast", 1, original)])))
     paused = execute(store, path, FakeModel(intent(
         "fresh", references=[photo_reference("breakfast", 2)],
         name_updates=[photo_name("breakfast", 2, "Photo 2 is breakfast")],
-    )))
+    )), resume=True)
     gate = paused.executions[-1]
     report = execute(
         store, path, FakeModel(intent("names", decision="reject", receipt_event=gate.event_id)),
         resume=True, answer="No, that's not right", answer_origin="user",
     )
     result = report.executions[-1]
-    assert report.next_step == 1 and result.status == "acknowledgement"
+    assert report.next_step == 2 and result.status == "acknowledgement"
     assert result.name_decision == "reject" and result.attempts == 1
     assert "not applied" in result.acknowledgement
     conversation = Conversation(store, "demo")
-    assert not conversation.state.photo_names and conversation.state.baseline is None
+    assert conversation.state.photo_names[0].photo_id == 1 and conversation.state.baseline is None
     assert assess(store, "demo").passed
 
 
@@ -181,10 +188,13 @@ def test_confirmed_teaching_with_exact_return_assesses_as_selection_not_generati
     from ai_collage.evaluation.assess import assess
 
     path, data = scenario
+    original = "Photo 1 is castle"
+    data["messages"].insert(0, {"name": "original", "prompt": original})
     prompt = "Photo 2 is castle; return to P001"
     data["messages"].append({"name": "teach-and-return", "prompt": prompt})
     path.write_text(json.dumps(data), encoding="utf-8")
     paused = execute(store, path, FakeModel(
+        intent("remember", name_updates=[photo_name("castle", 1, original)]),
         *turns(reply(), reply()),
         intent("select", proposal_id="P001", navigation={"kind": "id", "text": "P001"},
                name_updates=[photo_name("castle", 2, "Photo 2 is castle")]),

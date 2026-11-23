@@ -12,7 +12,7 @@ from ai_collage.evaluation.replay import replay
 from ai_collage.engine.models import CollageError
 
 from ..helpers import REPO, layout_data, photo_file
-from ..agent.test_agent import FakeModel, agent_project, asyncio_wakeup_pair, intent, reply, turns
+from ..agent.test_agent import FakeModel, agent_project, asyncio_wakeup_pair, intent, photo_name, photo_reference, reply, turns
 from .test_replay import execute, scenario
 
 
@@ -133,6 +133,152 @@ def test_profile_checks_style_and_edits_without_affecting_integrity(
     report = assess(store, "dark", profile="dark-portrait-adjustments")
     assert report.complete and not report.passed
     assert expected in " ".join(report.cases[case].errors)
+
+
+@pytest.mark.parametrize("fault,question_references", [
+    (None, True), (None, False),
+    ("wrong-target", True), ("wrong-size", True), ("centre", True), ("snapshot", True),
+])
+def test_photo_identity_profile_checks_every_saved_transition(
+    store, tmp_path, sources, fault, question_references,
+):
+    from ai_collage.agent.files import save
+
+    sequence = read_json(REPO / "examples" / "sequences" / "06_photo_identity_memory.json")
+    sequence["images"] = [str(path) for path in [
+        *sources, photo_file(tmp_path / "three.png"), photo_file(tmp_path / "four.png"),
+    ]]
+    path = tmp_path / "memory.json"
+    path.write_text(json.dumps(sequence), encoding="utf-8")
+    messages = sequence["messages"]
+    initial = {
+        "schema_version": 3, "canvas": {"width": 1200, "height": 1800, "background": "#FFFFFF"},
+        "layers": [
+            {"photo_id": number, "mode": "whole",
+             "box": {"center_x": x, "center_y": y, "width": 0.24}}
+            for number, x, y in ((1, 0.25, 0.25), (2, 0.75, 0.25), (3, 0.25, 0.75), (4, 0.75, 0.75))
+        ],
+    }
+    breakfast = copy.deepcopy(initial)
+    breakfast["layers"][1]["box"]["width"] *= 0.9
+    favourite = copy.deepcopy(breakfast)
+    favourite["layers"][0 if fault == "wrong-target" else 3]["box"]["width"] *= (
+        0.8 if fault == "wrong-size" else 0.9
+    )
+    if fault == "centre":
+        favourite["layers"][3]["box"]["center_x"] += 0.01
+    final = copy.deepcopy(favourite)
+    final["layers"][1]["box"]["width"] *= 0.9
+
+    def question():
+        return intent("question", question="Which photo is breakfast?",
+                      references=[photo_reference("breakfast", None)] if question_references else [])
+
+    def resize(step, name, number):
+        return intent("edit", source="current", references=[photo_reference(name, number)],
+                      name_updates=[photo_name(name, number, messages[step]["prompt"])] if name == "breakfast" else [])
+
+    paused = execute(store, path, FakeModel(intent("fresh"), reply(initial), question()), remaining=True)
+    assert paused.next_step == 1 and not paused.executions[-1].memory_after
+    paused = execute(store, path, FakeModel(
+        resize(1, "breakfast", 2), reply(breakfast), intent("list_names"),
+        intent("remember", name_updates=[photo_name("favourite", 1, messages[3]["prompt"])]),
+        intent("remember", name_updates=[photo_name("favourite", 4, messages[4]["prompt"])]),
+    ), resume=True, answer="Photo 2", answer_origin="copilot", remaining=True)
+    gate = paused.executions[-1]
+    assert gate.status == "name_confirmation"
+    paused = execute(store, path, FakeModel(
+        intent("names", decision="approve", receipt_event=gate.event_id),
+        resize(5, "favourite", 4), reply(favourite),
+        intent("forget", name_updates=[photo_name("breakfast", None, messages[6]["prompt"])]),
+        intent("list_names"), question(),
+    ), resume=True, answer="Yes", answer_origin="copilot", remaining=True)
+    assert paused.next_step == 8
+    assert {item.name: item.photo_id for item in paused.executions[-1].memory_after} == {
+        "breakfast": None, "favourite": 4,
+    }
+    report = execute(store, path, FakeModel(
+        resize(8, "breakfast", 2), reply(final), intent("list_names"),
+    ), resume=True, answer="Photo 2", answer_origin="copilot", remaining=True)
+    assert report.next_step == 10 and assess(store, "demo").passed
+    if fault == "snapshot":
+        report.executions[3].memory_after = []
+        root = store.project_dir("demo") / "replay"
+        save(root / "report.json", report)
+        save(root / "steps" / "0004" / "result.json", report.executions[3])
+        assert not assess(store, "demo").passed
+    assessment = assess(store, "demo", profile="photo-identity-memory")
+    assert assessment.complete and assessment.passed == (fault is None)
+    if fault is not None:
+        assert any(case.errors for case in assessment.cases)
+    assert store.load("demo").current_version is None
+
+
+@pytest.mark.parametrize("fault", [
+    "missing-question", "other-step", "other-task", "not-a-question", "no-answer",
+    "wrong-answer-link", "pre-answer-memory", "pre-answer-layout",
+])
+def test_photo_identity_gate_rejects_missing_provenance_and_premature_changes(agent_project, fault):
+    from ai_collage.agent.models import Exchange, PhotoName, ResolvedIntent
+    from ai_collage.engine.geometry import resolve_layout
+    from ai_collage.engine.models import InputLayout
+    from ai_collage.evaluation.assess import identity_memory_errors
+    from ai_collage.evaluation.replay import StepResult, authored_changes
+
+    conversation, _ = agent_project
+    photos = conversation.store.load("demo").photos
+    initial = layout_data()
+    smaller = copy.deepcopy(initial)
+    smaller["layers"][1]["box"]["width"] *= 0.9
+    prompt = "Make breakfast 10% smaller."
+    learned = PhotoName(name="breakfast", photo_id=2, event_id=4, quote=prompt)
+    question = Exchange(
+        prompt=prompt, response=intent("question", question="Which numbered photo?"),
+        outcome="question", stage="interpretation", parent="P001", run_id=None, task_id=3,
+    )
+    pending = StepResult(
+        step=1, name="learn-breakfast", prompt=prompt, reopened=False,
+        status="question", event_id=3, usage_before={},
+    )
+    result = StepResult(
+        step=1, name="learn-breakfast", prompt=prompt, reopened=False, status="proposal",
+        event_id=5, answer="Photo 2", answer_origin="copilot", answers_execution=1,
+        usage_before={}, memory_after=[learned],
+        intent=ResolvedIntent(
+            action="edit", source={"proposal_id": "P001"}, task_turn=3, task_request=prompt,
+            references=[{"text": "breakfast", "photo_id": 2}],
+        ),
+    )
+    event = Exchange(
+        prompt="Photo 2", outcome="proposal", stage="generation",
+        parent="P001", run_id=None, task_id=3,
+    )
+    earlier = [] if fault == "missing-question" else [pending]
+    if fault == "other-step":
+        pending.step = 8
+    elif fault == "other-task":
+        question = question.model_copy(update={"task_id": 9})
+    elif fault == "not-a-question":
+        question = question.model_copy(update={"outcome": "intent"})
+    elif fault == "no-answer":
+        result.answer = None
+    elif fault == "wrong-answer-link":
+        result.answers_execution = 2
+    elif fault == "pre-answer-memory":
+        pending.memory_after = [learned]
+    elif fault == "pre-answer-layout":
+        pending.changes = authored_changes(initial, smaller)
+    waiting = fault.startswith("pre-answer")
+    errors = identity_memory_errors(
+        pending if waiting else result, earlier,
+        resolve_layout(InputLayout.model_validate(smaller), photos, 1),
+        resolve_layout(InputLayout.model_validate(initial), photos, 1),
+        {3: question, 5: event},
+    )
+    assert (
+        "Question/receipt changed memory or the collage before an answer."
+        if waiting else "Breakfast identity was used without the required preceding question."
+    ) in errors
 
 
 def test_wrong_profile_fails_explicitly(saved_replay, store):

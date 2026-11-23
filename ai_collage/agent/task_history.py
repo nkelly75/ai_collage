@@ -95,7 +95,7 @@ def task_records(
                 or event.receipt_event == receipt
             )
         )
-        if task.outcome in {"proposal", "selection", "acknowledgement", "error"} and not resumable:
+        if task.outcome in {"proposal", "selection", "acknowledgement", "inspection", "error"} and not resumable:
             raise CollageError("A completed task cannot acquire unrelated events.")
         task.events.append(number)
         task.outcome = event.outcome

@@ -73,7 +73,10 @@ def response_format(stage: str = "generation") -> dict[str, object]:
             definition = definitions[branch["$ref"].rsplit("/", 1)[-1]]
             properties.update(definition["properties"])
         properties["action"] = {
-            "type": "string", "enum": ["edit", "fresh", "retry", "select", "question", "remember", "resume", "names"],
+            "type": "string", "enum": [
+                "edit", "fresh", "retry", "select", "question", "remember", "forget",
+                "list_names", "resume", "names",
+            ],
         }
         schema = {
             "$defs": definitions, "type": "object", "properties": properties,

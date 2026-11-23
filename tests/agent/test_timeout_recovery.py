@@ -271,7 +271,7 @@ def test_nongeneration_progress_does_not_announce_layout(agent_project, action):
     asyncio.run(conversation.request(
         prompt, model, requests, progress=lambda kind, resolved: notifications.append(kind),
     ))
-    assert "generation" not in notifications and len(notifications) == 1
+    assert "generation" not in notifications and len(notifications) == (0 if action == "remember" else 1)
 
 
 @pytest.mark.parametrize("missing", ["none", "all", "partial"])
