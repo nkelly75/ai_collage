@@ -886,6 +886,49 @@ def test_composition_retry_and_exact_selection_are_not_acceptance(agent_project,
     assert resumed.proposal(p2).parent is None
 
 
+@pytest.mark.parametrize("action", ["fresh", "edit"])
+def test_older_retry_retains_original_answers_outside_recent_history(agent_project, action):
+    conversation, requests = agent_project
+    first, _ = ask(conversation, requests, reply())
+    original = "Make a brighter arrangement"
+    answer = "Use any bright colour except vermilion."
+    asyncio.run(conversation.request(original, FakeModel(
+        intent("question", question="Which colours should I use?"),
+    ), requests))
+    fields = {"source": "current"} if action == "edit" else {}
+    clarified, _ = ask(
+        conversation, requests, reply(), prompt=answer, action=intent(action, **fields),
+    )
+    preview = conversation.preview_path(clarified).read_bytes()
+    for _ in range(4):
+        ask(conversation, requests, reply(), prompt="Keep this arrangement")
+    reopened = Conversation(conversation.store, "demo")
+    retry_prompt = f"Retry {clarified} with a different bright colour"
+    prompt = retry_prompt
+    if action == "edit":
+        asyncio.run(reopened.request(retry_prompt, FakeModel(
+            intent("question", question="Which bright colour this time?"),
+        ), requests))
+        reopened = Conversation(reopened.store, "demo")
+        prompt = "Use yellow this time."
+    retried, model = ask(
+        reopened, requests, reply(), prompt=prompt,
+        action=intent("retry", proposal_id=clarified),
+    )
+    context = model.contexts[-1]
+    assert answer not in json.dumps(context["history"])
+    assert context["active_task"]["request"] == original
+    assert answer in context["active_task"]["answers"]
+    assert retry_prompt in context["active_task"]["answers"]
+    assert prompt in context["active_task"]["answers"]
+    assert context["user_request"] == prompt
+    assert context["original_task"] == original
+    assert reopened.proposal(retried).intent.task_turn == reopened.proposal(clarified).intent.task_turn
+    assert reopened.proposal(retried).parent == (first if action == "edit" else None)
+    assert reopened.preview_path(clarified).read_bytes() == preview
+    assert reopened.store.load("demo").current_version is None
+
+
 @pytest.mark.parametrize("bad_quote", ["P001", "first proposal"])
 def test_return_correction_explains_ordinal_evidence_and_selects_exact_png(
     agent_project, monkeypatch, bad_quote,

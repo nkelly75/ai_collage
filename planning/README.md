@@ -71,8 +71,15 @@ is **executed and closed**. It compared committed
 `nkelly/plan-010` with `nkelly/llm-wip-1` as a traditional correctness/security
 review, not another design reassessment. [013 results](013_results.md) record
 one repaired/re-reviewed correctness defect and no confirmed security
-vulnerabilities. Fixes remain uncommitted for the user; further work needs
-separate approval.
+vulnerabilities. The user subsequently committed and merged that work onto
+`nkelly/llm-wip-1`; further work needs separate approval.
+
+[014: Correctness and security review before main](014-main-readiness-review.md)
+is **executed and closed**. It compared committed `nkelly/llm-wip-1` against
+`main`; [014 results](014_results.md) record two surgically repaired/re-reviewed
+correctness defects and no confirmed security vulnerabilities. Repairs remain
+uncommitted for the user. Mechanical deterministic/LLM sub-package refactoring
+was excluded and remains a separate later phase; no merge is authorized.
 
 ## Planning records
 
@@ -102,7 +109,8 @@ and record 003 spans several feature increments.
 | [010h: Useful, recoverable progress](010h-useful-recoverable-progress.md) | Implemented and verified offline; [results](010h_results.md), [live replay follow-up](010h_replay_results.md) and [human feedback](010g_trial04_results.md) recorded separately. | Bounded pass and replay follow-up closed. |
 | [011: Interpretation and naming reassessment](011-interpretation-and-naming-reassessment.md) | Review complete; [results](011_results.md) recommend a simpler boundary and explicit durable naming. | Selected direction separately approved and implemented in 012. |
 | [012: Model-led references and confirmed names](012-model-led-references-and-confirmed-names.md) | Successfully completed and closed with user sign-off; see [results](012_results.md). | Separate [replay](012_replay_results.md), [return repair/retest](012_return_repair_results.md) and [human-led trial 05 / closeout](012_trial05_results.md) evidence; commit remains user-managed. |
-| [013: Branch correctness and security review](013-branch-correctness-and-security-review.md) | Executed and closed; see [results](013_results.md). | Full branch delta reviewed; one correctness repair/re-review, no confirmed security vulnerabilities. Fixes remain user-managed and uncommitted. |
+| [013: Branch correctness and security review](013-branch-correctness-and-security-review.md) | Executed and closed; see [results](013_results.md). | Full branch delta reviewed; one correctness repair/re-review, no confirmed security vulnerabilities. Subsequently committed/merged by the user. |
+| [014: Correctness and security review before main](014-main-readiness-review.md) | Executed and closed; see [results](014_results.md). | Full main-to-target delta reviewed; two correctness repairs/re-review, no confirmed security vulnerabilities. Repairs uncommitted; no package refactor or merge. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

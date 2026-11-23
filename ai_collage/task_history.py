@@ -81,9 +81,16 @@ def task_records(
             isinstance(events[turn], Exchange) and events[turn].receipt_event == receipt
             for turn in task.events
         )
-        resumable = task.events and isinstance(events[task.events[-1]], Exchange) and (
-            events[task.events[-1]].generation_timeout
-            or events[task.events[-1]].stage == "interpretation" and pending_receipt and (
+        unfinished = next((
+            previous for previous in (events[turn] for turn in reversed(task.events))
+            if isinstance(previous, Exchange) and not (
+                previous.stage == "interpretation" and previous.outcome in {"invalid", "error"}
+            )
+        ), None)
+        resumable = unfinished is not None and (
+            unfinished.generation_timeout or unfinished.outcome == "question"
+        ) or task.events and isinstance(events[task.events[-1]], Exchange) and (
+            events[task.events[-1]].stage == "interpretation" and pending_receipt and (
                 event.outcome in {"invalid", "error", "question", "name_confirmation"}
                 or event.receipt_event == receipt
             )

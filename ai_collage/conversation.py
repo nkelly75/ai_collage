@@ -446,15 +446,21 @@ class Conversation:
                 for number, event in exchanges if number in failure_events
                 and number not in visible_reference_ids and (event.references or event.name_updates)
             )
+        active_id = getattr(self, "_active_task", None)
+        task_id = intent.task_turn if intent is not None else active_id
         active_task = next(
             (record for record in records if request_start is not None
-             and record.task_id == getattr(self, "_active_task", None)), None,
+             and record.task_id == task_id), None,
         )
+        task_events = {
+            number for record in records if record.task_id in {task_id, active_id}
+            for number in record.events
+        }
         context["active_task"] = {
             "request": active_task.request if active_task else prompt,
             "answers": list(dict.fromkeys(
                 [event.prompt for number, event in exchanges if active_task
-                 and number in active_task.events and event.prompt != active_task.request]
+                 and number in task_events and event.prompt != active_task.request]
                 + ([prompt] if active_task and prompt != active_task.request else [])
             )),
         }
@@ -517,7 +523,9 @@ class Conversation:
                 break
             if event.generation_timeout:
                 return event
-            if event.outcome not in {"invalid", "intent", "question"}:
+            if event.outcome not in {"invalid", "intent", "question"} and not (
+                event.outcome == "error" and event.stage == "interpretation"
+            ):
                 break
         return None
 
@@ -545,7 +553,7 @@ class Conversation:
         for number, event in reversed(list(zip(self.state.history, self.history(), strict=True))):
             if not isinstance(event, Exchange):
                 continue
-            if event.outcome == "invalid" and event.stage == "interpretation":
+            if event.outcome in {"invalid", "error"} and event.stage == "interpretation":
                 continue
             return (number, event) if event.outcome == "question" else None
         return None

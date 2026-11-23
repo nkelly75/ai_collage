@@ -144,11 +144,65 @@ def test_older_source_timeout_and_repeated_timeout_never_edit_the_current_result
     assert len(resumed.tasks()) == 3
 
 
+@pytest.mark.parametrize("continuation", ["clarification", "timeout"])
+@pytest.mark.parametrize("failure", [CollageError, OSError, StageTimeout])
+def test_interpretation_errors_preserve_unfinished_task_after_restart(
+    agent_project, continuation, failure,
+):
+    conversation, requests = agent_project
+    first, _ = ask(conversation, requests, reply())
+    latest, _ = ask(conversation, requests, reply())
+    preview = conversation.preview_path(latest).read_bytes()
+    original = f"Return to {first} and make one photo smaller"
+    if continuation == "clarification":
+        initial = FakeModel(intent("question", question="Which photo number?"))
+        asyncio.run(conversation.request(original, initial, requests))
+        answer = "2"
+        resolved = intent("edit", source=first, references=[photo_reference("2", 2)])
+    else:
+        initial = FakeModel(intent("edit", source=first), StageTimeout("offline timeout"))
+        with pytest.raises(StageTimeout):
+            asyncio.run(conversation.request(original, initial, requests))
+        answer = "try again"
+        resolved = intent("resume")
+    task_id = conversation.history()[-1].task_id
+    for correction in (False, True):
+        conversation = Conversation(conversation.store, "demo")
+        model = FakeModel(*(["{}"] if correction else []), failure("offline failure"))
+        with pytest.raises(failure):
+            asyncio.run(conversation.request(answer, model, requests))
+        assert len(model.contexts) == (2 if correction else 1)
+        assert all(context["stage"] == "interpretation" for context in model.contexts)
+        assert conversation.state.baseline == latest
+    reopened = Conversation(conversation.store, "demo")
+    pending = reopened.context(answer)
+    if continuation == "clarification":
+        assert pending["pending_question"]["original_task"] == original
+    else:
+        assert pending["failed_task"]["task_id"] == task_id
+    model = FakeModel(resolved, reply())
+    result = asyncio.run(reopened.request(answer, model, requests))
+    proposal = reopened.proposal(result.proposal_id)
+    assert proposal.intent.task_turn == task_id
+    assert proposal.intent.task_request == original
+    assert proposal.parent == first
+    assert model.contexts[-1]["active_task"]["request"] == original
+    assert answer in model.contexts[-1]["active_task"]["answers"]
+    assert reopened.preview_path(latest).read_bytes() == preview
+    assert reopened.store.load("demo").current_version is None
+    assert len(Conversation(reopened.store, "demo").tasks()) == 3
+
+
 def test_new_task_supersedes_timeout_and_resume_without_failure_is_invalid(agent_project):
     conversation, requests = agent_project
     failed = FakeModel(intent("fresh"), StageTimeout("offline"))
     with pytest.raises(StageTimeout):
         asyncio.run(conversation.request("Make a collage", failed, requests))
+    with pytest.raises(CollageError, match="offline interpretation"):
+        asyncio.run(conversation.request(
+            "try again", FakeModel(CollageError("offline interpretation")), requests,
+        ))
+    conversation = Conversation(conversation.store, "demo")
     model = FakeModel(intent("fresh", continues_task=False), reply())
     asyncio.run(conversation.request("Start a different arrangement instead", model, requests))
     assert len(conversation.tasks()) == 2

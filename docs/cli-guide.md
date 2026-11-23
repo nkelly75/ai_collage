@@ -211,6 +211,8 @@ Omission counts distinguish unavailable detail from nonexistent history.
 no-ops and non-edit outcomes, rather than counting the latest two created
 proposals. Fresh arrangements retain a navigation predecessor without acquiring
 an editing source; retries branch from the original source, not a rejected result.
+Generation for a retry retains the originating task's clarification answers
+even outside recent history, alongside feedback on the current retry.
 Descriptive returns can find older branches. The interpretation supplies
 destination evidence, which code checks before any baseline change or generation.
 History matching uses the same explicit photo-number list recognition as edit
@@ -329,7 +331,9 @@ After a confirmed generation timeout before publication, the editing baseline
 is unchanged. Repeat the original prompt, say "try again", or repeat the last
 clarification answer (for example "2"). The existing interpretation stage can
 resume the failed task with its original source and answers, including after
-restart. A clearly independent request replaces it. Retrying requires an
+restart. An interpretation-stage service failure or timeout does not cancel
+that continuation or a pending clarification; the next explicit message can
+continue it. A clearly independent request replaces it. Retrying requires an
 explicit user message, may produce different output and may incur more usage.
 Unrelated publication/I/O failures do not carry the same unchanged-state promise.
 
