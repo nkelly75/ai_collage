@@ -149,10 +149,10 @@ by default; nothing is automatically accepted.**
 $sequence = '.\examples\sequences\02_landscape_staggered_adjustments.json'
 
 # Offline: validate the sequence and source-file availability/hashes.
-.\.venv\Scripts\python.exe -m ai_collage.replay --sequence $sequence --check
+.\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence $sequence --check
 
 # Live, when authorized: choose a fresh project ID.
-.\.venv\Scripts\python.exe -m ai_collage.replay --sequence $sequence `
+.\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence $sequence `
   --data-dir .\.collage-data-v3 --project YOUR-NEW-PROJECT
 ```
 
@@ -177,7 +177,7 @@ Interactive chat remains local-only unless started with `--live`.
 Assess a saved replay **offline**, without generating or accepting anything:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage.assess --data-dir .\.collage-data-v3 `
+.\.venv\Scripts\python.exe -m ai_collage.cli.assess --data-dir .\.collage-data-v3 `
   --project YOUR-REPLAY-PROJECT --profile dark-portrait-adjustments
 ```
 

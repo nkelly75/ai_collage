@@ -5,8 +5,8 @@ import json
 import re
 from collections.abc import Iterable
 
-from .agent_models import INTENT, Exchange, Intent, NameReceipt, NameUpdate, NamesIntent, PhotoName, QuestionIntent, RememberIntent
-from .models import CollageError
+from .models import INTENT, Exchange, Intent, NameReceipt, NameUpdate, NamesIntent, PhotoName, QuestionIntent, RememberIntent
+from ..engine.models import CollageError
 
 
 class PhotoReferenceError(CollageError):

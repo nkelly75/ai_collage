@@ -1,21 +1,19 @@
 """Assess saved replay evidence offline; never generate or accept a layout."""
 
-import argparse
 from pathlib import Path
-import sys
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from .agent_files import canonical, child, digest, save
-from .agent_models import (
+from ..agent.files import canonical, child, digest, save
+from ..agent.models import (
     HISTORY, INTENT, Attempt, ConversationState, Exchange, NamesIntent, Proposal, QuestionIntent, RememberIntent,
 )
-from .geometry import resolve_layout
-from .models import CollageError, ResolvedLayout
-from .projects import ProjectStore, read_json
-from .photo_references import name_history, name_key, receipt_question
-from .task_history import task_records
+from ..engine.geometry import resolve_layout
+from ..engine.models import CollageError, ResolvedLayout
+from ..engine.projects import ProjectStore, read_json
+from ..agent.photo_references import name_history, name_key, receipt_question
+from ..agent.task_history import task_records
 from .replay import ReplayReport, StepResult, authored_changes
 
 Profile = Literal["integrity", "dark-portrait-adjustments"]
@@ -468,28 +466,3 @@ def assess(
         and all(case.status != "failed" for case in report.cases)
     )
     return report
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", type=Path, default=Path(".collage-data-v3"))
-    parser.add_argument("--project", required=True)
-    parser.add_argument("--profile", choices=["integrity", "dark-portrait-adjustments"], default="integrity")
-    args = parser.parse_args(argv)
-    try:
-        store = ProjectStore(args.data_dir)
-        report = assess(store, args.project, profile=args.profile)
-        root = child(store.project_dir(args.project), "replay", "assessments")
-        numbers = [int(path.stem) for path in root.glob("*.json") if path.stem.isascii() and path.stem.isdigit()]
-        path = child(root, f"{max(numbers, default=0) + 1:04d}.json")
-        report.report_path = str(path)
-        save(path, report)
-        print(report.model_dump_json(indent=2))
-        return 0 if report.passed else 1
-    except (CollageError, ValidationError, OSError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from .models import InputLayout, LayerGeometry, PositiveInt
+from ..engine.models import InputLayout, LayerGeometry, PositiveInt
 
 
 class Record(BaseModel):

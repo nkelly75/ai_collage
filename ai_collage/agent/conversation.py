@@ -9,18 +9,18 @@ from typing import Callable, Protocol
 
 from pydantic import ValidationError
 
-from .agent_requests import RequestLog, StageTimeout
-from .agent_files import canonical, child, digest, save
-from .agent_models import (
+from .requests import RequestLog, StageTimeout
+from .files import canonical, child, digest, save
+from .models import (
     HISTORY, INTENT, AcceptanceIntent, Controls, ConversationState, EditIntent, Exchange,
     FreshIntent, Intent, LayoutSource, LocalEvent, NameReceipt, NameUpdate, NamesIntent,
     PhotoName, Preferences, Proposal, QuestionIntent, RememberIntent, RequestResult,
     ReceiptPointer, ResolvedIntent, ResumeIntent, RetryIntent, SelectIntent,
 )
-from .geometry import LayoutBoundsError, resolve_layout
-from .imaging import render_layout
-from .models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
-from .projects import ProjectStore, parse_json, read_json
+from ..engine.geometry import LayoutBoundsError, resolve_layout
+from ..engine.imaging import render_layout
+from ..engine.models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
+from ..engine.projects import ProjectStore, parse_json, read_json
 from .photo_references import (
     PhotoReferenceError, ground_references, name_history, name_key, names_digest, receipt_question,
 )

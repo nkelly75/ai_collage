@@ -4,11 +4,11 @@ import re
 
 from pydantic import BaseModel, Field
 
-from .agent_models import (
+from .models import (
     EditIntent, Exchange, FreshIntent, Intent, LayoutSource, LocalEvent, NavigationEvidence,
     PhotoName, Proposal, QuestionIntent, RetryIntent, SelectIntent,
 )
-from .models import CollageError, InputLayout
+from ..engine.models import CollageError, InputLayout
 from .photo_references import (
     contains, mentioned_names, name_candidates, numbered_photos, reference_names,
 )

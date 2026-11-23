@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from ai_collage.projects import ProjectStore
+from ai_collage.engine.projects import ProjectStore
 
-from .helpers import photo_file
+from ..helpers import photo_file
 
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("recipe", sorted((REPO / "examples").glob("*.json")), ids=lambda p: p.stem)

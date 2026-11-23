@@ -4,10 +4,10 @@ from PIL import Image
 from pydantic import ValidationError
 import pytest
 
-from ai_collage.geometry import LayoutBoundsError, resolve_layout
-from ai_collage.models import CollageError, InputLayout, ResolvedLayout
+from ai_collage.engine.geometry import LayoutBoundsError, resolve_layout
+from ai_collage.engine.models import CollageError, InputLayout, ResolvedLayout
 
-from .helpers import framed_layout_data, layout_data, photo_file, write_layout
+from ..helpers import framed_layout_data, layout_data, photo_file, write_layout
 
 
 @pytest.mark.parametrize("cover", [False, True])

@@ -1,10 +1,10 @@
 from PIL import Image, ImageDraw
 import pytest
 
-from ai_collage.geometry import LayoutBoundsError, resolve_layout
-from ai_collage.models import CollageError, InputLayout
+from ai_collage.engine.geometry import LayoutBoundsError, resolve_layout
+from ai_collage.engine.models import CollageError, InputLayout
 
-from .helpers import framed_layout_data, layout_data, photo_file, write_layout
+from ..helpers import framed_layout_data, layout_data, photo_file, write_layout
 
 
 @pytest.mark.parametrize("canvas", [(100, 100), (200, 100), (100, 200)])

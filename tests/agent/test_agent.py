@@ -7,15 +7,15 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-from ai_collage.agent_requests import RequestLog
-from ai_collage.agent_files import child, digest, save
-from ai_collage.agent_models import Controls, Exchange, LayoutSource, Preferences, INTENT
-from ai_collage.conversation import Conversation
-from ai_collage.models import CollageError
-from ai_collage.models import InputLayout
-from ai_collage.projects import read_json
+from ai_collage.agent.requests import RequestLog
+from ai_collage.agent.files import child, digest, save
+from ai_collage.agent.models import Controls, Exchange, LayoutSource, Preferences, INTENT
+from ai_collage.agent.conversation import Conversation
+from ai_collage.engine.models import CollageError
+from ai_collage.engine.models import InputLayout
+from ai_collage.engine.projects import read_json
 
-from .helpers import framed_layout_data, layout_data
+from ..helpers import framed_layout_data, layout_data
 
 _CONNECT = socket.socket.connect
 
@@ -329,7 +329,7 @@ def test_preview_tampering_is_not_silently_rendered(agent_project):
 
 def test_external_acceptance_conflict_is_explicit(agent_project, tmp_path):
     conversation, requests = agent_project
-    from .helpers import write_layout
+    from ..helpers import write_layout
 
     conversation.store.apply_layout("demo", write_layout(tmp_path))
     with pytest.raises(CollageError, match="outside"):
@@ -344,7 +344,7 @@ def test_proposal_render_failure_does_not_replace_baseline(agent_project, monkey
     def fail(*args):
         raise OSError("simulated render failure")
 
-    monkeypatch.setattr("ai_collage.conversation.render_layout", fail)
+    monkeypatch.setattr("ai_collage.agent.conversation.render_layout", fail)
     with pytest.raises(OSError, match="simulated"):
         ask(conversation, requests, reply())
     assert Conversation(conversation.store, "demo").state.baseline == p1
@@ -450,7 +450,7 @@ def test_actual_usage_violation_is_recorded_and_stops_the_request(store, usage):
 
 def test_chat_local_commands_without_agent_dependencies(agent_project, monkeypatch, capsys):
     conversation, _ = agent_project
-    from ai_collage.__main__ import main
+    from ai_collage.cli.main import main
 
     for module in ("agent_framework", "azure.identity", "openai", "tiktoken"):
         monkeypatch.setitem(sys.modules, module, None)
@@ -469,10 +469,10 @@ def test_chat_local_commands_without_agent_dependencies(agent_project, monkeypat
 
 def test_chat_live_opt_in_needs_no_allowance(agent_project, monkeypatch, capsys):
     conversation, requests = agent_project
-    from ai_collage.__main__ import main
+    from ai_collage.cli.main import main
 
     model = FakeModel(*turns(reply()))
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: model)
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: model)
     lines = iter(["Make a collage", "/status", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
     assert main([
@@ -504,16 +504,16 @@ def response_envelope(text, *, status="completed"):
 
 
 def test_prompt_sources_reload_independently_of_cwd_and_fail_if_missing(tmp_path, monkeypatch):
-    from ai_collage import agent_provider
+    from ai_collage.agent import provider as agent_provider
 
-    package = tmp_path / "package"
+    package = tmp_path / "package" / "agent"
     prompt = package / "prompts" / "layout-agent.md"
     guide = tmp_path / "docs" / "layout-format.md"
     prompt.parent.mkdir(parents=True)
     guide.parent.mkdir()
     prompt.write_text("# Agent\nFirst instructions.\n", encoding="utf-8")
     guide.write_text("# Format\nShared geometry rules.\n", encoding="utf-8")
-    monkeypatch.setattr(agent_provider, "__file__", str(package / "agent_provider.py"))
+    monkeypatch.setattr(agent_provider, "__file__", str(package / "provider.py"))
     monkeypatch.chdir(guide.parent)
 
     assert agent_provider.instructions() == (
@@ -540,7 +540,7 @@ def test_real_framework_mocked_http_gate(store, status, stage):
     import httpx
     from openai import AsyncOpenAI, APIError
     from agent_framework.exceptions import AgentFrameworkException
-    from ai_collage.agent_provider import ENDPOINT, guarded_transport, instructions, run_agent
+    from ai_collage.agent.provider import ENDPOINT, guarded_transport, instructions, run_agent
 
     requests = RequestLog(store, "mocked")
     captured = []
@@ -627,7 +627,7 @@ def test_real_framework_mocked_http_gate(store, status, stage):
 def test_gate_rejects_an_extra_dispatch(store):
     pytest.importorskip("agent_framework")
     import httpx
-    from ai_collage.agent_provider import DEPLOYMENT, ENDPOINT, guarded_transport
+    from ai_collage.agent.provider import DEPLOYMENT, ENDPOINT, guarded_transport
 
     requests = RequestLog(store, "mocked")
     dispatched = []
@@ -658,7 +658,7 @@ def test_actual_payload_trims_optional_history_before_reserving(store, essential
     import httpx
     from openai import AsyncOpenAI
     from agent_framework.exceptions import AgentFrameworkException
-    from ai_collage.agent_provider import ENDPOINT, guarded_transport, run_agent
+    from ai_collage.agent.provider import ENDPOINT, guarded_transport, run_agent
 
     context = {
         "stage": "generation", "original_request": "Keep the original design",
@@ -731,7 +731,7 @@ def test_actual_payload_trims_optional_history_before_reserving(store, essential
 def test_foundry_preserves_local_input_limit_error_without_credentials_or_dispatch(store, monkeypatch):
     pytest.importorskip("agent_framework")
     import httpx
-    from ai_collage.agent_provider import FoundryModel
+    from ai_collage.agent.provider import FoundryModel
 
     class OfflineCredential:
         async def __aenter__(self):
@@ -766,8 +766,8 @@ def test_response_union_strictness_and_size():
 
 def test_optional_outer_cap_survives_new_projects_and_context_restarts(store, tmp_path):
     import httpx
-    from ai_collage.agent_provider import DEPLOYMENT, ENDPOINT, guarded_transport
-    from ai_collage.agent_requests import call_budget
+    from ai_collage.agent.provider import DEPLOYMENT, ENDPOINT, guarded_transport
+    from ai_collage.agent.requests import call_budget
 
     path = tmp_path / "pass.json"
     payload = {
@@ -800,7 +800,7 @@ def test_optional_outer_cap_survives_new_projects_and_context_restarts(store, tm
 
 
 def test_outer_cap_does_not_count_oversized_preflight_or_leak_after_exit(store, tmp_path):
-    from ai_collage.agent_requests import call_budget
+    from ai_collage.agent.requests import call_budget
 
     path = tmp_path / "pass.json"
     with call_budget(path, 1):
@@ -871,7 +871,7 @@ def test_composition_retry_and_exact_selection_are_not_acceptance(agent_project,
     def forbidden(*args):
         raise AssertionError("Selection must not render or accept")
 
-    monkeypatch.setattr("ai_collage.conversation.render_layout", forbidden)
+    monkeypatch.setattr("ai_collage.agent.conversation.render_layout", forbidden)
     monkeypatch.setattr(conversation.store, "accept_recipe", forbidden)
     client = FakeModel(intent(
         "select", proposal_id=p1, navigation={"kind": "ordinal", "text": "first"},
@@ -943,7 +943,7 @@ def test_return_correction_explains_ordinal_evidence_and_selects_exact_png(
     def forbidden(*args):
         raise AssertionError("Corrected selection must not render or accept")
 
-    monkeypatch.setattr("ai_collage.conversation.render_layout", forbidden)
+    monkeypatch.setattr("ai_collage.agent.conversation.render_layout", forbidden)
     monkeypatch.setattr(conversation.store, "accept_recipe", forbidden)
     client = FakeModel(
         intent("select", proposal_id=first, navigation={"kind": "id", "text": bad_quote}),
@@ -1078,7 +1078,7 @@ def test_corrected_task_rejects_invalid_or_unrelated_provenance(
 
 def test_initial_accepted_layout_is_a_valid_source(agent_project, tmp_path):
     conversation, _ = agent_project
-    from .helpers import write_layout
+    from ..helpers import write_layout
 
     conversation.store.create("accepted", [
         *conversation.store.photo_paths(conversation.store.load("demo")).values(),
@@ -1094,7 +1094,7 @@ def test_initial_accepted_layout_is_a_valid_source(agent_project, tmp_path):
 
 def test_fresh_layout_keeps_initial_accepted_recipe_as_reference(agent_project, tmp_path):
     conversation, _ = agent_project
-    from .helpers import write_layout
+    from ..helpers import write_layout
 
     conversation.store.create(
         "accepted", list(conversation.store.photo_paths(conversation.store.load("demo")).values()),
@@ -1176,13 +1176,13 @@ def test_old_conversation_rejected_without_writing(agent_project, old_version):
 
 
 def test_intent_prompt_identity_reloads_and_stage_schema_is_strict(tmp_path, monkeypatch):
-    from ai_collage import agent_provider
+    from ai_collage.agent import provider as agent_provider
 
-    package = tmp_path / "package"
+    package = tmp_path / "package" / "agent"
     prompt = package / "prompts" / "request-intent.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text("Interpret first", encoding="utf-8")
-    monkeypatch.setattr(agent_provider, "__file__", str(package / "agent_provider.py"))
+    monkeypatch.setattr(agent_provider, "__file__", str(package / "provider.py"))
     assert agent_provider.instructions("interpretation") == "Interpret first"
     prompt.write_text("Updated intent", encoding="utf-8")
     assert agent_provider.instructions("interpretation") == "Updated intent"
@@ -1243,7 +1243,7 @@ def test_unknown_label_answer_resumes_original_edit_after_restart(
 
 
 def test_interpretation_transport_schema_constrains_reference_and_navigation_metadata():
-    from ai_collage.agent_provider import response_format
+    from ai_collage.agent.provider import response_format
 
     definitions = response_format("interpretation")["json_schema"]["schema"]["$defs"]
     assert set(definitions["PhotoReference"]["properties"]) == {"text", "photo_id", "event_id"}
@@ -1267,7 +1267,7 @@ def test_interpretation_transport_schema_constrains_reference_and_navigation_met
     ("Swap photos 01 and 04.", [1, 4]),
 ])
 def test_normalized_numbered_references_ground_in_explicit_lists(wording, ids):
-    from ai_collage.photo_references import ground_references
+    from ai_collage.agent.photo_references import ground_references
 
     action = INTENT.validate_json(intent("fresh", references=[
         photo_reference(f"photo {number}", number) for number in ids
@@ -1288,7 +1288,7 @@ def test_normalized_numbered_references_ground_in_explicit_lists(wording, ids):
 def test_numbered_list_grounding_does_not_invent_identity_or_relax_other_evidence(
     wording, reference, photos,
 ):
-    from ai_collage.photo_references import ground_references
+    from ai_collage.agent.photo_references import ground_references
 
     action = INTENT.validate_json(intent("fresh", references=[reference]))
     with pytest.raises(CollageError):
@@ -1491,7 +1491,7 @@ def test_binding_evidence_and_state_tampering_are_rejected_on_restart(agent_proj
 
 
 def test_chat_acknowledgement_does_not_open_a_preview(agent_project, monkeypatch, capsys):
-    from ai_collage.chat import run_chat
+    from ai_collage.cli.chat import run_chat
 
     conversation, _ = agent_project
     prompt = "Photo 2 is breakfast"
@@ -1501,8 +1501,8 @@ def test_chat_acknowledgement_does_not_open_a_preview(agent_project, monkeypatch
     )
     inputs = iter([prompt, "Yes, remember those", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
-    monkeypatch.setattr("ai_collage.chat.open_preview", lambda _: pytest.fail("No naming preview"))
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: client)
+    monkeypatch.setattr("ai_collage.cli.chat.open_preview", lambda _: pytest.fail("No naming preview"))
     assert run_chat(
         conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=False,
     ) == 0
@@ -1584,8 +1584,8 @@ def test_resize_corrections_retain_prior_repairs_and_leave_unrelated_authored_va
 
 @pytest.mark.parametrize("fixed", [False, True])
 def test_unsuccessful_or_impossible_enlargement_preserves_previous_proposal(agent_project, fixed):
-    from ai_collage.conversation import RequestRejected
-    from ai_collage.chat import rejection_message
+    from ai_collage.agent.conversation import RequestRejected
+    from ai_collage.cli.chat import rejection_message
     conversation, requests = agent_project
     baseline, _ = ask(conversation, requests, reply())
     candidate = layout_data()
@@ -1610,7 +1610,7 @@ def test_unsuccessful_or_impossible_enlargement_preserves_previous_proposal(agen
 def test_chat_identity_rejections_show_validated_names_or_numbers_and_preserve_diagnostics(
     agent_project, monkeypatch, capsys, known,
 ):
-    from ai_collage.chat import run_chat
+    from ai_collage.cli.chat import run_chat
     conversation, requests = agent_project
     if known:
         remember(conversation, requests, "london bridge", 1)
@@ -1618,7 +1618,7 @@ def test_chat_identity_rejections_show_validated_names_or_numbers_and_preserve_d
     client = FakeModel(bad, bad)
     lines = iter(["Move invented name", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: client)
     run_chat(conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=True)
     output = capsys.readouterr()
     assert "No proposal exists yet." in output.err and "rephrase" in output.err
@@ -1631,7 +1631,7 @@ def test_chat_identity_rejections_show_validated_names_or_numbers_and_preserve_d
 def test_chat_generic_recovery_reports_real_baseline_and_accepts_a_different_next_request(
     agent_project, monkeypatch, capsys,
 ):
-    from ai_collage.chat import run_chat
+    from ai_collage.cli.chat import run_chat
     conversation, requests = agent_project
     remember(conversation, requests)
     ask(conversation, requests, reply())
@@ -1639,7 +1639,7 @@ def test_chat_generic_recovery_reports_real_baseline_and_accepts_a_different_nex
     client = FakeModel(bad, bad, intent("edit", source="current"), reply())
     lines = iter(["Use a darker background", "Use a different background", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: client)
     run_chat(conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=True)
     output = capsys.readouterr()
     assert "Your collage is still at P001." in output.err and "rephrase" in output.err
@@ -1649,7 +1649,7 @@ def test_chat_generic_recovery_reports_real_baseline_and_accepts_a_different_nex
 
 
 def test_chat_identity_question_reminder_excludes_unconfirmed_candidates(agent_project, monkeypatch, capsys):
-    from ai_collage.chat import run_chat
+    from ai_collage.cli.chat import run_chat
     conversation, requests = agent_project
     remember(conversation, requests, "london bridge", 1)
     client = FakeModel(intent(
@@ -1658,7 +1658,7 @@ def test_chat_identity_question_reminder_excludes_unconfirmed_candidates(agent_p
     ))
     lines = iter(["Move river crossing", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: client)
     run_chat(conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=True)
     output = capsys.readouterr()
     assert "Names I know: 1 = london bridge.\n" in output.out
@@ -1667,12 +1667,12 @@ def test_chat_identity_question_reminder_excludes_unconfirmed_candidates(agent_p
 
 
 def test_chat_publication_io_failure_is_not_called_recoverable(agent_project, monkeypatch, capsys):
-    from ai_collage.chat import run_chat
+    from ai_collage.cli.chat import run_chat
     conversation, _ = agent_project
     client = FakeModel(intent("fresh"), reply())
     lines = iter(["Make a collage", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: client)
 
     def fail_publication(*args, **kwargs):
         raise OSError("Uncertain disk write")
@@ -2055,7 +2055,7 @@ def test_external_controls_cannot_retarget_the_receipt_after_restart(agent_proje
 
 
 def test_local_chat_resume_and_status_redisplay_the_receipt_without_approval_or_calls(agent_project, monkeypatch, capsys):
-    from ai_collage.chat import run_chat
+    from ai_collage.cli.chat import run_chat
 
     conversation, requests = agent_project
     prompt = "Map castle to photo 2"
@@ -2097,7 +2097,7 @@ def test_interrupted_naming_state_commit_preserves_evidence_and_blocks_duplicate
 
 
 def test_approved_name_survives_generation_timeout_with_unchanged_layout_and_pinned_resume(agent_project):
-    from ai_collage.agent_requests import StageTimeout
+    from ai_collage.agent.requests import StageTimeout
 
     conversation, requests = agent_project
     baseline, _ = ask(conversation, requests, reply())

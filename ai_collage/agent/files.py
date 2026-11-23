@@ -7,8 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from .models import MAX_JSON_BYTES, CollageError
-from .projects import _contained
+from ..engine.models import MAX_JSON_BYTES, CollageError
+from ..engine.projects import _contained
 
 
 def canonical(value: BaseModel) -> bytes:

@@ -112,7 +112,7 @@ The generated schema is checked against the models in the tests. To regenerate
 it after intentionally changing a contract, run from the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe -c "import json; from pathlib import Path; from ai_collage.models import InputLayout; Path(r'docs\layout.schema.json').write_text(json.dumps(InputLayout.model_json_schema(), indent=2) + '\n', encoding='utf-8')"
+.\.venv\Scripts\python.exe -c "import json; from pathlib import Path; from ai_collage.engine.models import InputLayout; Path(r'docs\layout.schema.json').write_text(json.dumps(InputLayout.model_json_schema(), indent=2) + '\n', encoding='utf-8')"
 ```
 
 ## Conversational proposals (optional)
@@ -274,8 +274,8 @@ OpenAI SDK 2.54.0, and HTTPX 0.28.1. The manifest pins the provider and constrai
 the compatible SDK major version. Do not reuse or run the separate
 `temp-foundry-test` environment/scripts.
 
-Interpretation instructions live in `ai_collage\prompts\request-intent.md`.
-Generation loads `ai_collage\prompts\layout-agent.md` plus the shared
+Interpretation instructions live in `ai_collage\agent\prompts\request-intent.md`.
+Generation loads `ai_collage\agent\prompts\layout-agent.md` plus the shared
 [layout field guide](layout-format.md); questions and lifecycle actions are
 not generation responses. Controls, resolved source/task, history and validation
 feedback are supplied separately. Fresh layouts retain the previous recipe as
@@ -284,7 +284,7 @@ To print both stages' instructions offline from the repository root, without
 credentials or model calls:
 
 ```powershell
-.\.venv\Scripts\python.exe -c "from ai_collage.agent_provider import instruction_bundle; print(instruction_bundle())"
+.\.venv\Scripts\python.exe -c "from ai_collage.agent.provider import instruction_bundle; print(instruction_bundle())"
 ```
 
 Create a fresh format 3 project with `create`, using `.collage-data-v3`.
@@ -404,7 +404,7 @@ All experiment runtime files remain ignored by Git.
 
 ### Repeatable prompt sequences
 
-`python -m ai_collage.replay` runs repository-owned JSON sequences through the
+`python -m ai_collage.cli.replay` runs repository-owned JSON sequences through the
 same conversation/provider operations as chat. It captures results, not
 subjective quality or benchmark passes, and **never accepts a proposal**.
 It is the single sequence-execution path; the old fixed evaluator and its live
@@ -439,13 +439,13 @@ Validate sequence structure and source-file availability/hashes **offline**,
 without creating a project, opening credentials, or sending requests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --check
+.\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --check
 ```
 
 After separate live authorization, run **only the next message**:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-FRESH-PROJECT
+.\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-FRESH-PROJECT
 ```
 
 Repeat the same command with `--resume` to run the next message in that
@@ -473,7 +473,7 @@ without durable teaching do not acquire routine approval stops.
 After reviewing the question/receipt, supply a recorded supplemental answer:
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_collage.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --resume --answer "Photo 2" --answer-origin user
+.\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --resume --answer "Photo 2" --answer-origin user
 ```
 
 Use `--answer-origin copilot` only for an answer actually authored by Copilot.
@@ -549,10 +549,10 @@ rendering new previews, accepting anything, or making model requests.
 
 ```powershell
 # Either sequence: verify saved evidence only.
-.\.venv\Scripts\python.exe -m ai_collage.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT
+.\.venv\Scripts\python.exe -m ai_collage.cli.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT
 
 # Dark portrait sequence: also check the specific historical expectations.
-.\.venv\Scripts\python.exe -m ai_collage.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --profile dark-portrait-adjustments
+.\.venv\Scripts\python.exe -m ai_collage.cli.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --profile dark-portrait-adjustments
 ```
 
 The default `integrity` profile checks source/instruction hashes, proposal
@@ -775,29 +775,50 @@ See the [layout field guide](layout-format.md) for current units, limits, and
 geometry, and the [historical design decisions](../planning/003-layout-evolution.md)
 for the rationale behind the feature increments.
 
+## Code and test organization
+
+| Package | Responsibility | Tests |
+|---|---|---|
+| `ai_collage\engine` | Deterministic models, geometry, photo rendering and project storage | `tests\engine` |
+| `ai_collage\agent` | Conversation, interpretation safeguards, requests/provider and prompts | `tests\agent` |
+| `ai_collage\evaluation` | Callable replay execution and offline evidence assessment | `tests\evaluation` |
+| `ai_collage\cli` | Argument parsing and terminal chat/presentation | `tests\cli` |
+
+The agent depends on the engine; evaluation uses both, and CLI modules expose
+their operations. Neither engine nor agent depends on evaluation or CLI.
+`tests\conftest.py` and `tests\helpers.py` hold shared fixtures/helpers.
+The standard `python -m ai_collage` entry point is unchanged; replay and
+assessment use `python -m ai_collage.cli.replay` and
+`python -m ai_collage.cli.assess`. Old module paths are not retained.
+
 ## Verification
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r .\requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest -q .\tests --ignore=.\tests\test_agent.py --ignore=.\tests\test_replay.py --ignore=.\tests\test_assess.py
+.\.venv\Scripts\python.exe -m pytest -q .\tests\engine .\tests\cli
 ```
 
 Deterministic tests are grouped into contracts, geometry, centre anchoring,
 rendering, storage, CLI, and curated examples. This includes integration checks
-and CLI subprocesses, not only unit tests. Optional mocked agent tests live
-separately in `tests\test_agent.py`, `tests\test_replay.py` and
-`tests\test_assess.py` and are excluded above. Run those separately
-when working on the agent:
+and CLI subprocesses, not only unit tests. Optional mocked agent/evaluation
+tests live separately under `tests\agent` and `tests\evaluation`.
+Run those when working on the agent:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q .\tests\test_agent.py .\tests\test_replay.py .\tests\test_assess.py
+.\.venv\Scripts\python.exe -m pytest -q .\tests\agent .\tests\evaluation
 ```
 
 These agent tests use fake replies and mocked HTTP; they do not call a live
-model or initialize Azure credentials.
+model or initialize Azure credentials. With the optional dependencies installed,
+run the complete offline suite before closing a cross-package change:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q --tb=short -p no:cacheprovider
+```
+
 Shared fixtures/helpers remain small. Synthetic photo tests check
 known pixels and shapes; they do not depend on the personal photos in `photos`.
 Example tests use synthetic 3:4 sources matching the recipes' required aspect
 ratios. Real-photo before/after comparisons are separate phase evidence.
-Tests block network access; CLI subprocess tests also remove Azure/OpenAI
+Tests block network access; workflow CLI subprocess helpers also remove Azure/OpenAI
 environment variables. There is no model-based aesthetic judgment.

@@ -4,12 +4,12 @@ from PIL import Image
 from pydantic import ValidationError
 import pytest
 
-from ai_collage import imaging as imaging_module, projects as project_module
-from ai_collage.imaging import load_photo
-from ai_collage.models import CollageError, InputLayout, MAX_FILE_BYTES, MAX_JSON_BYTES
-from ai_collage.projects import ProjectStore, read_json
+from ai_collage.engine import imaging as imaging_module, projects as project_module
+from ai_collage.engine.imaging import load_photo
+from ai_collage.engine.models import CollageError, InputLayout, MAX_FILE_BYTES, MAX_JSON_BYTES
+from ai_collage.engine.projects import ProjectStore, read_json
 
-from .helpers import framed_layout_data, layout_data, photo_file, write_layout
+from ..helpers import framed_layout_data, layout_data, photo_file, write_layout
 
 
 def test_inconsistent_saved_border_geometry_is_rejected(store, sources, tmp_path):

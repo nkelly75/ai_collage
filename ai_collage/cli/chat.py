@@ -9,11 +9,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .agent_requests import RequestLog
-from .agent_models import Controls, Reasoning, ResolvedIntent
-from .conversation import Conversation, RequestRejected
-from .models import CollageError
-from .projects import ProjectStore
+from ..agent.requests import RequestLog
+from ..agent.models import Controls, Reasoning, ResolvedIntent
+from ..agent.conversation import Conversation, RequestRejected
+from ..engine.models import CollageError
+from ..engine.projects import ProjectStore
 
 HELP = """/show P001
 /rate P001 worked|partly|failed [note]
@@ -186,7 +186,7 @@ def run_chat(
                 else:
                     if not live:
                         raise CollageError("Model requests are disabled; restart chat with --live.")
-                    from .agent_provider import FoundryModel
+                    from ..agent.provider import FoundryModel
 
                     result = await conversation.request(
                         text, FoundryModel(), requests, progress=show_progress,

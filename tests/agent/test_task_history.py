@@ -4,16 +4,16 @@ import json
 
 import pytest
 
-from ai_collage.conversation import Conversation
-from ai_collage.agent_models import INTENT, LayoutSource, NavigationEvidence
-from ai_collage.models import CollageError, InputLayout
-from ai_collage.projects import read_json
-from ai_collage.task_history import (
+from ai_collage.agent.conversation import Conversation
+from ai_collage.agent.models import INTENT, LayoutSource, NavigationEvidence
+from ai_collage.engine.models import CollageError, InputLayout
+from ai_collage.engine.projects import read_json
+from ai_collage.agent.task_history import (
     RecipeChange, TaskRecord, change_matches, matching_records, navigation_target,
     recipe_changes, undo_target, validate_navigation,
 )
 
-from .helpers import layout_data
+from ..helpers import layout_data
 from .test_agent import (
     FakeModel, agent_project, ask, asyncio_wakeup_pair, intent, remember, reply,
 )
@@ -150,7 +150,7 @@ def test_old_descriptive_task_retrieval_and_exact_return_beyond_windows(agent_pr
     def forbidden(*args):
         raise AssertionError("Exact selection must not render or accept")
 
-    monkeypatch.setattr("ai_collage.conversation.render_layout", forbidden)
+    monkeypatch.setattr("ai_collage.agent.conversation.render_layout", forbidden)
     monkeypatch.setattr(conversation.store, "accept_recipe", forbidden)
     model = FakeModel(intent("select", proposal_id=first, navigation=navigation(
         "before", "before thicker borders", task_id=task.task_id,

@@ -3,9 +3,9 @@ import math
 from PIL import Image, ImageDraw
 import pytest
 
-from ai_collage.models import CollageError
+from ai_collage.engine.models import CollageError
 
-from .helpers import framed_layout_data, layout_data, photo_file, rounded_layout_data, write_layout
+from ..helpers import framed_layout_data, layout_data, photo_file, rounded_layout_data, write_layout
 
 
 @pytest.mark.parametrize("border_width", [0, 2])

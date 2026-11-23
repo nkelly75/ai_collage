@@ -3,12 +3,12 @@ import json
 
 import pytest
 
-from ai_collage.agent_models import Attempt, LayoutSource
-from ai_collage.agent_requests import RequestLog, StageTimeout
-from ai_collage.chat import show_usage
-from ai_collage.conversation import Conversation
-from ai_collage.models import CollageError
-from ai_collage.projects import read_json
+from ai_collage.agent.models import Attempt, LayoutSource
+from ai_collage.agent.requests import RequestLog, StageTimeout
+from ai_collage.cli.chat import show_usage
+from ai_collage.agent.conversation import Conversation
+from ai_collage.engine.models import CollageError
+from ai_collage.engine.projects import read_json
 
 from .test_agent import (
     FakeModel, agent_project, ask, asyncio_wakeup_pair, intent, photo_reference,
@@ -22,7 +22,7 @@ def test_stage_corrections_share_deadline_and_stop_before_another_dispatch(
 ):
     conversation, requests = agent_project
     clock = [1000.0]
-    monkeypatch.setattr("ai_collage.agent_requests.monotonic", lambda: clock[0])
+    monkeypatch.setattr("ai_collage.agent.requests.monotonic", lambda: clock[0])
 
     class ClockModel(FakeModel):
         async def complete(self, context, log, purpose):
@@ -43,7 +43,7 @@ def test_stage_corrections_share_deadline_and_stop_before_another_dispatch(
 def test_partial_stage_budget_is_reused_and_generation_gets_a_new_budget(agent_project, monkeypatch):
     conversation, requests = agent_project
     clock = [1000.0]
-    monkeypatch.setattr("ai_collage.agent_requests.monotonic", lambda: clock[0])
+    monkeypatch.setattr("ai_collage.agent.requests.monotonic", lambda: clock[0])
 
     class ClockModel(FakeModel):
         async def complete(self, context, log, purpose):
@@ -63,7 +63,7 @@ def test_partial_stage_budget_is_reused_and_generation_gets_a_new_budget(agent_p
 def test_exhausted_correction_budget_cannot_dispatch_again(agent_project, monkeypatch, stage):
     conversation, requests = agent_project
     clock = [1000.0]
-    monkeypatch.setattr("ai_collage.agent_requests.monotonic", lambda: clock[0])
+    monkeypatch.setattr("ai_collage.agent.requests.monotonic", lambda: clock[0])
     original_context = conversation.context
     counts = {"interpretation": 0, "generation": 0}
 
@@ -300,13 +300,13 @@ def test_readable_project_usage_preserves_unknown_attempt_ids(store, capsys, mis
 def test_chat_progress_low_candidate_and_readable_status_are_terminal_only(
     agent_project, monkeypatch, capsys, interpretation,
 ):
-    from ai_collage.__main__ import main
+    from ai_collage.cli.main import main
 
     conversation, requests = agent_project
     model = FakeModel("{}", intent("fresh", references=[photo_reference("photo 2", 2)]), reply())
     lines = iter(["Make photo 2 stand out", "/status", "/quit"])
     monkeypatch.setattr("builtins.input", lambda _: next(lines))
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: model)
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel", lambda: model)
     assert main([
         "--data-dir", str(conversation.store.data_dir), "chat", "--project", "demo",
         "--live", "--no-open", "--interpretation-reasoning", interpretation,
@@ -327,7 +327,7 @@ def test_chat_progress_low_candidate_and_readable_status_are_terminal_only(
 def test_actual_payload_reasoning_and_attempt_settings(store, stage, generation, interpretation):
     import httpx
     from openai import AsyncOpenAI
-    from ai_collage.agent_provider import ENDPOINT, guarded_transport, run_agent
+    from ai_collage.agent.provider import ENDPOINT, guarded_transport, run_agent
 
     requests = RequestLog(
         store, "candidate", generation_reasoning=generation,
@@ -361,7 +361,7 @@ def test_actual_payload_reasoning_and_attempt_settings(store, stage, generation,
 
 def test_transport_timeout_is_identified_without_credentials_or_live_calls(agent_project, monkeypatch):
     import httpx
-    from ai_collage.agent_provider import FoundryModel
+    from ai_collage.agent.provider import FoundryModel
 
     conversation, requests = agent_project
 

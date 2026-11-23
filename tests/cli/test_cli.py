@@ -1,12 +1,14 @@
 from pathlib import Path
 import copy
 import json
+import subprocess
+import sys
 
 import pytest
 
-from ai_collage.projects import ProjectStore
+from ai_collage.engine.projects import ProjectStore
 
-from .helpers import framed_layout_data, layout_data, run_cli, write_layout
+from ..helpers import REPO, framed_layout_data, layout_data, run_cli, write_layout
 
 
 @pytest.mark.parametrize("border_width", [0, 2])
@@ -95,3 +97,25 @@ def test_old_archive_commands_fail_without_writes(tmp_path, sources):
             "already exists" if command == "create" else "Unsupported schema_version"
         ) in result.stderr
         assert {p: p.read_bytes() for p in data_dir.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("module,option", [
+    ("ai_collage", "apply-layout"),
+    ("ai_collage.cli.replay", "--check"),
+    ("ai_collage.cli.assess", "--profile"),
+])
+def test_module_entry_points_show_help_without_network(module, option):
+    script = (
+        "import runpy, socket, sys\n"
+        "def blocked(*args, **kwargs):\n"
+        "    raise AssertionError('Help must not make network requests')\n"
+        "socket.socket.connect = socket.create_connection = blocked\n"
+        f"sys.argv = [{module!r}, '--help']\n"
+        f"runpy.run_module({module!r}, run_name='__main__')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=REPO,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert option in result.stdout and not result.stderr

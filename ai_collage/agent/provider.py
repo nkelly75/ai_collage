@@ -5,10 +5,10 @@ import json
 import time
 from pathlib import Path
 
-from .agent_requests import RequestLog, StageTimeout
-from .agent_models import INTENT
-from .models import CollageError, InputLayout
-from .projects import parse_json
+from .requests import RequestLog, StageTimeout
+from .models import INTENT
+from ..engine.models import CollageError, InputLayout
+from ..engine.projects import parse_json
 
 ENDPOINT = "https://nkfoundry26.openai.azure.com/openai/v1/"
 DEPLOYMENT = "gpt-5.4-mini"
@@ -22,7 +22,7 @@ def instructions(stage: str = "generation") -> str:
     if stage != "generation":
         raise CollageError("Unknown model stage.")
     prompt = package / "prompts" / "layout-agent.md"
-    guide = package.parent / "docs" / "layout-format.md"
+    guide = package.parents[1] / "docs" / "layout-format.md"
     return (
         prompt.read_text(encoding="utf-8")
         + "\n\n# Current recipe field guide\n\n"

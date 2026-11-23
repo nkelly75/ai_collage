@@ -77,9 +77,20 @@ vulnerabilities. The user subsequently committed and merged that work onto
 [014: Correctness and security review before main](014-main-readiness-review.md)
 is **executed and closed**. It compared committed `nkelly/llm-wip-1` against
 `main`; [014 results](014_results.md) record two surgically repaired/re-reviewed
-correctness defects and no confirmed security vulnerabilities. Repairs remain
-uncommitted for the user. Mechanical deterministic/LLM sub-package refactoring
-was excluded and remains a separate later phase; no merge is authorized.
+correctness defects and no confirmed security vulnerabilities. The user committed
+that work before 015. Mechanical package refactoring was excluded from 014
+and completed separately in 015; no merge is authorized.
+
+[015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md)
+is **implemented and closed offline**. The structure separates `engine`,
+`agent`, `evaluation` and `cli`, with corresponding test directories.
+[015 results](015_results.md) record preservation of all 588 existing cases,
+four added boundary checks and unchanged instructions/contracts/command help.
+Changes remain uncommitted for the user; execution has stopped for review.
+The separately authorized [01-05 replay follow-up](015_replay_results.md)
+is also complete and closed; all five completed with their requested edits
+and exact-return behavior verified. Human-led trials and further live work
+still require separate authorization.
 
 ## Planning records
 
@@ -110,7 +121,8 @@ and record 003 spans several feature increments.
 | [011: Interpretation and naming reassessment](011-interpretation-and-naming-reassessment.md) | Review complete; [results](011_results.md) recommend a simpler boundary and explicit durable naming. | Selected direction separately approved and implemented in 012. |
 | [012: Model-led references and confirmed names](012-model-led-references-and-confirmed-names.md) | Successfully completed and closed with user sign-off; see [results](012_results.md). | Separate [replay](012_replay_results.md), [return repair/retest](012_return_repair_results.md) and [human-led trial 05 / closeout](012_trial05_results.md) evidence; commit remains user-managed. |
 | [013: Branch correctness and security review](013-branch-correctness-and-security-review.md) | Executed and closed; see [results](013_results.md). | Full branch delta reviewed; one correctness repair/re-review, no confirmed security vulnerabilities. Subsequently committed/merged by the user. |
-| [014: Correctness and security review before main](014-main-readiness-review.md) | Executed and closed; see [results](014_results.md). | Full main-to-target delta reviewed; two correctness repairs/re-review, no confirmed security vulnerabilities. Repairs uncommitted; no package refactor or merge. |
+| [014: Correctness and security review before main](014-main-readiness-review.md) | Executed and closed; see [results](014_results.md). | Full main-to-target delta reviewed; two correctness repairs/re-review, no confirmed security vulnerabilities. Subsequently committed by the user; no merge. |
+| [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Changes uncommitted; human-led trials remain separately gated. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

@@ -5,13 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from ai_collage.assess import assess, dark_portrait_errors, main
-from ai_collage.projects import read_json
-from ai_collage.replay import replay
-from ai_collage.models import CollageError
+from ai_collage.evaluation.assess import assess, dark_portrait_errors
+from ai_collage.cli.assess import main
+from ai_collage.engine.projects import read_json
+from ai_collage.evaluation.replay import replay
+from ai_collage.engine.models import CollageError
 
-from .helpers import REPO, layout_data, photo_file
-from .test_agent import FakeModel, agent_project, asyncio_wakeup_pair, intent, reply, turns
+from ..helpers import REPO, layout_data, photo_file
+from ..agent.test_agent import FakeModel, agent_project, asyncio_wakeup_pair, intent, reply, turns
 from .test_replay import execute, scenario
 
 
@@ -78,8 +79,8 @@ def test_dark_portrait_profile_checks_saved_results(dark_replay, store, border_c
 
 
 def test_dark_portrait_checks_preserve_exact_unrelated_fields(agent_project):
-    from ai_collage.geometry import resolve_layout
-    from ai_collage.models import InputLayout
+    from ai_collage.engine.geometry import resolve_layout
+    from ai_collage.engine.models import InputLayout
 
     conversation, _ = agent_project
     photos = conversation.store.load("demo").photos
@@ -165,10 +166,10 @@ def test_cli_is_read_only_except_append_only_assessments(saved_replay, store, mo
     def forbidden(*args, **kwargs):
         raise AssertionError("Assessment must not initialize a conversation/model/request log or accept.")
 
-    monkeypatch.setattr("ai_collage.conversation.Conversation.__init__", forbidden)
-    monkeypatch.setattr("ai_collage.conversation.Conversation.accept", forbidden)
-    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel.complete", forbidden)
-    monkeypatch.setattr("ai_collage.agent_requests.RequestLog.__init__", forbidden)
+    monkeypatch.setattr("ai_collage.agent.conversation.Conversation.__init__", forbidden)
+    monkeypatch.setattr("ai_collage.agent.conversation.Conversation.accept", forbidden)
+    monkeypatch.setattr("ai_collage.agent.provider.FoundryModel.complete", forbidden)
+    monkeypatch.setattr("ai_collage.agent.requests.RequestLog.__init__", forbidden)
     (saved_replay / "conversation" / "acceptance.json").write_text("{}", encoding="utf-8")
     original = {
         path: path.read_bytes()

@@ -2,7 +2,7 @@ import socket
 
 import pytest
 
-from ai_collage.projects import ProjectStore
+from ai_collage.engine.projects import ProjectStore
 
 from .helpers import photo_file
 

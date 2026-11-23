@@ -4,15 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from ai_collage.agent_requests import RequestLog
-from ai_collage.agent_files import digest
-from ai_collage.conversation import Conversation
-from ai_collage.models import CollageError
-from ai_collage.projects import read_json
-from ai_collage.replay import ReplayReport, main, replay
+from ai_collage.agent.requests import RequestLog
+from ai_collage.agent.files import digest
+from ai_collage.agent.conversation import Conversation
+from ai_collage.engine.models import CollageError
+from ai_collage.engine.projects import read_json
+from ai_collage.evaluation.replay import ReplayReport, replay
+from ai_collage.cli.replay import main
 
-from .helpers import REPO, layout_data
-from .test_agent import FakeModel, asyncio_wakeup_pair, intent, photo_name, photo_reference, reply, turns
+from ..helpers import REPO, layout_data
+from ..agent.test_agent import FakeModel, asyncio_wakeup_pair, intent, photo_name, photo_reference, reply, turns
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def execute(store, path, model, **options):
 def test_reasoning_candidate_is_fixed_on_resume_and_verified_offline(
     store, scenario, generation, interpretation,
 ):
-    from ai_collage.assess import assess
+    from ai_collage.evaluation.assess import assess
 
     path, _ = scenario
     model = FakeModel(*turns(reply(), reply()))
@@ -69,8 +70,8 @@ def test_reasoning_candidate_is_fixed_on_resume_and_verified_offline(
 
 @pytest.mark.parametrize("interpretation", ["high", "low"])
 def test_timeout_retry_preserves_original_answer_and_auditable_task(store, scenario, interpretation):
-    from ai_collage.agent_requests import StageTimeout
-    from ai_collage.assess import assess
+    from ai_collage.agent.requests import StageTimeout
+    from ai_collage.evaluation.assess import assess
 
     path, _ = scenario
     options = dict(interpretation_reasoning=interpretation, generation_reasoning="low")
@@ -100,7 +101,7 @@ def test_timeout_retry_preserves_original_answer_and_auditable_task(store, scena
 def test_naming_receipt_pauses_replay_until_explicit_approval_without_changing_baseline(
     store, scenario, naming_first,
 ):
-    from ai_collage.assess import assess
+    from ai_collage.evaluation.assess import assess
 
     path, data = scenario
     naming_prompt = "Photo 2 is breakfast"
@@ -152,7 +153,7 @@ def test_naming_receipt_pauses_replay_until_explicit_approval_without_changing_b
 
 
 def test_rejected_naming_replay_records_a_discarded_task_without_a_proposal(store, scenario):
-    from ai_collage.assess import assess
+    from ai_collage.evaluation.assess import assess
 
     path, data = scenario
     prompt = "Photo 2 is breakfast; move breakfast higher"
@@ -177,7 +178,7 @@ def test_rejected_naming_replay_records_a_discarded_task_without_a_proposal(stor
 
 
 def test_confirmed_teaching_with_exact_return_assesses_as_selection_not_generation(store, scenario):
-    from ai_collage.assess import assess
+    from ai_collage.evaluation.assess import assess
 
     path, data = scenario
     prompt = "Photo 2 is castle; return to P001"
@@ -249,7 +250,7 @@ def test_remaining_reopens_at_the_declared_message(store, scenario, monkeypatch)
             super().__init__(*args, **kwargs)
             opened.append(self.state.baseline)
 
-    monkeypatch.setattr("ai_collage.replay.Conversation", ObservedConversation)
+    monkeypatch.setattr("ai_collage.evaluation.replay.Conversation", ObservedConversation)
     result = execute(store, path, FakeModel(*turns(reply(), reply())), remaining=True)
     assert opened == [None, "P001"]
     assert result.next_step == 2 and len(requests.attempts()) == 4
@@ -349,7 +350,7 @@ def test_instructions_changing_during_correction_stop_before_another_call(store,
     class ChangedInstructions(FakeModel):
         async def complete(self, context, requests, purpose):
             response = await super().complete(context, requests, purpose)
-            monkeypatch.setattr("ai_collage.replay.instruction_bundle", lambda: "Changed instructions")
+            monkeypatch.setattr("ai_collage.evaluation.replay.instruction_bundle", lambda: "Changed instructions")
             return response
 
     model = ChangedInstructions("not JSON", reply())
@@ -439,7 +440,7 @@ def test_resume_rejects_changed_execution_identity(store, scenario, monkeypatch,
     elif change == "source":
         data["images"].reverse()
     elif change == "instructions":
-        monkeypatch.setattr("ai_collage.replay.instruction_bundle", lambda: "Changed instructions")
+        monkeypatch.setattr("ai_collage.evaluation.replay.instruction_bundle", lambda: "Changed instructions")
     else:
         conversation = Conversation(store, "demo")
         conversation.controls(conversation.state.controls.model_copy(update={"cropping": True}))
@@ -490,7 +491,7 @@ def test_check_validates_shipped_sequences_without_creating_data(tmp_path, capsy
     def forbidden():
         raise AssertionError("Offline check must not initialize a model")
 
-    monkeypatch.setattr("ai_collage.replay.FoundryModel", forbidden)
+    monkeypatch.setattr("ai_collage.evaluation.replay.FoundryModel", forbidden)
     for filename, name in (
         ("01_dark_portrait_adjustments.json", "checkpoint-a"),
         ("02_landscape_staggered_adjustments.json", "landscape-staggered"),
@@ -527,7 +528,7 @@ def test_cli_runs_one_step_and_reports_stop_status(store, scenario, monkeypatch,
     path, _ = scenario
     responses = turns(response) if isinstance(response, str) and "schema_version" in response else [response]
     model = FakeModel(*responses)
-    monkeypatch.setattr("ai_collage.replay.FoundryModel", lambda: model)
+    monkeypatch.setattr("ai_collage.evaluation.replay.FoundryModel", lambda: model)
     assert main([
         "--sequence", str(path), "--data-dir", str(store.data_dir),
         "--project", "demo",
@@ -541,7 +542,7 @@ def test_cli_runs_one_step_and_reports_stop_status(store, scenario, monkeypatch,
 def test_cli_independent_reasoning_overrides_are_captured(store, scenario, monkeypatch, capsys):
     path, _ = scenario
     model = FakeModel(*turns(reply()))
-    monkeypatch.setattr("ai_collage.replay.FoundryModel", lambda: model)
+    monkeypatch.setattr("ai_collage.evaluation.replay.FoundryModel", lambda: model)
     assert main([
         "--sequence", str(path), "--data-dir", str(store.data_dir), "--project", "demo",
         "--generation-reasoning", "high", "--interpretation-reasoning", "low",
@@ -553,7 +554,7 @@ def test_cli_independent_reasoning_overrides_are_captured(store, scenario, monke
 
 
 def test_recorded_clarification_continues_script_and_assesses_as_assisted(store, scenario):
-    from ai_collage.assess import assess
+    from ai_collage.evaluation.assess import assess
 
     path, data = scenario
     model = FakeModel(
@@ -582,8 +583,8 @@ def test_recorded_clarification_continues_script_and_assesses_as_assisted(store,
 
 
 def test_answer_failure_can_be_explicitly_retried_without_resetting_outer_cap(store, scenario, tmp_path):
-    from ai_collage.agent_requests import call_budget
-    from ai_collage.assess import assess
+    from ai_collage.agent.requests import call_budget
+    from ai_collage.evaluation.assess import assess
 
     path, _ = scenario
     budget = tmp_path / "budget.json"
@@ -621,7 +622,7 @@ def test_clarification_limit_blocks_third_answer_without_calls(store, scenario):
 
 
 def test_selection_fresh_and_older_source_edits_are_not_linearized(store, scenario):
-    from ai_collage.assess import assess
+    from ai_collage.evaluation.assess import assess
 
     path, data = scenario
     data["messages"].extend([
@@ -650,7 +651,7 @@ def test_selection_fresh_and_older_source_edits_are_not_linearized(store, scenar
 
 
 def test_return_confirmation_resume_preserves_exact_selection_and_assesses_offline(store, scenario):
-    from ai_collage.assess import assess
+    from ai_collage.evaluation.assess import assess
 
     path, data = scenario
     data["messages"].append({"name": "return", "prompt": "Return to the first one"})
@@ -671,7 +672,7 @@ def test_return_confirmation_resume_preserves_exact_selection_and_assesses_offli
 
 
 def test_only_intent_prompt_change_also_blocks_resume(store, scenario, monkeypatch):
-    from ai_collage import agent_provider
+    from ai_collage.agent import provider as agent_provider
 
     path, _ = scenario
     model = FakeModel(*turns(reply()))
@@ -691,9 +692,9 @@ def test_shipped_landscape_sequence_runs_all_four_messages_with_controlled_two_s
     pytest.importorskip("agent_framework")
     import httpx
     from openai import AsyncOpenAI
-    from ai_collage.agent_provider import ENDPOINT, guarded_transport, run_agent
-    from ai_collage.assess import assess
-    from .test_agent import response_envelope
+    from ai_collage.agent.provider import ENDPOINT, guarded_transport, run_agent
+    from ai_collage.evaluation.assess import assess
+    from ..agent.test_agent import response_envelope
 
     path = REPO / "examples" / "sequences" / "02_landscape_staggered_adjustments.json"
     initial = {

@@ -4,10 +4,10 @@ import json
 from pydantic import ValidationError
 import pytest
 
-from ai_collage.models import CollageError, InputLayout
-from ai_collage.projects import read_json
+from ai_collage.engine.models import CollageError, InputLayout
+from ai_collage.engine.projects import read_json
 
-from .helpers import framed_layout_data, layout_data, write_layout
+from ..helpers import framed_layout_data, layout_data, write_layout
 
 
 @pytest.mark.parametrize("mutation", [
@@ -165,8 +165,43 @@ def test_duplicate_json_fields_are_rejected(tmp_path):
 
 
 def test_generated_schema_matches_models():
-    path = Path(__file__).resolve().parents[1] / "docs" / "layout.schema.json"
+    path = Path(__file__).resolve().parents[2] / "docs" / "layout.schema.json"
     assert json.loads(path.read_text(encoding="utf-8")) == InputLayout.model_json_schema()
+
+
+def test_engine_imports_without_agent_cli_or_optional_model_dependencies():
+    import subprocess
+    import sys
+
+    script = """
+import importlib.abc
+import socket
+import sys
+
+class ForbidDependencies(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        forbidden = (
+            'ai_collage.agent', 'ai_collage.cli', 'ai_collage.evaluation',
+            'agent_framework', 'openai', 'azure', 'httpx', 'aiohttp', 'tiktoken',
+        )
+        if any(fullname == name or fullname.startswith(name + '.') for name in forbidden):
+            raise AssertionError('Engine imported forbidden dependency: ' + fullname)
+
+def blocked(*args, **kwargs):
+    raise AssertionError('Engine import must not connect')
+
+socket.socket.connect = socket.create_connection = blocked
+sys.meta_path.insert(0, ForbidDependencies())
+import ai_collage.engine.models
+import ai_collage.engine.geometry
+import ai_collage.engine.imaging
+import ai_collage.engine.projects
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("photo_id", [True, "1"])
