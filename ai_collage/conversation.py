@@ -20,7 +20,9 @@ from .geometry import LayoutBoundsError, resolve_layout
 from .imaging import render_layout
 from .models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
 from .projects import ProjectStore, parse_json, read_json
-from .photo_references import ground_references, name_history, name_key
+from .photo_references import (
+    PhotoReferenceError, affirmative, ground_references, name_history, name_key,
+)
 from .task_history import (
     TaskRecord, ordinals, retrieve, task_records, undo_steps, undo_target, validate_navigation,
 )
@@ -28,6 +30,15 @@ from .task_history import (
 
 class ModelClient(Protocol):
     async def complete(self, context: dict[str, object], requests: RequestLog, purpose: str) -> str: ...
+
+
+class RequestRejected(CollageError):
+    """Validation exhausted before publication, with the working source verified."""
+
+    def __init__(self, diagnostic: str, source: LayoutSource | None, *, identity: bool):
+        super().__init__(f"Model correction failed: {diagnostic}")
+        self.source = source
+        self.identity = identity
 
 
 class Conversation:
@@ -324,7 +335,8 @@ class Conversation:
                 "source": proposal.intent.source.model_dump(mode="json") if proposal.intent.source else None,
                 "controls": proposal.controls.model_dump(mode="json"),
             })
-        previous = groups[-1][-1][1] if groups and not getattr(self, "_independent_task", False) else None
+        pending_question = self._pending_question()
+        previous = pending_question[1] if pending_question else None
         context: dict[str, object] = {
             "stage": stage,
             "photos": [
@@ -358,12 +370,16 @@ class Conversation:
             "history_omitted": len(groups) - len(recent),
             "proposal_count": len(published), "proposals": catalogue,
             "pending_question": (
-                {"event_id": groups[-1][-1][0], "prompt": previous.prompt,
+                {"event_id": pending_question[0], "prompt": previous.prompt,
                  "original_task": intent.task_request if intent else self._task_origin(prompt)[1],
                  "response": previous.response}
                 if previous is not None and previous.outcome == "question" else None
             ),
             "failed_candidate": active[-1].response if active and active[-1].outcome == "invalid" else None,
+            "prior_validation_feedback": [
+                event.error for event in active[:-1]
+                if event.outcome == "invalid" and event.stage == stage
+            ],
             "history": history, "user_request": prompt, "validation_feedback": feedback,
         }
         pending = INTENT.validate_json(previous.response or "") if (
@@ -475,16 +491,23 @@ class Conversation:
         if failure is not None:
             history = dict(zip(self.state.history, self.history(), strict=True))
             return failure.task_id, history[failure.task_id].prompt
-        history = dict(zip(self.state.history, self.history(), strict=True))
-        exchanges = [(number, event) for number, event in history.items() if isinstance(event, Exchange)]
-        for _, event in reversed(exchanges):
-            if event.outcome == "invalid" and event.stage == "interpretation" and event.prompt == prompt:
-                continue
-            if event.outcome == "question":
-                origin = history[event.task_id]
-                return event.task_id, origin.prompt
-            break
+        pending = self._pending_question()
+        if pending is not None:
+            history = dict(zip(self.state.history, self.history(), strict=True))
+            event = pending[1]
+            return event.task_id, history[event.task_id].prompt
         return self._next_event(), prompt
+
+    def _pending_question(self) -> tuple[int, Exchange] | None:
+        if getattr(self, "_independent_task", False):
+            return None
+        for number, event in reversed(list(zip(self.state.history, self.history(), strict=True))):
+            if not isinstance(event, Exchange):
+                continue
+            if event.outcome == "invalid" and event.stage == "interpretation":
+                continue
+            return (number, event) if event.outcome == "question" else None
+        return None
 
     def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
         failure = self._pending_failure()
@@ -558,7 +581,8 @@ class Conversation:
         intent = None
         request_start = self._next_event()
         self._independent_task = False
-        self._active_task = self._task_origin(prompt)[0]
+        request_task = self._task_origin(prompt)[0]
+        self._active_task = request_task
         requests.begin_stage("interpretation")
         previous_stage = "interpretation"
         for call in range(4):
@@ -609,14 +633,28 @@ class Conversation:
                         pending_question["event_id"] if isinstance(pending_question, dict) else None
                     )
                     previous = history.get(previous_number)
-                    if not reply.continues_task:
-                        self._independent_task = True
-                        self._active_task = self._next_event()
-                        previous = None
                     pending_reply = (
                         INTENT.validate_json(previous.response or "")
                         if isinstance(previous, Exchange) and previous.outcome == "question" else None
                     )
+                    if isinstance(pending_reply, QuestionIntent):
+                        labels = {
+                            name_key(item.text) for item in pending_reply.references
+                            if item.photo_id is None
+                        }
+                        if pending_reply.confirmation is not None:
+                            labels.add(name_key(pending_reply.confirmation.name))
+                        answering = any(name_key(item.name) in labels for item in reply.name_updates) or (
+                            pending_reply.confirmation is not None and affirmative(prompt)
+                        )
+                        if answering and not reply.continues_task:
+                            raise PhotoReferenceError("An identity answer must continue its pending task.")
+                        if isinstance(reply, RememberIntent) and pending_reply.continuation == "design" and (
+                            reply.continues_task or answering
+                        ):
+                            raise PhotoReferenceError("The identity answer must continue the original design, not only remember names.")
+                    if not reply.continues_task:
+                        previous = None
                     visible_tasks = {
                         item["task_id"] for key in ("recent_tasks", "compact_tasks", "required_tasks")
                         for item in context[key]
@@ -648,6 +686,9 @@ class Conversation:
                             self.tasks(), self._current_source(), list(names.values()), visible_tasks,
                             pending_reply if isinstance(pending_reply, QuestionIntent) else None,
                         )
+                    if not reply.continues_task:
+                        self._independent_task = True
+                        self._active_task = self._next_event()
                     if isinstance(reply, QuestionIntent):
                         event_id = self._append(Exchange(
                             prompt=prompt, response=raw, outcome="question",
@@ -659,6 +700,9 @@ class Conversation:
                             progress("question", None)
                         return RequestResult(
                             kind="question", question=reply.question, event_id=event_id,
+                            identity_question=reply.confirmation is not None or any(
+                                item.photo_id is None for item in reply.references
+                            ),
                         )
                     if isinstance(reply, RememberIntent):
                         message = "Remembered: " + "; ".join(
@@ -701,6 +745,9 @@ class Conversation:
                     continue
                 resolved = self._validate_recipe(InputLayout.model_validate(data))
             except (CollageError, ValidationError) as exc:
+                if stage == "interpretation":
+                    self._independent_task = False
+                    self._active_task = request_task
                 feedback = self._feedback(exc)
                 self._append(Exchange(
                     prompt=prompt, response=(raw if len(raw.encode("utf-8")) <= MAX_JSON_BYTES // 2 else None),
@@ -709,7 +756,11 @@ class Conversation:
                     run_id=None, attempt=len(requests.attempts()), error=feedback,
                 ))
                 if call == 3 or (stage == "interpretation" and call == 1):
-                    raise CollageError(f"Model correction failed: {feedback}") from exc
+                    self._fresh()
+                    self.baseline()
+                    raise RequestRejected(
+                        feedback, self._current_source(), identity=isinstance(exc, PhotoReferenceError),
+                    ) from exc
                 continue
             try:
                 return self._publish(prompt, raw, resolved, requests, intent)

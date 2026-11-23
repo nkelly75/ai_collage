@@ -563,7 +563,7 @@ def test_real_framework_mocked_http_gate(store, status, stage):
         assert set(schema["properties"]) == (
             {"schema_version", "canvas", "layers"} if stage == "generation"
             else {"action", "source", "proposal_id", "question", "references", "name_updates",
-                  "confirmation", "navigation", "continues_task", "return_confirmation"}
+                  "confirmation", "continuation", "navigation", "continues_task", "return_confirmation"}
         )
         assert "oneOf" not in json.dumps(schema) and "discriminator" not in json.dumps(schema)
         definitions = schema["$defs"]
@@ -1089,7 +1089,7 @@ def test_concurrent_state_change_during_inference_is_not_overwritten(agent_proje
     assert len(resumed.history()) == 1 and resumed.state.baseline is None
 
 
-@pytest.mark.parametrize("old_version", [1, 2, 3])
+@pytest.mark.parametrize("old_version", [1, 2, 3, 4, 5])
 def test_old_conversation_rejected_without_writing(agent_project, old_version):
     conversation, requests = agent_project
     state = read_json(conversation.state_path)
@@ -1116,7 +1116,7 @@ def test_intent_prompt_identity_reloads_and_stage_schema_is_strict(tmp_path, mon
     assert schema["type"] == "object" and schema["additionalProperties"] is False
     assert set(schema["properties"]) == {
         "action", "source", "proposal_id", "question", "references", "name_updates", "confirmation",
-        "navigation", "continues_task", "return_confirmation",
+        "navigation", "continuation", "continues_task", "return_confirmation",
     }
     for data in (
         {"action": "fresh", "source": "current"},
@@ -1425,6 +1425,7 @@ def test_name_conflict_confirmation_and_explicit_correction_keep_other_aliases(a
     conflict = photo_name("breakfast", 1, "Photo 1 is breakfast", replaces_photo_id=2)
     client = FakeModel(intent(
         "question", question="Replace breakfast's photo 2 with photo 1?", confirmation=conflict,
+        continuation="naming",
     ))
     asyncio.run(conversation.request("Photo 1 is breakfast", client, requests))
     assert conversation.state.photo_names[0].photo_id == 2
@@ -1551,3 +1552,300 @@ def test_chat_acknowledgement_does_not_open_a_preview(agent_project, monkeypatch
     assert "Remembered: breakfast = photo 2." in output
     assert "Generated P" not in output and len(client.contexts) == 1
     assert not (conversation.root / "proposals").exists()
+
+
+@pytest.mark.parametrize("wording", ["bridge", "the bridge photo", "London Bridge"])
+def test_shortened_names_keep_user_wording_and_taught_provenance_after_restart(agent_project, wording):
+    conversation, requests = agent_project
+    prompt = "Photo 1 is london bridge"
+    asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "remember", name_updates=[photo_name("london bridge", 1, prompt, aliases=["bridge"])],
+    )), requests))
+    conversation = Conversation(conversation.store, "demo")
+    _, client = ask(
+        conversation, requests, reply(), prompt=f"Move {wording} higher",
+        action=intent("fresh", references=[photo_reference(wording, 1)]),
+    )
+    assert client.contexts[1]["resolved_intent"]["references"][0]["text"] == wording
+    names = client.contexts[1]["photo_names"]
+    assert len(names) == 1 and names[0]["name"] == "london bridge"
+    assert names[0]["quote"] == prompt and names[0]["aliases"] == ["bridge"]
+    assert Conversation(conversation.store, "demo").state.photo_names[0].name == "london bridge"
+
+
+def test_alias_collision_clarifies_without_picking_latest_and_same_photo_labels_are_safe(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests, "london bridge", 1)
+    remember(conversation, requests, "tower bridge", 1)
+    ask(conversation, requests, reply(), prompt="Move the bridge photo",
+        action=intent("fresh", references=[photo_reference("bridge", 1)]))
+    remember(conversation, requests, "stone bridge", 2)
+    bad = intent("edit", source="current", references=[photo_reference("bridge", 2)])
+    question = intent("question", question="Which photo number is bridge?",
+                      references=[photo_reference("bridge", None)])
+    client = FakeModel(bad, question)
+    result = asyncio.run(conversation.request("Move bridge higher", client, requests))
+    assert result.kind == "question" and result.identity_question
+    assert all(context["stage"] == "interpretation" for context in client.contexts)
+    assert conversation.state.baseline == "P001"
+    client = FakeModel(intent(
+        "edit", source="current", references=[photo_reference("bridge", 2)],
+        name_updates=[photo_name("bridge", 2, "2")],
+    ), reply())
+    assert asyncio.run(conversation.request("2", client, requests)).kind == "proposal"
+    ambiguous_again = FakeModel(question)
+    assert asyncio.run(conversation.request("Move bridge higher", ambiguous_again, requests)).kind == "question"
+
+
+@pytest.mark.parametrize("number", [1, 2])
+def test_redundant_number_can_supply_a_learned_names_reference_but_conflict_cannot(agent_project, number):
+    conversation, requests = agent_project
+    remember(conversation, requests)
+    prompt = f"Move breakfast (photo {number}) higher"
+    action = intent("fresh", references=[photo_reference(f"photo {number}", number, "number")])
+    client = FakeModel(action, reply()) if number == 2 else FakeModel(action, action)
+    if number == 2:
+        assert asyncio.run(conversation.request(prompt, client, requests)).kind == "proposal"
+    else:
+        with pytest.raises(CollageError, match="correction failed"):
+            asyncio.run(conversation.request(prompt, client, requests))
+        assert conversation.state.baseline is None
+
+
+def identity_candidate(conversation, requests):
+    remember(conversation, requests, "london bridge", 1)
+    baseline, _ = ask(conversation, requests, reply())
+    task = "Grow river crossing by 10% and put it above photo 2"
+    candidate = photo_name("river crossing", 1, "river crossing")
+    model = FakeModel(intent(
+        "question", question="Do you mean photo 1 (london bridge) by river crossing?",
+        confirmation=candidate, references=[photo_reference("river crossing", None)],
+    ))
+    question = asyncio.run(conversation.request(task, model, requests))
+    return baseline, task, question
+
+
+def test_broader_alias_needs_confirmation_and_yes_retains_original_edit_after_correction_restart(agent_project):
+    conversation, requests = agent_project
+    prompt = "Photo 1 is london bridge"
+    bad = intent("remember", name_updates=[
+        photo_name("london bridge", 1, prompt, aliases=["river crossing"]),
+    ])
+    with pytest.raises(CollageError, match="shortened"):
+        asyncio.run(conversation.request(prompt, FakeModel(bad, bad), requests))
+    baseline, task, question = identity_candidate(conversation, requests)
+    assert [item.name for item in conversation.state.photo_names] == ["london bridge"]
+    conversation = Conversation(conversation.store, "demo")
+    update = photo_name("river crossing", 1, "Yes.")
+    client = FakeModel(
+        intent("remember", name_updates=[update], continues_task=False),
+        intent("edit", source="current", references=[photo_reference("photo 1", 1, "number")],
+               name_updates=[update]),
+        reply(),
+    )
+    result = asyncio.run(conversation.request("Yes.", client, requests))
+    assert result.kind == "proposal" and len(client.contexts) == 3
+    assert client.contexts[1]["pending_question"]["event_id"] == question.event_id
+    assert client.contexts[2]["original_task"] == task
+    assert client.contexts[2]["resolved_intent"]["source"]["proposal_id"] == baseline
+    learned = next(item for item in conversation.state.photo_names if item.name == "river crossing")
+    assert learned.quote == "Yes." and learned.question_event == question.event_id
+    assert Conversation(conversation.store, "demo").state.photo_names == conversation.state.photo_names
+
+
+@pytest.mark.parametrize("answer", ["No.", "Yes."])
+def test_confirmation_rejection_and_wrong_affirmative_identity_do_not_generate(agent_project, answer):
+    conversation, requests = agent_project
+    baseline, _, _ = identity_candidate(conversation, requests)
+    if answer == "No.":
+        response = intent("question", question="Which photo number is river crossing?",
+                          references=[photo_reference("river crossing", None)])
+        assert asyncio.run(conversation.request(answer, FakeModel(response), requests)).kind == "question"
+    else:
+        bad = intent("edit", source="current", name_updates=[photo_name("river crossing", 2, answer)],
+                     references=[photo_reference("river crossing", 2)])
+        with pytest.raises(CollageError, match="correction failed"):
+            asyncio.run(conversation.request(answer, FakeModel(bad, bad), requests))
+    assert conversation.state.baseline == baseline
+    assert [item.name for item in conversation.state.photo_names] == ["london bridge"]
+
+
+def test_independent_replacement_does_not_inherit_pending_confirmation(agent_project):
+    conversation, requests = agent_project
+    identity_candidate(conversation, requests)
+    client = FakeModel(intent("fresh", continues_task=False), reply())
+    result = asyncio.run(conversation.request("Instead, make a different arrangement", client, requests))
+    assert result.kind == "proposal"
+    assert client.contexts[1]["original_task"] == "Instead, make a different arrangement"
+    assert [item.name for item in conversation.state.photo_names] == ["london bridge"]
+
+
+@pytest.mark.parametrize("question", [
+    "Do you mean photo 1 (london bridge)?",
+    "Do you mean photo 2 (london bridge) by river crossing?",
+])
+def test_identity_confirmation_must_match_actual_question(agent_project, question):
+    conversation, requests = agent_project
+    remember(conversation, requests, "london bridge", 1)
+    bad = intent("question", question=question, confirmation=photo_name("river crossing", 1, "river crossing"),
+                 references=[photo_reference("river crossing", None)])
+    with pytest.raises(CollageError, match="exact name and photo number"):
+        asyncio.run(conversation.request("Move river crossing", FakeModel(bad, bad), requests))
+    assert len(conversation.state.photo_names) == 1
+
+
+def test_corrected_multi_photo_answer_survives_rejected_answer_and_restart(agent_project):
+    conversation, requests = agent_project
+    baseline, _ = ask(conversation, requests, reply())
+    task = "Put bridge above bookshop"
+    question = intent("question", question="Which numbers are bridge and bookshop?",
+                      references=[photo_reference("bridge", None), photo_reference("bookshop", None)])
+    asyncio.run(conversation.request(task, FakeModel(question), requests))
+    with pytest.raises(CollageError, match="correction failed"):
+        asyncio.run(conversation.request("both 4", FakeModel("{}", "{}"), requests))
+    conversation = Conversation(conversation.store, "demo")
+    answer = "Photo 1 is bridge. Photo 2 is bookshop."
+    updates = [photo_name("bridge", 1, "Photo 1 is bridge"), photo_name("bookshop", 2, "Photo 2 is bookshop")]
+    client = FakeModel(
+        intent("remember", name_updates=updates, continues_task=False),
+        intent("edit", source="current", references=[
+            photo_reference("bridge", 1), photo_reference("bookshop", 2),
+        ], name_updates=updates),
+        reply(),
+    )
+    result = asyncio.run(conversation.request(answer, client, requests))
+    assert result.kind == "proposal"
+    assert client.contexts[2]["original_task"] == task
+    assert client.contexts[2]["resolved_intent"]["source"]["proposal_id"] == baseline
+    assert len({event.task_id for event in conversation.history()[2:]}) == 1
+    assert Conversation(conversation.store, "demo").state.baseline == result.proposal_id
+
+
+def test_resize_corrections_retain_prior_repairs_and_leave_unrelated_authored_values(agent_project):
+    conversation, requests = agent_project
+    baseline = layout_data()
+    baseline["canvas"]["background"] = "#112233"
+    baseline["layers"][0]["corner_radius_px"] = 1
+    ask(conversation, requests, reply(baseline))
+    enlarged = copy.deepcopy(baseline)
+    for layer in enlarged["layers"]:
+        layer["box"]["width"] *= 2
+    repaired_one = copy.deepcopy(enlarged)
+    repaired_one["layers"][0]["box"]["center_x"] = 0.2
+    repaired_both = copy.deepcopy(repaired_one)
+    repaired_both["layers"][1]["box"]["center_y"] = 0.4
+    _, client = ask(conversation, requests, reply(enlarged), reply(repaired_one), reply(repaired_both),
+                    prompt="Enlarge all photos by 100%")
+    correction = client.contexts[-1]
+    assert json.loads(correction["failed_candidate"]) == repaired_one
+    assert json.loads(correction["validation_feedback"])["photo_id"] == 2
+    assert json.loads(correction["prior_validation_feedback"][0])["photo_id"] == 1
+    assert correction["editing_baseline"] == InputLayout.model_validate(baseline).model_dump(mode="json")
+    assert conversation.baseline() == InputLayout.model_validate(repaired_both)
+    fields = {change.field for change in conversation.tasks()[-1].changes}
+    assert fields == {"recipe.photos.1.box.width", "recipe.photos.2.box.width",
+                      "recipe.photos.1.box.center_x", "recipe.photos.2.box.center_y"}
+
+
+@pytest.mark.parametrize("fixed", [False, True])
+def test_unsuccessful_or_impossible_enlargement_preserves_previous_proposal(agent_project, fixed):
+    from ai_collage.conversation import RequestRejected
+    from ai_collage.chat import rejection_message
+    conversation, requests = agent_project
+    baseline, _ = ask(conversation, requests, reply())
+    candidate = layout_data()
+    candidate["layers"][1]["box"]["width"] = 0.4 if fixed else 0.6
+    prompt = "Enlarge photo 2 by 100% without moving it" if fixed else "Enlarge photo 2 by 200%"
+    client = FakeModel(intent("edit", source="current", references=[photo_reference("photo 2", 2, "number")]),
+                       *([reply(candidate)] * 3))
+    with pytest.raises(RequestRejected) as rejected:
+        asyncio.run(conversation.request(prompt, client, requests))
+    assert rejected.value.source.proposal_id == baseline and not rejected.value.identity
+    assert conversation.state.baseline == baseline
+    assert conversation.baseline() == InputLayout.model_validate(layout_data())
+    feedback = json.loads(client.contexts[-1]["validation_feedback"])
+    assert (feedback["safe_box_center_normalized"] is not None) == fixed
+    message = rejection_message(rejected.value, conversation)
+    assert "still at P001" in message and "rephrase" in message
+    assert "Names I know" not in message and "photo numbers" not in message
+    assert "cannot fit" not in message
+
+
+@pytest.mark.parametrize("known", [False, True])
+def test_chat_identity_rejections_show_validated_names_or_numbers_and_preserve_diagnostics(
+    agent_project, monkeypatch, capsys, known,
+):
+    from ai_collage.chat import run_chat
+    conversation, requests = agent_project
+    if known:
+        remember(conversation, requests, "london bridge", 1)
+    bad = intent("fresh", references=[photo_reference("invented name", 1)])
+    client = FakeModel(bad, bad)
+    lines = iter(["Move invented name", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(lines))
+    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    run_chat(conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=True)
+    output = capsys.readouterr()
+    assert "No proposal exists yet." in output.err and "rephrase" in output.err
+    assert ("Names I know: 1 = london bridge." if known else "refer to photos by number") in output.err
+    assert "matching user-established" not in output.err and "try again" not in output.err
+    events = Conversation(conversation.store, "demo").history()
+    assert events[-1].response == bad and "matching user-established" in events[-1].error
+
+
+def test_chat_generic_recovery_reports_real_baseline_and_accepts_a_different_next_request(
+    agent_project, monkeypatch, capsys,
+):
+    from ai_collage.chat import run_chat
+    conversation, requests = agent_project
+    remember(conversation, requests)
+    ask(conversation, requests, reply())
+    bad = '{"unexpected":"diagnostic-without-a-special-workaround"}'
+    client = FakeModel(bad, bad, intent("edit", source="current"), reply())
+    lines = iter(["Use a darker background", "Use a different background", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(lines))
+    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    run_chat(conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=True)
+    output = capsys.readouterr()
+    assert "Your collage is still at P001." in output.err and "rephrase" in output.err
+    assert "Names I know" not in output.err and "photo numbers" not in output.err
+    assert "diagnostic-without" not in output.err and "Generated P002" in output.out
+    assert any(event.response == bad and event.error for event in Conversation(conversation.store, "demo").history())
+
+
+def test_chat_identity_question_reminder_excludes_unconfirmed_candidates(agent_project, monkeypatch, capsys):
+    from ai_collage.chat import run_chat
+    conversation, requests = agent_project
+    remember(conversation, requests, "london bridge", 1)
+    client = FakeModel(intent(
+        "question", question="Do you mean photo 1 (london bridge) by river crossing?",
+        confirmation=photo_name("river crossing", 1, "river crossing"),
+        references=[photo_reference("river crossing", None)],
+    ))
+    lines = iter(["Move river crossing", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(lines))
+    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+    run_chat(conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=True)
+    output = capsys.readouterr()
+    assert "Names I know: 1 = london bridge.\n" in output.out
+    assert not output.err
+    assert len(Conversation(conversation.store, "demo").state.photo_names) == 1
+
+
+def test_chat_publication_io_failure_is_not_called_recoverable(agent_project, monkeypatch, capsys):
+    from ai_collage.chat import run_chat
+    conversation, _ = agent_project
+    client = FakeModel(intent("fresh"), reply())
+    lines = iter(["Make a collage", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(lines))
+    monkeypatch.setattr("ai_collage.agent_provider.FoundryModel", lambda: client)
+
+    def fail_publication(*args, **kwargs):
+        raise OSError("Uncertain disk write")
+
+    monkeypatch.setattr(Conversation, "_publish", fail_publication)
+    run_chat(conversation.store, "demo", canvas=None, preferences=None, live=True, no_open=True)
+    output = capsys.readouterr()
+    assert "Error: Uncertain disk write" in output.err
+    assert "still at" not in output.err and "rephrase" not in output.err
+    assert "Proposal publication stopped: OSError." == Conversation(conversation.store, "demo").history()[-1].error

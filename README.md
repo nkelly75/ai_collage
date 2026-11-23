@@ -25,7 +25,8 @@ image understanding, and cloud hosting remain future work.
 
 **Layout format 3** uses centre-anchored `center_x`/`center_y` positions,
 explicit whole/cover modes, stable `photo_id` values, and a back-to-front
-`layers` array. Resizing keeps the authored centre fixed. See the
+`layers` array. Rendering preserves authored centres; an agent enlargement may
+minimally reposition resized frames to fit. See the
 [layout field guide](docs/layout-format.md) and generated
 [JSON Schema](docs/layout.schema.json). Format 1 and 2 projects remain
 untouched archives: their PNGs are viewable, but the new CLI does not load or

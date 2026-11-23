@@ -79,7 +79,7 @@ class StepResult(BaseModel):
 
 class ReplayReport(BaseModel):
     model_config = {**Record.model_config, "frozen": False}
-    record_version: Literal[6] = 6
+    record_version: Literal[7] = 7
     project_id: str
     sequence: Sequence
     sources: list[Source]

@@ -9,7 +9,9 @@ from .agent_models import (
     PhotoName, Proposal, QuestionIntent, RetryIntent, SelectIntent,
 )
 from .models import CollageError, InputLayout
-from .photo_references import contains, mentioned_names, name_key, numbered_photos
+from .photo_references import (
+    contains, mentioned_names, name_candidates, numbered_photos, reference_names,
+)
 
 
 class RecipeChange(BaseModel):
@@ -160,8 +162,11 @@ def change_matches(text: str, change: RecipeChange, names: list[PhotoName]) -> b
     field = change.field
     match = re.search(r"\.photos\.(\d+)\.", field)
     numbers = numbered_photos(text)
-    bindings = {name_key(name.name): name for name in names}
-    numbers.update(bindings[key].photo_id for key in mentioned_names(text, bindings))
+    for key in mentioned_names(text, reference_names(names)):
+        targets = {item.photo_id for item in name_candidates(key, names)}
+        if len(targets) != 1:
+            return False
+        numbers.update(targets)
     if match and numbers and int(match[1]) not in numbers:
         return False
     category = next((key for key in ("border", "corner", "crop") if key in field), None)

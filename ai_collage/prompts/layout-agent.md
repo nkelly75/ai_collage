@@ -55,6 +55,7 @@ The per-request context contains:
 | `required_tasks`, `active_task` | Essential evidence and originating task/answers retained through size fitting. |
 | `pending_question` | The latest outstanding clarification, retained even if recent history is size-trimmed. |
 | `failed_candidate` | The latest invalid response in this attempt, retained with its validation feedback for correction. |
+| `prior_validation_feedback` | Earlier validation problems in this attempt. Preserve successful repairs in the latest candidate instead of reintroducing these failures. |
 | `failed_task` | A confirmed timed-out generation. Its already validated intent/source is reused on explicit continuation; this is not rejection of a generated proposal. |
 | `user_request` | The current task. |
 | `validation_feedback` | When present, the latest failed candidate's validation problems to address. |
@@ -143,12 +144,14 @@ edit. Return the complete updated recipe.
   assigning either one. Do not use the derived top-left coordinates in
   `baseline_geometry`, calculate size offsets, or swap sizes, styles, photo
   identities, or layer order.
-- Making a photo smaller or larger in the same spot preserves its untilted
-  frame centre: copy `box.center_x` and `box.center_y` exactly. For a whole
-  photo, change only `box.width`; the engine derives its height and top-left.
-  If the user explicitly names a different anchor, adjust the centre to
-  preserve that anchor instead.
-- Resizing a cover frame in place preserves both centres. Change width and
+- Ordinary resizing preserves the authored centre when the requested size
+  fits. An enlargement also permits the minimal necessary inward movement of
+  the resized photo for full containment, including borders and sampling
+  clearance; retain the rough arrangement. Do not move unrelated photos.
+  An explicit fixed position, centre or anchor takes precedence: preserve it,
+  even if the requested enlargement then cannot fit. For a whole photo, change
+  `box.width`; the engine derives height and top-left.
+- Resizing a cover frame follows the same fit/anchor rule. Change width and
   height proportionally unless the user asks to change the frame shape;
   keep crop controls unchanged unless requested.
 - Removing borders changes only the border fields. Whole-photo heights can
@@ -156,6 +159,15 @@ edit. Return the complete updated recipe.
   changing other authored fields unless the user also asks for that.
 - Making photos straight changes only `rotation_degrees` to zero.
 - Changing stacking order moves existing layers; it never renumbers photos.
+
+Interpret relative-placement wording in context: distinguish which photo should
+appear in front of another from where photos should sit on the canvas. Requests
+about stacking, layering or overlap visibility should change depth order without
+repositioning photos; requests about location, direction or alignment should
+change position without altering depth order. Do not infer both changes from an
+ambiguous relational word alone. Use the whole request and current layout to
+judge the intended relationship, preserving unrelated properties and allowing
+only necessary fit adjustments for a requested resize.
 
 ## Use authored centres, not derived origins
 
@@ -175,7 +187,8 @@ whole frame fits; the engine rejects rather than repairs invalid geometry.
 When feedback is present, use `failed_candidate` as the latest failed candidate.
 Address its current failures while retaining the original user task and the
 valid editing baseline's unrelated choices. An invalid candidate is not a
-new editing baseline.
+new editing baseline. Keep its successful containment repairs to earlier photos
+when correcting another photo; do not restore the offending baseline positions.
 
 Containment feedback distinguishes the outer frame, its rotated bounds, and
 its sampled pixel footprint. Pixel overshoot identifies the edges that fail.
@@ -183,7 +196,7 @@ its sampled pixel footprint. Pixel overshoot identifies the edges that fail.
 `center_x`/`center_y` ranges for that candidate's size, border, and rotation,
 including pixel rounding and sampling clearance. Recalculate placement if any
 of those properties change. A null range means no safe placement is reported
-for the current frame; reconsider its size or styling within the user's task.
+for the current frame; reconsider only choices left open by the user's task.
 If the user requires an unchanged centre, these ranges do not authorize moving
 it to make an enlargement fit.
 
@@ -191,7 +204,8 @@ Choose valid authored values yourself; never rely on the renderer to move,
 shrink, stretch, crop, clip, or clamp an invalid frame into place. Do not resolve
 a failure by enabling forbidden cropping, changing the canvas, dropping a
 photo, or changing unrelated choices. Never relax the user's task or return a
-question when geometry is difficult. The application bounds corrections and
+question when geometry is difficult. In particular, do not quietly reduce a
+requested enlargement to get a valid recipe. The application bounds corrections and
 reports failure if a valid recipe cannot be produced.
 
 ## Before returning a proposal

@@ -15,7 +15,7 @@ from ai_collage.task_history import (
 
 from .helpers import layout_data
 from .test_agent import (
-    FakeModel, agent_project, ask, asyncio_wakeup_pair, intent, reply,
+    FakeModel, agent_project, ask, asyncio_wakeup_pair, intent, remember, reply,
 )
 
 
@@ -56,6 +56,19 @@ def test_photo_keyed_differences_do_not_turn_stacking_into_spurious_photo_edits(
 ])
 def test_descriptive_evidence_does_not_confuse_fields_or_reverse_direction(text, field, before, after):
     assert not change_matches(text, RecipeChange(field=field, before=before, after=after), [])
+
+
+def test_descriptive_return_aliases_share_unique_identity_rules_with_edit_grounding(agent_project):
+    conversation, requests = agent_project
+    remember(conversation, requests, "london bridge", 1)
+    text = "before the bridge photo became smaller"
+    first = RecipeChange(field="recipe.photos.1.box.width", before=0.3, after=0.2)
+    other = first.model_copy(update={"field": "recipe.photos.2.box.width"})
+    assert change_matches(text, first, conversation.state.photo_names)
+    assert not change_matches(text, other, conversation.state.photo_names)
+    remember(conversation, requests, "stone bridge", 2)
+    assert not change_matches(text, first, conversation.state.photo_names)
+    assert not change_matches(text, other, conversation.state.photo_names)
 
 
 @pytest.mark.parametrize("wording", [

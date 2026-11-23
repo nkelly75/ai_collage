@@ -50,6 +50,10 @@ class NameUpdate(BaseModel):
         description="Only an explicit correction of an existing name may cite this prior event. "
         "Omit/null for an unknown-name identity answer; the application links its pending question.",
     )
+    aliases: Annotated[list[Annotated[str, Field(min_length=1, max_length=200)]], Field(max_length=4)] = Field(
+        default_factory=list,
+        description="Optional obvious shortened forms only; broader synonyms need user confirmation.",
+    )
 
 
 class PhotoName(BaseModel):
@@ -59,6 +63,7 @@ class PhotoName(BaseModel):
     event_id: PositiveInt
     quote: str
     question_event: PositiveInt | None = None
+    aliases: list[str] = Field(default_factory=list)
 
 
 class NavigationEvidence(BaseModel):
@@ -119,6 +124,9 @@ class SelectIntent(GroundedIntent):
 class QuestionIntent(GroundedIntent):
     action: Literal["question"]
     question: Question
+    continuation: Literal["design", "naming"] = Field(
+        default="design", description="Whether the originating task changes a layout or only teaches names.",
+    )
     confirmation: NameUpdate | None = None
     return_confirmation: ReturnConfirmation | None = None
 
@@ -145,7 +153,7 @@ INTENT = TypeAdapter(Intent)
 
 
 class ConversationRecord(Record):
-    record_version: Literal[5] = 5
+    record_version: Literal[6] = 6
 
 
 class LayoutSource(BaseModel):
@@ -194,6 +202,7 @@ class RequestResult(BaseModel):
     proposal_id: ProposalId | None = None
     question: Question | None = None
     acknowledgement: str | None = None
+    identity_question: bool = False
 
     @model_validator(mode="after")
     def matching_fields(self) -> "RequestResult":

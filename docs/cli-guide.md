@@ -133,7 +133,7 @@ later user-led observations are recorded in [009 results](../planning/009_result
 Photo references use stable numbers, explicit user-taught names, and clear
 recent conversational references such as "make it bigger" after discussing one
 photo. The model cannot see image contents; positional descriptions such as
-"top-right" and untaught content synonyms are not resolved in this increment.
+"top-right" are not identity evidence, and broader synonyms need confirmation.
 Qualitative amounts such as "a bit right" do not require exact distances.
 Collective instructions such as "photo 2 smaller than the others" or "remove all
 borders" do not need individual bindings for every group member. Interpretation
@@ -150,7 +150,16 @@ generation, a new proposal or a baseline change; ordinary text still requires
 `--live` and uses interpretation. Naming plus an edit can do both. Names are
 project-local and survive compaction, restarts and returns to older proposals.
 They compare case-insensitively with normalized whitespace; one photo may have
-several taught names. Unknown names require clarification, not guessed synonyms.
+several taught names. Unique suffix shortenings also work: "bridge" or "the
+bridge photo" can refer to "london bridge". All taught names participate in
+collision checks; ambiguous forms need clarification, not a recency-based guess.
+The actual wording and original name evidence are retained separately. Optional
+model-proposed short forms are derived aliases, not new user-taught facts.
+Broader synonyms can be proposed in a structured identity confirmation, naming
+both the candidate photo number and an established label; only the user's
+affirmative answer establishes that additional name. Unconfirmed suggestions
+never appear as learned names. A matching explicit number can provide redundant
+name evidence; conflicting identities still require clarity.
 Conflicting assignments require confirmation unless explicitly corrected, e.g.
 "breakfast is actually photo 3, not photo 2"; other names do not move with it.
 An unresolved target holds the whole edit until clarification is complete.
@@ -159,7 +168,20 @@ whether interpretation represented it as an unresolved name or an unknown
 reference. Multiple candidate numbers require clarification, not a guessed
 binding. Answering an edit's identity question must retain and complete the
 original edit; it is not a naming-only acknowledgement.
+This pending task survives a rejected/typo answer and restart. Questions retain
+whether their originating task is design or naming-only; a design answer
+cannot silently become a naming-only acknowledgement. "Yes" uses only the exact
+pending structured identity candidate; rejection clarifies without generation.
 Explicit name facts are saved independently of subsequent generation success.
+
+An ordinary enlargement permits minimal necessary inward movement of resized
+photos, retaining centres when the requested size fits. Explicit fixed positions
+and anchors take precedence; unrelated photos and authored styles stay unchanged.
+Generation corrections receive the latest invalid recipe plus earlier feedback
+from the same attempt, to retain successful repairs rather than undoing them.
+These are model instructions, not a geometry-repair solver. Rendering still
+rejects invalid frames, and the model must not quietly shrink a requested
+enlargement or enable cropping to make it fit.
 
 Model context keeps detail for up to **three recent logical tasks** plus up to
 **twelve relevant compact task records**, not the full event log. Clarification
@@ -196,9 +218,10 @@ Names, current task/answers, pending confirmations, resolved sources and require
 evidence survive optional-history size fitting. If essential input cannot fit,
 the request fails explicitly instead of silently forgetting it.
 
-Replay reports use **record version 6**, requiring explicit generation and
-interpretation reasoning selections. Conversation, proposal, event,
-acceptance-intent, replay-step and assessment records remain **version 5**;
+Replay reports use **record version 7**, retaining explicit generation and
+interpretation reasoning selections. Conversation, proposal, event and
+acceptance-intent records use **version 6**, including distinct alias evidence
+and clarification purpose. Replay-step and assessment records remain **version 5**;
 request-attempt records use **version 2**, recording
 their stage, actual reasoning selection and remaining deadline at dispatch.
 Layout/project format remains **3**; sequence definitions, preferences and
@@ -265,6 +288,22 @@ Chat shows a concise action/source/photo summary only after interpretation is
 validated, then `Generating layout...` before waiting for generation. Questions,
 name acknowledgements and exact returns do not announce generation. This is
 terminal feedback, not an extra model call or model-generated explanation.
+
+When validation is exhausted before publication and the actual working source
+is reverified, chat gives a brief rejection, the unchanged proposal ID (or no
+proposal yet), and permission to **rephrase or request a different change**.
+The generic message is intentional when a detailed workaround is not supported.
+Identity clarifications/rejections also show one validated taught label per
+named photo; when no names exist, they suggest photo numbers instead. Resizing
+and other unrelated failures do not get naming tips. Legitimately learned names
+can remain saved even when generation fails.
+
+Full validation diagnostics and raw responses remain in conversation events;
+terminal recovery text does not replace them. Publication/I/O and integrity
+failures stay explicit, without an unverified unchanged-state assurance.
+Rephrasing is a new user request, not an automatic retry or a guarantee of
+success. A bare "try again" is supported for the specific timeout case below,
+not promised as a universal recovery shortcut.
 
 After a confirmed generation timeout before publication, the editing baseline
 is unchanged. Repeat the original prompt, say "try again", or repeat the last

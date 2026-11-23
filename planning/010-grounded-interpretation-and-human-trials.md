@@ -1,6 +1,12 @@
 # 010: Grounded interpretation and continued human trials
 
-**Status:** Three sequential implementation stages, **010a, 010b and 010c**,
+**Status:** Complete and closed as a bounded improvement phase. The user
+considers 010 to have gone far enough after implementation, separately authorized
+evaluations and human-led feedback. This is not a claim of perfect reliability
+or completion of the blueprint's broader Phase 1. Further implementation,
+trials or live evaluation require separate approval.
+
+The three sequential implementation stages, **010a, 010b and 010c**,
 are implemented and verified offline.
 [010a](010a-grounded-photo-references.md) is implemented and verified offline,
 with a separately authorized live replay sanity follow-up;
@@ -23,6 +29,37 @@ generation low; see [010f results](010f_results.md).
 Generation now defaults low with a high override; interpretation's default stays
 high. Further trials or default changes require separate approval.
 Exploratory human-led trials and other live work remain separate.
+[010g trial 03](010g_results.md) stopped for review;
+[010h](010h-useful-recoverable-progress.md) is implemented and verified offline;
+see [010h results](010h_results.md). The bounded recoverability pass is closed,
+with subsequent human feedback recorded separately.
+The separately authorized [010h live replay follow-up](010h_replay_results.md)
+completed 03-05 and is closed.
+[Human-led trial 04](010g_trial04_results.md) stopped for this phase handoff:
+the user accepted P007 and continued through P010, exercising shortened names,
+clarification recovery, resize fitting and an edit from an older proposal.
+
+## Closeout summary
+
+- Grounded photo identities and durable taught names, with conservative
+  shortenings and explicit confirmation rather than guessed image contents.
+- Bounded task history and evidence-based proposal navigation, preserving
+  original tasks through clarification and exact sources for returns/edits.
+- Bounded timeout recovery, progress/usage reporting and independent reasoning
+  settings: interpretation defaults high, generation low, with explicit overrides.
+- More useful recovery messages and enlargement-fit correction support, while
+  deterministic validation/rendering and original-photo preservation remain intact.
+- Human-led evidence of useful progress and an accepted image, alongside
+  remaining naming friction, correction latency and unintended spatial edits.
+
+The final user-approved layout-prompt refinement distinguishes depth order from
+canvas position using request context. Its loading was checked offline; it has
+not been live-retested. Details and remaining limitations belong in
+[trial 04's results](010g_trial04_results.md); implementation verification and
+replay accounting remain in their linked results records.
+
+The sections below retain the original staged plan and guardrails as historical
+context, not authorization for additional work or current reasoning defaults.
 
 ## Purpose and prerequisites
 

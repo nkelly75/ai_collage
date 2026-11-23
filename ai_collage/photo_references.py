@@ -1,11 +1,23 @@
 """Ground model reference claims in local user evidence, without image inference."""
 
 import re
+from collections.abc import Iterable
 
 from .agent_models import (
     INTENT, Exchange, Intent, NameUpdate, PhotoName, QuestionIntent, RememberIntent,
 )
 from .models import CollageError
+
+
+class PhotoReferenceError(CollageError):
+    """A rejected interpretation, not a damaged name/history record."""
+
+
+def affirmative(text: str) -> bool:
+    return re.fullmatch(
+        r"(?:yes|yes please|correct|that's correct|that is correct)[.! ]*",
+        text.strip(), re.IGNORECASE,
+    ) is not None
 
 
 def name_key(text: str) -> str:
@@ -30,7 +42,31 @@ def numbered_photos(text: str) -> set[int]:
     return {int(value) for match in lists for value in re.findall(r"[0-9]+", match[1])}
 
 
-def mentioned_names(text: str, names: dict[str, PhotoName]) -> set[str]:
+def short_forms(name: str) -> set[str]:
+    words = name_key(name).split()
+    return {
+        " ".join(words[index:]) for index in range(len(words))
+        if words[-1] not in {"the", "a", "an", "photo", "image", "picture"}
+        and not words[-1].isdigit()
+    } | {name_key(name)}
+
+
+def reference_key(text: str) -> str:
+    text = re.sub(r"^(?:the|a|an)\s+", "", name_key(text))
+    return re.sub(r"\s+(?:photo|image|picture)$", "", text)
+
+
+def name_candidates(text: str, names: list[PhotoName]) -> list[PhotoName]:
+    keys = {name_key(text), reference_key(text)}
+    return [item for item in names if keys & short_forms(item.name)]
+
+
+def reference_names(names: list[PhotoName]) -> set[str]:
+    """Include automatic short forms without turning them into taught facts."""
+    return {form for item in names for form in short_forms(item.name)}
+
+
+def mentioned_names(text: str, names: Iterable[str]) -> set[str]:
     spans: list[tuple[int, int]] = []
     found = set()
     for key in sorted(names, key=len, reverse=True):
@@ -89,7 +125,7 @@ def ground_references(
         key = name_key(update.name)
         previous = bindings.get(key)
         if update.photo_id not in photos or update.quote not in prompt:
-            raise CollageError("Name update requires a known photo and an exact user quote.")
+            raise PhotoReferenceError("Name update requires a known photo and an exact user quote.")
         answered_name = (asked_names or unresolved_names) == {key}
         confirmed = (
             isinstance(pending_reply, QuestionIntent)
@@ -101,9 +137,19 @@ def ground_references(
                 pending_reply.confirmation.photo_id,
                 pending_reply.confirmation.replaces_photo_id,
             )
-            and re.fullmatch(r"(?:yes|yes please|correct|that's correct|that is correct)[.! ]*",
-                             prompt.strip(), re.IGNORECASE) is not None
+            and affirmative(prompt)
         )
+        candidate = (
+            confirmation and isinstance(reply, QuestionIntent)
+            and contains(reply.question, update.name)
+            and update.photo_id in numbered_photos(reply.question)
+        )
+        proposed = candidate and contains(update.quote, update.name) and any(
+            item.photo_id == update.photo_id and contains(reply.question, item.name)
+            for item in names
+        )
+        if confirmation and not candidate:
+            raise PhotoReferenceError("Identity confirmation must state its exact name and photo number.")
         direct = contains(update.quote, update.name) and has_number(update.quote, update.photo_id)
         answered = (
             answered_name and answer_numbers == {update.photo_id}
@@ -122,20 +168,27 @@ def ground_references(
             and has_number(update.quote, update.photo_id) and correction_wording
         )
         if update.evidence_event is not None and not corrected:
-            raise CollageError("Name correction requires unambiguous visible name evidence.")
-        if not (direct or answered or confirmed or corrected):
-            raise CollageError("Name update is not supported by this statement or pending answer.")
+            raise PhotoReferenceError("Name correction requires unambiguous visible name evidence.")
+        if not (direct or answered or confirmed or corrected or proposed):
+            raise PhotoReferenceError("Name update is not supported by this statement or pending answer.")
         if previous is not None and previous.photo_id != update.photo_id:
             if update.replaces_photo_id != previous.photo_id or not (
                 confirmation or confirmed or correction_wording
             ):
-                raise CollageError("Conflicting name assignment needs user clarification or explicit correction.")
+                raise PhotoReferenceError("Conflicting name assignment needs user clarification or explicit correction.")
         elif update.replaces_photo_id is not None:
-            raise CollageError("Name correction does not match an existing binding.")
+            raise PhotoReferenceError("Name correction does not match an existing binding.")
+        aliases = [name_key(alias) for alias in update.aliases]
+        if (
+            len(set(aliases)) != len(aliases)
+            or any(alias not in short_forms(update.name) or alias == key for alias in aliases)
+        ):
+            raise PhotoReferenceError("Automatic aliases must be distinct shortened taught wording; confirm broader names.")
         return PhotoName(
             name=" ".join(update.name.split()), photo_id=update.photo_id,
             event_id=event_id, quote=update.quote,
             question_event=pending[0] if pending and (answered or confirmed) else None,
+            aliases=aliases,
         )
 
     updates = []
@@ -143,7 +196,7 @@ def ground_references(
     for update in reply.name_updates:
         key = name_key(update.name)
         if key in seen:
-            raise CollageError("Duplicate or contradictory photo-name updates.")
+            raise PhotoReferenceError("Duplicate or contradictory photo-name updates.")
         seen.add(key)
         binding = validate_update(update)
         updates.append(binding)
@@ -151,10 +204,21 @@ def ground_references(
     if isinstance(reply, QuestionIntent) and reply.confirmation is not None:
         confirmation = reply.confirmation
         if name_key(confirmation.name) in seen:
-            raise CollageError("A pending name confirmation cannot also update that name.")
+            raise PhotoReferenceError("A pending name confirmation cannot also update that name.")
         validate_update(confirmation, confirmation=True)
     if isinstance(reply, RememberIntent) and not updates:
-        raise CollageError("Naming-only acknowledgement requires a validated name update.")
+        raise PhotoReferenceError("Naming-only acknowledgement requires a validated name update.")
+    if isinstance(pending_reply, QuestionIntent) and pending_reply.confirmation is not None:
+        candidate = pending_reply.confirmation
+        if affirmative(prompt) and not isinstance(reply, QuestionIntent) and not any(
+            name_key(item.name) == name_key(candidate.name) and item.photo_id == candidate.photo_id
+            and item.question_event == pending[0] for item in updates
+        ):
+            raise PhotoReferenceError("An affirmative identity answer must use its exact pending confirmation.")
+        if re.fullmatch(
+            r"(?:no|no thanks|not that one)[.! ]*", prompt.strip(), re.I,
+        ) and not isinstance(reply, QuestionIntent):
+            raise PhotoReferenceError("A rejected identity confirmation must clarify, not change the layout.")
 
     unresolved = False
     claims: dict[str, int | None] = {}
@@ -165,7 +229,7 @@ def ground_references(
     for reference in reply.references:
         key = name_key(reference.text)
         if key in claims and claims[key] != reference.photo_id:
-            raise CollageError("Contradictory identities for the same photo reference.")
+            raise PhotoReferenceError("Contradictory identities for the same photo reference.")
         claims[key] = reference.photo_id
         normalized_number = re.fullmatch(r"(?:photo|image|picture)\s+([1-9][0-9]*)", key)
         numbered_evidence = (
@@ -176,54 +240,81 @@ def ground_references(
         if not numbered_evidence and not any(
             contains(text, reference.text) for text in (prompt, task_request)
         ):
-            raise CollageError(
+            raise PhotoReferenceError(
                 "Photo reference text is absent from the current task/answer. "
                 "Bind only individually identified photos; keep collective instructions "
                 "in the task rather than enumerating group members."
             )
         if reference.photo_id is None:
             if reference.source not in {"name", "unknown"} or reference.event_id is not None:
-                raise CollageError("Unresolved photo reference has contradictory evidence.")
-            if name_key(reference.text) in bindings:
-                raise CollageError("Known photo name must not be presented as unknown.")
+                raise PhotoReferenceError("Unresolved photo reference has contradictory evidence.")
+            candidates = name_candidates(reference.text, list(bindings.values()))
+            if len({item.photo_id for item in candidates}) == 1:
+                raise PhotoReferenceError("Known photo name must not be presented as unknown.")
             unresolved = True
             continue
         if reference.photo_id not in photos:
-            raise CollageError("Photo reference uses an unknown photo number.")
+            raise PhotoReferenceError("Photo reference uses an unknown photo number.")
         if reference.source != "history" and reference.event_id is not None:
-            raise CollageError("Only conversational references may cite a prior event.")
+            raise PhotoReferenceError("Only conversational references may cite a prior event.")
         if reference.source == "number":
             if not has_number(reference.text, reference.photo_id):
-                raise CollageError("Photo number is not present in the reference text.")
+                raise PhotoReferenceError("Photo number is not present in the reference text.")
         elif reference.source == "name":
-            binding = bindings.get(name_key(reference.text))
-            if binding is None or binding.photo_id != reference.photo_id:
-                raise CollageError("Photo name has no matching user-established binding.")
+            candidates = name_candidates(reference.text, list(bindings.values()))
+            answered_targets = {
+                item.photo_id for item in updates if pending and item.question_event == pending[0]
+                and name_key(item.name) in {key, reference_key(reference.text)}
+            }
+            if (
+                {item.photo_id for item in candidates} != {reference.photo_id}
+                and answered_targets != {reference.photo_id}
+            ):
+                raise PhotoReferenceError("Photo name has no unique matching user-established binding.")
         elif reference.source == "history":
             if re.fullmatch(
                 r"(?:it|this|that|(?:this|that|the|the same|that same) (?:one|photo|picture|image))",
                 name_key(reference.text),
             ) is None:
-                raise CollageError("History evidence resolves conversational wording, not unknown photo names.")
+                raise PhotoReferenceError("History evidence resolves conversational wording, not unknown photo names.")
             event = reference_history.get(reference.event_id)
             targets = (
                 {item.photo_id for item in event.references if item.photo_id is not None}
                 | {item.photo_id for item in event.name_updates}
             ) if event else set()
             if targets != {reference.photo_id}:
-                raise CollageError("Conversational reference needs an unambiguous visible prior target.")
+                raise PhotoReferenceError("Conversational reference needs an unambiguous visible prior target.")
         else:
-            raise CollageError(
+            raise PhotoReferenceError(
                 "A resolved photo reference needs number, name or history evidence. "
                 "Unknown requires a null photo_id. Keep collective instructions in the "
                 "task rather than encoding group members as individual references."
             )
     if unresolved and not isinstance(reply, QuestionIntent):
-        raise CollageError("Unresolved photo references require clarification before generation.")
+        raise PhotoReferenceError("Unresolved photo references require clarification before generation.")
     if not isinstance(reply, QuestionIntent):
-        for key in mentioned_names(prompt, bindings):
-            if key not in seen and not any(
-                item.source == "name" and name_key(item.text) == key for item in reply.references
-            ):
-                raise CollageError("A mentioned learned name is missing its resolved reference.")
+        for key in mentioned_names(prompt, reference_names(list(bindings.values()))):
+            if key in seen:
+                continue
+            targets = {item.photo_id for item in name_candidates(key, list(bindings.values()))}
+            if len(targets) != 1:
+                raise PhotoReferenceError("A mentioned name is ambiguous; ask which photo.")
+            target = next(iter(targets))
+            adjacent_numbers = re.findall(
+                r"(?<!\w)" + re.escape(key)
+                + r"\s*\(\s*(?:photo|image|picture)\s+([1-9][0-9]*)\s*\)",
+                name_key(prompt),
+            )
+            if any(int(number) != target for number in adjacent_numbers):
+                raise PhotoReferenceError("The adjacent photo number conflicts with the learned name.")
+            matching = [
+                item for item in reply.references if item.photo_id == target and (
+                    item.source == "name" and (
+                        contains(item.text, key) or contains(key, reference_key(item.text))
+                    )
+                    or item.source == "number" and target in numbered_photos(prompt)
+                )
+            ]
+            if not matching:
+                raise PhotoReferenceError("A mentioned learned name is missing its resolved reference.")
     return updates

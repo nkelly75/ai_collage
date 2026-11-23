@@ -328,7 +328,7 @@ def test_four_message_batch_cannot_make_more_than_sixteen_calls(store, scenario)
     assert len(model.contexts) == 16
 
 
-@pytest.mark.parametrize("version", [1, 5])
+@pytest.mark.parametrize("version", [1, 5, 6])
 def test_legacy_replay_version_is_rejected_without_rewriting(store, scenario, version):
     path, _ = scenario
     model = FakeModel(*turns(reply(), reply()))

@@ -21,33 +21,29 @@ Scripted success is not user sign-off.
 exploratory; vision, UI, and cloud hosting are not authorized by these records.
 [009](009-user-led-natural-language-trial.md) is complete and closed as a learning
 iteration; see [009 results](009_results.md).
-[010](010-grounded-interpretation-and-human-trials.md) proposes grounded
-interpretation, compact memory/navigation and timeout recovery with continued
-human-led trials. [010a](010a-grounded-photo-references.md) is implemented and
-verified offline, with a separately authorized live replay sanity follow-up;
-see [010a results](010a_results.md). Further stages and live evaluation
-need separate approval.
-[010b](010b-compact-history-and-reliable-returns.md) is implemented and verified
-offline, with a separately authorized live replay sanity follow-up;
-see [010b results](010b_results.md).
-[010c](010c-timeout-recovery-and-reasoning-trials.md) is implemented and verified
-offline; see [010c results](010c_results.md). All three implementation stages
-are closed. [010d](010d-bounded-reasoning-evaluation.md) is executed and closed;
-see [010d results](010d_results.md) for the high/low comparison and interpretation
-failures. [010e](010e-interpretation-fixes-and-second-freeze.md) implemented general
-offline fixes and stopped its second-frozen comparison on a provenance blocker;
-see [010e results](010e_results.md).
-A subsequent approved targeted provenance fix is implemented offline:
-corrected-task origins are retained and proposals are checked before publication.
-The [third-freeze follow-up](010e_third_freeze_results.md) is complete and closed;
-it recommended low generation for separate review.
-Earlier closed results remain unchanged.
-[010f](010f-interpretation-reasoning-comparison.md) is executed and closed:
-generation now defaults to low with a high override; interpretation remains high
-after its frozen comparison. See [010f results](010f_results.md) for the
-recommendation, evidence and limitations. No further calls are authorized.
-Exploratory human-led trials and alternative-model experiments remain separate.
-The blueprint's broader Phase 1 is not complete.
+[010](010-grounded-interpretation-and-human-trials.md) is **complete and closed
+as a bounded improvement phase**: grounded names/references, compact task history
+and reliable returns, timeout recovery, independent reasoning settings, and
+friendlier clarification/error recovery with enlargement fitting. Generation
+defaults **low**; interpretation remains **high**, with explicit overrides.
+
+Implementation and evaluation evidence stays in the results records:
+[010a](010a_results.md), [010b](010b_results.md), [010c](010c_results.md),
+[010d](010d_results.md), [010e](010e_results.md),
+[010e third-freeze follow-up](010e_third_freeze_results.md),
+[010f](010f_results.md), [010h](010h_results.md) and the separately authorized
+[010h replay follow-up](010h_replay_results.md). Those passes are closed;
+earlier evidence remains unchanged.
+
+[Trial 03](010g_results.md) exposed recovery problems.
+[Human-led trial 04](010g_trial04_results.md) stopped for the phase handoff after
+accepting P007 and continuing through P010. It demonstrated useful progress,
+including clarification continuation and editing an older proposal, while
+retaining evidence of naming friction and an unintended spatial edit.
+A final approved prompt-only depth/position clarification has not been
+live-retested. Further work needs separate approval; neither an accepted image
+nor phase closure establishes general reliability. The blueprint's broader
+Phase 1 is not complete.
 
 ## Planning records
 
@@ -66,13 +62,15 @@ and record 003 spans several feature increments.
 | [007: Vision for photos and collage feedback](007-image-understanding-and-interactive-design.md) | Exploratory vision ideas: preview understanding plus human feedback, photo descriptions and subjects; colour/contrast analysis lower priority. No implementation authorized. | New discussion record. |
 | [008: Project lifecycle and interactive iteration](008-project-lifecycle-and-interactive-iteration.md) | Complete and closed. See [008 results](008_results.md) for implementation and verification evidence. | New planning record. |
 | [009: User-led natural-language trial](009-user-led-natural-language-trial.md) | Complete and closed as a learning iteration; see [009 results](009_results.md). Follow-up proposed in 010. | New planning record. |
-| [010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md) | Implementation stages and bounded 010d evaluation complete; exploratory human trials remain separate. | New planning record. |
+| [010: Grounded interpretation and continued human trials](010-grounded-interpretation-and-human-trials.md) | Complete and closed as a bounded improvement phase; tracker links implementation, evaluation and human feedback. | New planning record. |
 | [010a: Grounded photo references](010a-grounded-photo-references.md) | Implemented and closed with live sanity follow-up; see [010a results](010a_results.md). | First 010 stage. |
 | [010b: Compact history and reliable returns](010b-compact-history-and-reliable-returns.md) | Implemented and closed with live sanity follow-up; see [010b results](010b_results.md). | Second 010 stage. |
 | [010c: Timeout recovery and reasoning-trial preparation](010c-timeout-recovery-and-reasoning-trials.md) | Implemented and closed offline; see [010c results](010c_results.md). Integrated review and separate authorization precede live trials. | Third 010 stage. |
 | [010d: Bounded reasoning evaluation](010d-bounded-reasoning-evaluation.md) | Executed and closed; see [010d results](010d_results.md). Low generation promising; interpretation issues remain. No default change. | Evaluation follow-up, before exploratory human trials. |
 | [010e: Interpretation fixes and frozen comparisons](010e-interpretation-fixes-and-second-freeze.md) | Both passes closed; see [first results](010e_results.md) and [third-freeze results](010e_third_freeze_results.md). Low generation recommended for review; no default change or further calls. | Follow-up to 010d; later interpretation comparison remains separate. |
 | [010f: Interpretation efficiency and reasoning comparison](010f-interpretation-reasoning-comparison.md) | Executed and closed; see [010f results](010f_results.md). Generation defaults low with high override; interpretation remains high. | Follow-up to 010e; further trials/default changes need approval. |
+| [010g: User-led natural-language trial](010g-user-led-natural-language-trial.md) | Trials [03](010g_results.md) and [04](010g_trial04_results.md) stopped; trial 04 includes accepted P007 and later challenges. | Human-led evidence; further trials require separate approval. |
+| [010h: Useful, recoverable progress](010h-useful-recoverable-progress.md) | Implemented and verified offline; [results](010h_results.md), [live replay follow-up](010h_replay_results.md) and [human feedback](010g_trial04_results.md) recorded separately. | Bounded pass and replay follow-up closed. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
@@ -90,7 +88,7 @@ since that proposal are:
 | One master layout JSON with element IDs, `source_image_id`, `src`, `z_index`, and reserved `crop_pan`. | Format 3 recipes use centre coordinates, stable `photo_id`, back-to-front `layers`, explicit whole/cover modes, and cover-only `crop`. Saved snapshots separate authored `recipe` from derived `geometry`; asset paths belong to project metadata. |
 | Independently shaped frames and pan/zoom waited for a future graphical UI. | Cover frames and pan/zoom already work through JSON recipes. Graphical controls remain future work; outside borders and rounded corners are also implemented. |
 | Image-background fitting was unresolved, and the draft used `expand=True` for rotation. | An ordinary lowest photo layer supplies an image background. Tilt uses centre-preserving rotation and validated sampled footprints; angles are -10 to +10 degrees, not the draft schema's -15 to +15. |
-| Phase 1 included model-generated layouts and durable conversations. | Offline foundation, durable conversations, and fixed checkpoint A layout/refinement/acceptance cases now pass. User-led trials have taken place; reliability improvements and subjective sign-off remain outstanding. |
+| Phase 1 included model-generated layouts and durable conversations. | Offline foundation, durable conversations, and fixed checkpoint A layout/refinement/acceptance cases now pass. Phase 010 improved grounding, navigation and recovery; human trial 04 produced an accepted image. General reliability and broader Phase 1 sign-off remain outstanding. |
 | Captions, shadows, UI, and authenticated cloud deployment were envisioned. | These remain unimplemented; historical model names, hosting details, and cost estimates are not verified current selections or prices. |
 
 Format 1 and 2 saved projects remain untouched archives, not loadable or migrated by
@@ -103,8 +101,10 @@ The product goal remains natural-language layout creation and refinement
 without regenerating source photos. One metadata-only Microsoft Agent Framework
 for Python agent calling a Microsoft Foundry model is the intended experiment;
 ordinary code retains validation, geometry, rendering, and project persistence.
-Checkpoint A uses the existing `gpt-5.4-mini` deployment; native schema transport
-is verified, but model-generated geometry still needs a separately bounded follow-up.
+The current agent uses the existing `gpt-5.4-mini` deployment; native schema
+transport and validated proposals have been exercised in bounded evaluations
+and human-led trials. Model-generated geometry can still require corrections;
+future evaluation needs separate approval.
 
 React + TypeScript + Vite remains the intended UI, with backend-rendered
 previews. Azure Functions and private Blob Storage remain the target deployment,

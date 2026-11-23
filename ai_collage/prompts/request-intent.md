@@ -25,6 +25,8 @@ Actions:
   Do not generate or edit when the user only asks to return.
 - `question`, with one short `question` of at most 1,000 characters: resolve
   essential ambiguity rather than inventing an unknown photo or proposal.
+  Set `continuation: "design"` when the original task includes a layout change,
+  or `"naming"` when it only teaches names. Preserve that purpose through answers.
 
 Every action includes `references` and `name_updates` arrays (empty when not
 applicable). Only `edit` supplies the action-level `source` field. Omit it
@@ -54,9 +56,11 @@ Each reference has `text` (the relevant user wording), `photo_id`,
 - `number`: the wording contains that photo number. An explicit numbered list
   such as "photos 1 and 4" may use individual normalized texts "photo 1" and
   "photo 4". Only numbers explicitly identifying photos qualify, not quantities.
-- `name`: use the exact learned label from `photo_names`, or a name established
-  by a validated update in this response. Unknown names have null `photo_id`
-  and require a question, not a guessed number.
+- `name`: bind the actual user wording to a taught name in `photo_names`, or a
+  name established by a validated update here. Obvious suffix shortenings
+  ("bridge" from "london bridge") and surrounding articles/photo wrappers are
+  allowed when unique across all taught names. If several photos match, clarify.
+  Unknown names have null `photo_id`; do not guess a number.
 - `history`: clear conversational wording such as "it", citing the `event_id`
   of an unambiguous single-photo target in `reference_history`.
 - `unknown`: another unresolved reference; null `photo_id`, then clarify.
@@ -66,7 +70,10 @@ references, the wording must occur in the current message or the pending
 question's original user prompt. Do not resolve photos
 by layout descriptions such as "top-right" or invent image-content synonyms.
 "The breakfast photo" can refer to the learned label "breakfast"; a newly
-guessed "croissant" cannot. Ask only for unknown essentials, not exact amounts
+guessed "croissant" cannot without confirmation. Keep `text` as the user's
+actual wording, not its expanded canonical label. A matching name and explicit
+photo number are redundant evidence, not an error; conflicting identities need
+clarification. Ask only for unknown essentials, not exact amounts
 for qualitative instructions such as "a bit right".
 
 Each name update has `name`, `photo_id`, `quote` (an exact current user quote),
@@ -78,6 +85,10 @@ Apply explicit corrections, e.g. "breakfast is actually photo 3, not 2", with
 `replaces_photo_id: 2`; do not move that photo's other names.
 For "I meant photo 3, not photo 2" without repeating the name, cite
 `evidence_event` from unambiguous named evidence in `reference_history`.
+You may propose up to four optional `aliases` on a name update, but only
+distinct suffix shortenings of that taught wording. Automatic short forms are
+derived references, not separately user-taught names. Do not put broader
+synonyms in `aliases` or silently store them as facts.
 
 For a conflicting assignment without an explicit correction, ask whether to
 replace the existing mapping. Put the proposed update (with its original exact
@@ -86,6 +97,15 @@ user quote and `replaces_photo_id`) in question-only `confirmation`, NOT in
 `name_updates`, using the actual affirmative answer as its quote. For a question
 about an unknown name, include that label as an unresolved name reference so a
 subsequent numeric answer can establish the binding.
+
+An identity question inviting "Yes" MUST have a question-only `confirmation`.
+For a broader synonym, quote the current user's unknown wording in that
+candidate and explicitly name the candidate photo number AND an established
+label in the question, e.g. "Do you mean photo 1 (london bridge) by river crossing?"
+Keep the unknown wording unresolved until confirmation. On Yes, learn exactly
+that candidate using the answer's real quote and continue the original edit;
+on No, clarify without changing the layout. Never invite Yes to an identity
+that lacks a supported structured candidate; ask for a photo number instead.
 
 An unknown label may use `source: "name"` or `"unknown"` with null photo_id.
 When its identity is answered, use `name_updates` with the actual answer quote,
@@ -98,6 +118,7 @@ Answering a pending edit/composition question is NOT a naming-only task.
 Keep `continues_task: true`, resolve the original task as `edit`/`fresh` with
 the appropriate source, and include the name update in that action. Use `remember`
 only if the original task itself solely requested naming; do not drop the edit.
+An initially invalid or mistyped answer does not cancel that pending task.
 
 Do not partially execute an edit with unresolved references. Retain the whole
 original task through questions (`pending_question.original_task`, even after

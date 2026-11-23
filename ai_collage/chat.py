@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from .agent_requests import RequestLog
 from .agent_models import Controls, Reasoning, ResolvedIntent
-from .conversation import Conversation
+from .conversation import Conversation, RequestRejected
 from .models import CollageError
 from .projects import ProjectStore
 
@@ -71,6 +71,31 @@ def show_progress(kind: str, intent: ResolvedIntent | None) -> None:
             str(number) for number in targets
         ) if targets else ""
         print(f"Intent: {intent.action}; source {label}{suffix}.", flush=True)
+
+
+def known_names(conversation: Conversation) -> str:
+    labels: dict[int, str] = {}
+    for item in conversation.state.photo_names:
+        labels.setdefault(item.photo_id, item.name)
+    if not labels:
+        return "No photo names learned yet. You can refer to photos by number."
+    return "Names I know: " + ", ".join(
+        f"{number} = {labels[number]}" for number in sorted(labels)
+    ) + "."
+
+
+def rejection_message(error: RequestRejected, conversation: Conversation) -> str:
+    source = error.source
+    status = (
+        f"Your collage is still at {source.proposal_id or f'accepted version {source.accepted_version}'}."
+        if source is not None else "No proposal exists yet."
+    )
+    explanation = (
+        "I couldn't resolve the photo references in that request."
+        if error.identity else "I couldn't apply that change."
+    )
+    message = f"{explanation} {status} You can rephrase your request or ask for a different change."
+    return message + " " + known_names(conversation) if error.identity else message
 
 
 def local_command(
@@ -162,6 +187,8 @@ def run_chat(
                     )
                     if result.kind == "question":
                         print(result.question)
+                        if result.identity_question:
+                            print(known_names(conversation))
                     elif result.kind == "acknowledgement":
                         print(result.acknowledgement)
                     else:
@@ -173,6 +200,9 @@ def run_chat(
                         if not no_open:
                             open_preview(path)
                     show_usage(requests)
+            except RequestRejected as exc:
+                print(rejection_message(exc, conversation), file=sys.stderr)
+                show_usage(requests)
             except (CollageError, ValidationError, OSError, ValueError) as exc:
                 print(f"Error: {exc}", file=sys.stderr)
                 show_usage(requests)
