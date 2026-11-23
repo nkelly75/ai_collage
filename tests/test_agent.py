@@ -1755,6 +1755,42 @@ def test_combined_approval_after_restart_keeps_original_task_and_older_source(ag
     assert resumed.state.pending_names is None and resumed.store.load("demo").current_version is None
 
 
+@pytest.mark.parametrize("action", ["fresh", "edit"])
+def test_corrected_teaching_task_publishes_after_approval_and_restart(agent_project, action):
+    conversation, requests = agent_project
+    if action == "edit":
+        ask(conversation, requests, reply())
+    baseline = conversation.state.baseline
+    previous_png = conversation.preview_path(baseline).read_bytes() if baseline else None
+    start = conversation._next_event()
+    prompt = "Photo 2 is castle; move castle higher"
+    fields = {"source": "current"} if action == "edit" else {}
+    gate_client = FakeModel("{}", intent(
+        action, **fields, references=[photo_reference("castle", 2)],
+        name_updates=[photo_name("castle", 2, "Photo 2 is castle")],
+    ))
+    gate = asyncio.run(conversation.request(prompt, gate_client, requests))
+    assert gate.kind == "name_confirmation" and len(gate_client.contexts) == 2
+    assert conversation.state.baseline == baseline and not conversation.state.photo_names
+
+    changed = layout_data()
+    changed["layers"][1]["box"]["center_y"] -= 0.02
+    resumed = Conversation(conversation.store, "demo")
+    result, client = name_decision(resumed, requests, gate, reply(changed))
+    reopened = Conversation(conversation.store, "demo")
+    proposal = reopened.proposal(result.proposal_id)
+    assert result.kind == "proposal" and reopened.state.baseline == result.proposal_id
+    assert proposal.parent == baseline
+    assert proposal.intent.task_turn == reopened.tasks()[-1].task_id == start
+    assert proposal.intent.task_request == client.contexts[1]["original_task"] == prompt
+    assert proposal.recipe == InputLayout.model_validate(changed)
+    assert reopened.state.photo_names[0].receipt_event == gate.event_id
+    assert reopened.state.pending_names is None
+    assert reopened.store.load("demo").current_version is None
+    if baseline:
+        assert reopened.preview_path(baseline).read_bytes() == previous_png
+
+
 def test_revised_batch_needs_new_approval_and_rejects_the_stale_receipt(agent_project):
     conversation, requests = agent_project
     prompt = "Map bridge to photo 1"

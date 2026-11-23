@@ -198,7 +198,7 @@ class Conversation:
         corrected_origin = isinstance(task, Exchange) and task.task_id == proposal.intent.task_turn and any(
             proposal.intent.task_turn < turn < number
             and isinstance(entry, Exchange) and entry.task_id == task.task_id
-            and entry.stage == "interpretation" and entry.outcome in {"intent", "question"}
+            and entry.stage == "interpretation" and entry.outcome in {"intent", "question", "name_confirmation"}
             and entry.prompt == proposal.intent.task_request
             for turn, entry in history.items()
         )

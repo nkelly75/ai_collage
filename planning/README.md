@@ -66,6 +66,14 @@ This closes the bounded phase, not general reliability or broader Phase 1.
 The user will handle the commit; further trials, refactoring and branch
 integration are not initiated by this closeout.
 
+[013: Branch correctness and security review](013-branch-correctness-and-security-review.md)
+is **executed and closed**. It compared committed
+`nkelly/plan-010` with `nkelly/llm-wip-1` as a traditional correctness/security
+review, not another design reassessment. [013 results](013_results.md) record
+one repaired/re-reviewed correctness defect and no confirmed security
+vulnerabilities. Fixes remain uncommitted for the user; further work needs
+separate approval.
+
 ## Planning records
 
 Numbering is reading order, not phase numbering. These records are snapshots
@@ -94,6 +102,7 @@ and record 003 spans several feature increments.
 | [010h: Useful, recoverable progress](010h-useful-recoverable-progress.md) | Implemented and verified offline; [results](010h_results.md), [live replay follow-up](010h_replay_results.md) and [human feedback](010g_trial04_results.md) recorded separately. | Bounded pass and replay follow-up closed. |
 | [011: Interpretation and naming reassessment](011-interpretation-and-naming-reassessment.md) | Review complete; [results](011_results.md) recommend a simpler boundary and explicit durable naming. | Selected direction separately approved and implemented in 012. |
 | [012: Model-led references and confirmed names](012-model-led-references-and-confirmed-names.md) | Successfully completed and closed with user sign-off; see [results](012_results.md). | Separate [replay](012_replay_results.md), [return repair/retest](012_return_repair_results.md) and [human-led trial 05 / closeout](012_trial05_results.md) evidence; commit remains user-managed. |
+| [013: Branch correctness and security review](013-branch-correctness-and-security-review.md) | Executed and closed; see [results](013_results.md). | Full branch delta reviewed; one correctness repair/re-review, no confirmed security vulnerabilities. Fixes remain user-managed and uncommitted. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
