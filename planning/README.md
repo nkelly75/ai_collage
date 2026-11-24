@@ -115,6 +115,12 @@ the bounded phase, not general reliability or broader Phase 1.
 The user subsequently merged `nkelly/llm-wip-1` into `main`; see the
 [integration note](017_results.md#integration-into-main).
 
+[018: Local conversation-and-preview experience](018-local-conversation-and-preview.md)
+captures the **tentative next direction**, not implementation authorization.
+It records the initial UI layout, revisable subphases, tooling approval gates,
+and the deferred cloud-persistence work. A separate 018a brief is still needed;
+later subphases remain deliberately unspecified.
+
 ## Planning records
 
 Numbering is reading order, not phase numbering. These records are snapshots
@@ -123,7 +129,7 @@ and record 003 spans several feature increments.
 
 | Record | Status and role | Original location |
 |---|---|---|
-| [001: Project blueprint](001-project-blueprint.md) | Historical product vision and target architecture; implementation details and roadmap partly superseded. | `ai_collage_builder_project_blueprint.md` |
+| [001: Project blueprint](001-project-blueprint.md) | Living product vision, architectural direction, and broad sequencing; not an incremental progress tracker. | `ai_collage_builder_project_blueprint.md` |
 | [002: Phase 1 offline foundation](002-phase-1-offline-foundation.md) | Step 1 completed; Step 2 outlined but unapproved. Preserves the original format 1 contract and guardrails. | `phase_1_implementation_plan.md` |
 | [003: Layout evolution](003-layout-evolution.md) | Implemented borders, cover framing, rounded corners, and tilt, plus format 2 reconciliation and visual-demo decisions. | `docs\layout-decisions.md` |
 | [004: Engine refactoring](004-engine-refactoring.md) | Completed format 2 brief, verification, example-equivalence evidence, reviewer outcomes, and retry accounting. | `docs\engine-refactoring-spec.md` |
@@ -148,6 +154,7 @@ and record 003 spans several feature increments.
 | [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Checkpoint committed by the user. |
 | [016: Human-led trial 06](016-user-led-natural-language-trial.md) | User reached P009 after the repair; not an Autopilot assignment. | [Observations and separately approved offline evidence-handoff repair](016_results.md); three-task policy unchanged. Human-led continuation remains separate. |
 | [017: Conversational photo identity memory](017-conversational-photo-identity-memory.md) | Successfully completed and closed with user sign-off; replay and offline regression passed, including the numeric-mapping repair. | See [017 results](017_results.md); human-led `p17-human-07` reached P012 with the repair and memory lifecycle live-confirmed. Copilot replay allowances stay closed; subsequently merged into `main` by the user. |
+| [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Tentative umbrella; initial UI direction and revisable subphases captured. No implementation authorized. | New planning record; 018a tooling/skeleton brief not yet written. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
@@ -156,8 +163,9 @@ usage instructions; use the current guides linked above.
 
 ## Blueprint reconciliation
 
-Keep the original blueprint intact as a record of intent. The important changes
-since that proposal are:
+The blueprint evolves when architectural direction changes; this index and
+the numbered briefs/results track incremental work. The important changes
+from the original proposal are:
 
 | Original proposal or assumption | Current position |
 |---|---|
