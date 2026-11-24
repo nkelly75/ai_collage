@@ -308,6 +308,12 @@ def ground_references(
             ), None)
             if question is not None:
                 supplied.update(
+                    int(match[1]) for text in fresh for match in re.finditer(
+                        r"(?<![\w.,+/-])([0-9]{1,9})\s+for\s+"
+                        + re.escape(key) + r"(?!\w)", name_key(text),
+                    )
+                )
+                supplied.update(
                     item.photo_id for item in question.references
                     if name_key(item.text) == key and item.photo_id is not None
                 )

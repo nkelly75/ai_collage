@@ -154,7 +154,10 @@ Teach a durable label with "photo 2 is breakfast" or "map Daunt Books to photo 4
 Clear new identities are saved automatically, with a concise **Remembered**
 acknowledgement. Answering "Which photo is breakfast?" with `2` or `Photo 2`
 also remembers breakfast and continues the complete original edit, including
-after invalid answers or restart. Hypothetical, explicitly temporary and
+after invalid answers or restart. A clarification asking for several identities
+also accepts explicit pairs such as `2 for breakfast and 3 for london eye`;
+the bare numbers must be paired with their respective labels, not quantities.
+Hypothetical, explicitly temporary and
 unresolved wording must not install lasting names. Interpretation is still
 fallible: actual quotes/IDs cannot prove arbitrary language was understood.
 

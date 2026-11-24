@@ -1388,6 +1388,97 @@ def test_names_survive_compaction_restart_selection_and_ground_generation(agent_
     assert conversation.store.load("demo").current_version is None
 
 
+@pytest.mark.parametrize("relearn", [False, True])
+def test_named_numeric_answer_learns_both_photos_and_continues_swap_after_restart(
+    agent_project, relearn,
+):
+    conversation, _ = agent_project
+    store = conversation.store
+    paths = list(store.photo_paths(store.load("demo")).values())
+    store.create("mapping", paths * 2)
+    conversation = Conversation(store, "mapping", canvas=(100, 100))
+    requests = RequestLog(store, "mapping")
+    initial = layout_data()
+    for number, layer in enumerate(copy.deepcopy(initial["layers"]), 3):
+        layer["photo_id"] = number
+        layer["box"]["center_y"] = 0.75
+        initial["layers"].append(layer)
+    first, _ = ask(conversation, requests, reply(initial))
+    initial = conversation.proposal(first).recipe.model_dump(mode="json")
+    preview = conversation.preview_path(first).read_bytes()
+    if relearn:
+        for name, number in (("breakfast", 2), ("london eye", 3)):
+            remember(conversation, requests, name, number)
+            forget(conversation, requests, name)
+    prompt = "Swap the locations of the breakfast and london eye photos"
+    question = asyncio.run(conversation.request(prompt, FakeModel(intent(
+        "question", question="Which photo IDs are the breakfast and London Eye photos?",
+    )), requests))
+    assert question.kind == "question" and conversation.state.baseline == first
+    answer = "2 for breakfast and 3 for london eye"
+    changed = copy.deepcopy(initial)
+    layers = {layer["photo_id"]: layer for layer in changed["layers"]}
+    for field in ("center_x", "center_y"):
+        layers[2]["box"][field], layers[3]["box"][field] = (
+            layers[3]["box"][field], layers[2]["box"][field],
+        )
+    client = FakeModel(intent(
+        "edit", source="current",
+        references=[photo_reference("breakfast", 2), photo_reference("london eye", 3)],
+        name_updates=[photo_name("breakfast", 2, answer), photo_name("london eye", 3, answer)],
+    ), reply(changed))
+    result = asyncio.run(Conversation(store, "mapping").request(answer, client, requests))
+    assert result.kind == "proposal" and len(client.contexts) == 2
+    generation = client.contexts[1]
+    assert generation["original_task"] == prompt
+    assert generation["resolved_intent"]["source"]["proposal_id"] == first
+    reopened = Conversation(store, "mapping")
+    assert [(item.name, item.photo_id, item.quote, item.receipt_event)
+            for item in reopened.state.photo_names] == [
+        ("breakfast", 2, answer, None), ("london eye", 3, answer, None),
+    ]
+    assert reopened.proposal(result.proposal_id).recipe.model_dump(mode="json") == changed
+    assert reopened.preview_path(first).read_bytes() == preview
+    assert reopened.state.pending_names is None and store.load("mapping").current_version is None
+
+
+@pytest.mark.parametrize("answer,question,forgotten", [
+    ("2 pixels for breakfast and 3 pixels for london eye", True, False),
+    ("2% for breakfast and 3% for london eye", True, False),
+    ("-2 for breakfast and 3 for london eye", True, False),
+    ("2.5 for breakfast and 3 for london eye", True, False),
+    ("12 for breakfast and 3 for london eye", True, False),
+    ("3 for breakfast and 2 for london eye", True, False),
+    ("2 for breakfast and 3 for london eye", False, False),
+    ("2 for breakfast and 3 for london eye", True, True),
+])
+def test_named_numeric_answer_rejects_quantities_wrong_mappings_and_stale_questions(
+    answer, question, forgotten,
+):
+    from ai_collage.agent.models import PhotoName
+    from ai_collage.agent.photo_references import ground_references
+
+    prompt = "Swap the locations of the breakfast and london eye photos"
+    previous = {1: Exchange(
+        prompt=prompt, outcome="question", stage="interpretation", parent=None, run_id=None,
+        response=intent("question", question="Which photo IDs are breakfast and London Eye?"),
+        task_id=1,
+    )} if question else {}
+    names = [PhotoName(
+        name=name, photo_id=None, event_id=2, quote=f"Forget {name}",
+    ) for name in ("breakfast", "london eye")] if forgotten else []
+    candidate = INTENT.validate_json(intent(
+        "edit", source="current",
+        references=[photo_reference("breakfast", 2), photo_reference("london eye", 3)],
+        name_updates=[photo_name("breakfast", 2, answer), photo_name("london eye", 3, answer)],
+    ))
+    with pytest.raises(CollageError, match="fresh user identity evidence"):
+        ground_references(
+            candidate, answer, task_request=prompt, photos={1, 2, 3, 4}, names=names,
+            reference_history=previous, evidence_events=previous, event_id=3,
+        )
+
+
 def test_grounding_learns_numeric_answer_and_continues_whole_task(agent_project):
     conversation, requests = agent_project
     prompt = "Move photo 1 right and breakfast higher"

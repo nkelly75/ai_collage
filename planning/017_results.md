@@ -1,10 +1,13 @@
 # 017 results: Conversational photo identity memory
 
 **Status:** The latest authorized replay, `p017-replay-06c`, completed all ten
-objectives after a focused offline assessment repair. The subsequently authorized
-full offline regression passed **621 tests** on the repaired tree. Earlier stopped
-passes and their original assessments remain preserved. All live allowances
-are closed. No human trial or phase sign-off.
+objectives. The subsequent human-led trial `p17-human-07` exposed a numeric
+multi-mapping validation defect; its separately authorized narrow offline repair
+passed **631 tests** and is now live-confirmed by the user's continuation.
+The trial reached **P012**, including listing, confirmed reassignment, forgetting
+and fresh re-establishment without reviving an old mapping. It remains user-led
+and has not been advanced by Copilot. Earlier stopped passes remain preserved.
+All Copilot replay allowances are closed. No phase sign-off.
 Scope and stop rules remain in the [approved brief](017-conversational-photo-identity-memory.md).
 
 ## Implementation and responsibility changes
@@ -373,8 +376,96 @@ repository files, the index/staged patch, HEAD/branch and runtime/packages,
 **4,815 protected files** and **3,686 prior evidence files**. Subsequent tracker
 updates are documentation-only; previous sealed replay evidence is unchanged.
 
-Implementation, the scripted story and the full offline gate are complete.
-This supports another human-led trial, not general language reliability or
-phase sign-off. The user plans to commit this verified checkpoint before that
-fresh trial; committing remains user-managed. No trial was started, and no
-live allowance was reopened.
+At this checkpoint, implementation, the scripted story and the full offline
+gate were complete. This supported another human-led trial, not general language
+reliability or phase sign-off. The user subsequently committed checkpoint
+`70134f1` before starting the fresh trial below. No trial was started by the
+regression run, and no live allowance was reopened.
+
+## Human-led trial 07: narrow numeric-mapping repair
+
+The user started fresh `p17-human-07` and created P001. For the next request,
+"Swap the locations of the breakfast and london eye photos", the model asked
+"Which photo IDs are the breakfast and London Eye photos?" The user's answer,
+`2 for breakfast and 3 for london eye`, was clear. Both interpretation attempts
+correctly bound breakfast to 2 and london eye to 3, proposed those lasting names
+with the actual answer quote, and retained the swap.
+
+The deterministic fresh-identity guard rejected both candidates: it recognized
+photo-prefixed numbers and an entirely numeric single answer, but not these
+explicit per-label numeric pairs. This was an application validation defect,
+not another citation failure or a misunderstood answer. No names were saved,
+generation was not reached, and the baseline stayed P001 with no acceptance.
+The successful replay's single-name answers had not exercised this case.
+
+The user authorized a narrow offline repair. Six added lines in the existing
+guard recognize `N for <label>` evidence for that exact label during a same-task
+clarification after any forgetting cutoff. They do not harvest arbitrary numbers
+from prose. Known-ID, real-quote, receipt/conflict and forgetting checks remain;
+there is no prompt, schema, model-stage, history-window or renderer change.
+
+New synthetic integration cases fail before the repair and pass afterward:
+both identities are saved without a receipt and the whole swap continues from
+the original proposal after restart, including fresh re-learning after forgetting.
+Negative cases retain rejection of quantities, percentages, signed/fractional
+numbers, wrong or borrowed IDs, missing questions and pre-forgetting questions.
+The final focused run passed **30 tests**; the complete offline suite passed
+**631 tests in 427.52 seconds**, with network blocking and no skips or failures.
+Both actual saved failed candidates also pass the repaired guard in a separate
+read-only check; their original events and trial state were not rewritten.
+
+Session `files\017-human07-mapping` retains baseline/preservation inventories,
+the pre-fix reproduction, initial and corrected focused logs, the full-suite log
+and `saved-candidate-check.txt`. The first post-repair focused run exposed a new
+test-fixture comparison of raw versus normalized recipe defaults; that fixture
+was corrected without further production changes.
+The user's staging, HEAD/branch, original photos, all pre-existing project/trial
+files and prior evidence are preserved. No Git writes, installs or live calls.
+
+At the repair handoff, the running chat process needed restarting before the
+user could continue `p17-human-07` with the original answer. Copilot did not
+resume the trial, create a replacement project or run another replay.
+The subsequent live confirmation is recorded below; phase sign-off remains separate.
+
+## Human-led continuation through P012
+
+The user continued the same project after the repair. Repeating the original
+`2 for breakfast and 3 for london eye` answer saved both identities automatically
+and completed the original swap as P002, without a naming receipt or another
+interpretation correction. The offline repair therefore now has live evidence.
+Further user-authored design requests reached P009 before the memory exercises.
+Casual `bridge photo` and `the eye` references resolved to photos 1 and 3 without
+saving those inferred short forms as additional names.
+
+The user then tried Copilot's three suggested memory requests, adding their own
+list requests and later adjustments. Saved events and exact recipe comparisons
+support the user's positive report:
+
+| Request or checkpoint | Observed outcome |
+|---|---|
+| Initial name listing | Tower Bridge = 1, breakfast = 2, london eye = 3. |
+| Change breakfast to photo 1 | Displayed a reassignment receipt; applied only after the user's explicit confirmation. Tower Bridge = 1 remained a separate label. |
+| List, forget breakfast, list again | Listing showed the approved photo-1 assignment, then removed breakfast after forgetting while retaining the other names. Every memory-only operation stayed at P009, with no new proposal. |
+| Move Daunt Books down 5% of canvas height | Asked which photo; the user's `photo 4` answer saved Daunt Books = 4 and produced P010. Only photo 4's `center_y` changed, **0.27 -> 0.32**. |
+| Move the book shop back up 3% | Resolved the casual reference to photo 4 without an extra alias or gate. Only its `center_y` changed, **0.32 -> 0.29**, in P011. |
+| "Tilt the breakfast photo to the right" after forgetting | Asked **"Which photo number is breakfast now?"**. Breakfast remained forgotten and the baseline stayed P011; neither the original photo-2 mapping nor the later photo-1 reassignment was silently reused. |
+| "The breakfast photo is photo 2" | Re-established breakfast = 2 automatically and continued the original tilt. P012 changes only photo 2's rotation, **-2 -> +2 degrees**; all other authored fields and stacking are unchanged. |
+
+Final active memory is **Tower Bridge = 1, breakfast = 2, london eye = 3,
+Daunt Books = 4**. There is no pending naming receipt. The baseline is P012,
+with twelve preserved proposals and no accepted version.
+The memory audit reconstructs the saved state successfully; every proposal's
+recipe and preview still match its recorded hashes.
+
+This is useful human-led progress, not a claim that the entire trial was
+correction-free. Besides the original repaired mapping failure, the earlier
+additional 20% all-photo enlargement needed two bounded internal geometry
+corrections before completing as P004. The later memory exercises and P010-P012
+completed without further validation corrections.
+
+Read-only inspection evidence, listing/forgetting/re-learning milestones,
+exact P009-P012 recipe differences and file hashes are retained in session
+`files\017-human07-results\inspection.json`. Results and status updates are
+documentation-only; no application/test changes or additional test run were
+needed. User staging and trial data remain unchanged by Copilot, with no live
+dispatch, automatic acceptance, trial closure or phase sign-off.

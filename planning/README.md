@@ -101,11 +101,15 @@ assignment; further Copilot-initiated live work requires separate authorization.
 is **implemented**, and the latest separately authorized replay completed all ten
 objectives after a focused assessment repair. The subsequently authorized full
 offline regression passed; earlier stopped runs are preserved.
+Human-led `p17-human-07` then exposed a numeric multi-mapping validation defect;
+its narrow offline repair and full regression passed. The trial remains user-led,
+now reaching P012 with live confirmation of the repair, listing, confirmed
+reassignment, forgetting and fresh re-learning without stale-name reuse.
 See [017 results](017_results.md).
 It adds automatic learning of clear user-supplied identities, natural-language
 listing/correction/forgetting, and protection against forgotten names resurfacing
 from old evidence. All replay passes and their unused allowances are closed; further fixes
-or live evaluation require separate authorization. No human trial or phase
+or Copilot-initiated live evaluation require separate authorization. No phase
 sign-off is implied.
 
 ## Planning records
@@ -140,7 +144,7 @@ and record 003 spans several feature increments.
 | [014: Correctness and security review before main](014-main-readiness-review.md) | Executed and closed; see [results](014_results.md). | Full main-to-target delta reviewed; two correctness repairs/re-review, no confirmed security vulnerabilities. Subsequently committed by the user; no merge. |
 | [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Checkpoint committed by the user. |
 | [016: Human-led trial 06](016-user-led-natural-language-trial.md) | User reached P009 after the repair; not an Autopilot assignment. | [Observations and separately approved offline evidence-handoff repair](016_results.md); three-task policy unchanged. Human-led continuation remains separate. |
-| [017: Conversational photo identity memory](017-conversational-photo-identity-memory.md) | Implemented; complete replay-06 story and full offline regression passed. | See [017 results](017_results.md); human-led trial and phase sign-off remain outstanding, with all live allowances closed. |
+| [017: Conversational photo identity memory](017-conversational-photo-identity-memory.md) | Implemented; replay-06 story and full offline regression passed, including the subsequent narrow numeric-mapping repair. | See [017 results](017_results.md); human-led `p17-human-07` reached P012 with the repair and memory lifecycle live-confirmed. Trial closure and phase sign-off remain separate; Copilot replay allowances stay closed. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

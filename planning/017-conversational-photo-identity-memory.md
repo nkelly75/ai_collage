@@ -3,9 +3,14 @@
 **Status:** Implementation and the latest separately authorized replay-06 pass
 are complete. After the assessment repair, fresh `p017-replay-06c` completed all
 ten objectives, and the subsequently authorized full offline regression passed.
+Human-led `p17-human-07` then exposed a numeric multi-mapping validation defect;
+the separately authorized narrow offline repair and full regression passed.
+The user's continuation now live-confirms that repair and reaches P012, including
+listing, confirmed reassignment, forgetting and fresh re-learning. The trial
+remains user-led; Copilot has not advanced it or made further live calls.
 Earlier stopped passes remain preserved.
 See [017 results](017_results.md). All live allowances are closed; further live
-evaluation requires separate authorization. No human trial or phase sign-off.
+evaluation by Copilot requires separate authorization. No phase sign-off.
 
 ## Purpose and boundaries
 
