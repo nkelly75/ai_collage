@@ -140,82 +140,16 @@ Keep editing the recipe, not the generated snapshot. See the
 [CLI guide](docs/cli-guide.md#input-layouts-and-saved-versions) for the full
 relationship, storage paths, and versioning behavior.
 
-## Replay a prompt sequence
+## Replay and testing notes
 
-Replay conversations from `examples\sequences\01_dark_portrait_adjustments.json`
-or `02_landscape_staggered_adjustments.json`. **One message runs per invocation
-by default; nothing is automatically accepted.**
-
-```powershell
-$sequence = '.\examples\sequences\02_landscape_staggered_adjustments.json'
-
-# Offline: validate the sequence and source-file availability/hashes.
-.\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence $sequence --check
-
-# Live, when authorized: choose a fresh project ID.
-.\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence $sequence `
-  --data-dir .\.collage-data-v3 --project YOUR-NEW-PROJECT
-```
-
-Repeat the live command with `--resume` to advance that project by one message.
-Add `--remaining` only to run all remaining messages without pausing. If the
-sequence has four uninterrupted messages, that means at most **16 model calls**,
-including validation corrections (at most four per attempt). Explicit answers
-have their own bounded attempts. There is no shared allowance
-to provision or replenish. A failed step needs an explicit `--resume --retry`;
-questions, naming receipts and interrupted steps stop for inspection. Naming
-receipts require an explicit recorded answer; replay never approves them for you.
-Live execution still needs
-authorization; this tooling change does not authorize service calls.
-
-Find the cursor and execution summaries in the project's `replay\report.json`,
-sequence snapshots/contexts/results in `replay\steps`, and immutable JSON/PNG
-proposals in `conversation\proposals`. Unattempted messages may be edited before
-resuming. See the [full syntax and safeguards](docs/cli-guide.md#repeatable-prompt-sequences).
-Request usage is recorded automatically in the project's `conversation\requests`.
-Interactive chat remains local-only unless started with `--live`.
-
-Assess a saved replay **offline**, without generating or accepting anything:
-
-```powershell
-.\.venv\Scripts\python.exe -m ai_collage.cli.assess --data-dir .\.collage-data-v3 `
-  --project YOUR-REPLAY-PROJECT --profile dark-portrait-adjustments
-```
-
-Omit `--profile` for evidence-integrity checks only, applicable to either
-sequence. The dark portrait profile additionally checks its specific requested
-edits and historical style rules. Numbered reports go in `replay\assessments`;
-subjective composition review stays separate. This replaces the old evaluator.
-
-## How the tests check images
-
-The rendering tests create tiny temporary images in code, drawing known colours
-and shapes on them. They pass these through the normal import, layout, and render
-workflow, then inspect the resulting pixels. For example:
-
-- Red, green, and blue bands reveal whether panning selects the left, middle,
-  or right part of an image.
-- A square drawn inside a wide image should remain square when rendered into a
-  tall frame, rather than becoming stretched.
-- Known border colours and transparent areas let tests check border thickness
-  and which overlapping layer shows through, including at rounded corners.
-- Coloured corner markers let tests check a tilted photo's angle, size, centre,
-  and retention of all four corners.
-
-Because the starting pictures are deliberately simple, the expected colours
-and positions are known in advance. Checks can be exact where appropriate,
-with small tolerances where resizing or JPEG compression blends pixels.
-No AI judges whether the result looks right, and the tests run offline without
-using your photos. Real-photo examples still help us judge the composition.
-
-Other tests cover invalid layouts, saved versions, and failures that must leave
-previous results intact. See the [CLI guide](docs/cli-guide.md#verification)
-for instructions to run the tests.
+The existing notes on replay, call budgets, offline assessment and pixel-testing
+are collected in [LESSONS.md](LESSONS.md).
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
+| [Replay and testing notes](LESSONS.md) | Replay examples, call budgets, offline assessment, and how the tests check images |
 | [Local CLI guide](docs/cli-guide.md) | Setup, commands, examples, layout rules, limits, storage, and tests |
 | [Layout field guide](docs/layout-format.md) | Concise format 3 contract and adjustment examples for people and future LLMs |
 | [Input JSON Schema](docs/layout.schema.json) | Generated structural schema, synchronized with the models by a test |

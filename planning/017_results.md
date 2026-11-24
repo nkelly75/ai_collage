@@ -1,13 +1,15 @@
 # 017 results: Conversational photo identity memory
 
-**Status:** The latest authorized replay, `p017-replay-06c`, completed all ten
+**Status:** Successfully completed and closed with the user's sign-off.
+The latest authorized replay, `p017-replay-06c`, completed all ten
 objectives. The subsequent human-led trial `p17-human-07` exposed a numeric
 multi-mapping validation defect; its separately authorized narrow offline repair
 passed **631 tests** and is now live-confirmed by the user's continuation.
 The trial reached **P012**, including listing, confirmed reassignment, forgetting
 and fresh re-establishment without reviving an old mapping. It remains user-led
 and has not been advanced by Copilot. Earlier stopped passes remain preserved.
-All Copilot replay allowances are closed. No phase sign-off.
+All Copilot replay allowances are closed. This closes the bounded phase, not
+general reliability or broader Phase 1; it authorizes no merge or further live calls.
 Scope and stop rules remain in the [approved brief](017-conversational-photo-identity-memory.md).
 
 ## Implementation and responsibility changes
@@ -469,3 +471,14 @@ exact P009-P012 recipe differences and file hashes are retained in session
 documentation-only; no application/test changes or additional test run were
 needed. User staging and trial data remain unchanged by Copilot, with no live
 dispatch, automatic acceptance, trial closure or phase sign-off.
+
+## User sign-off
+
+After the human-led continuation, the user reported committing and pushing the
+fixes and stated, "I think 017 is successful." Phase 017 is therefore successfully
+completed and closed within its agreed scope. Earlier no-sign-off statements
+describe their respective handoffs and remain as historical evidence.
+
+This closes neither general language reliability nor the broader Phase 1.
+Replay allowances remain closed; further live calls and branch integration
+require separate authorization.

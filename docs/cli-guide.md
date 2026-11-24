@@ -4,6 +4,10 @@ The current offline engine uses **layout/project format 3**. It imports original
 JPEG/PNG photos and deterministically renders editable JSON recipes, without
 credentials or model calls. See the [layout field guide](layout-format.md) for
 syntax and the [README](../README.md) for the project story.
+Implementation and trial history is indexed in [planning](../planning/README.md).
+
+Jump to [chat](#conversational-proposals-optional),
+[replay](#repeatable-prompt-sequences) or [assessment](#assess-saved-replay-evidence-offline).
 
 ## Setup (PowerShell, Python 3.12+)
 
@@ -14,18 +18,15 @@ python -m venv .\.venv
 .\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
 ```
 
-Activation is unnecessary. If `python` is not on PATH, use your installed Python
-executable's full path for environment creation. Runtime dependencies are Pillow
-and Pydantic; `requirements-dev.txt` adds pytest. Installation downloads packages;
-the deterministic engine and routine tests run offline. The root environment is separate from
-the `temp-foundry-test` experiments, which must not run as part of this workflow.
+Activation is unnecessary. If `python` is not on PATH, use its full path.
+Installation downloads packages; rendering and routine tests run offline.
+Do not run the separate `temp-foundry-test` experiments as part of this workflow.
 
 ## Fresh projects and old archives
 
-Format 1 and 2 projects and saved snapshots are **untouched archives**, not migrated
-automatically. Their PNGs remain viewable, but the new CLI rejects their format.
-Do not edit their metadata or apply new recipes to them. New-format equivalents
-of all seven curated recipes retain their descriptive filenames in `examples`.
+Format 1 and 2 projects and saved snapshots are **untouched archives**.
+Their PNGs remain viewable, but the CLI rejects their format; there is no
+migration. Do not edit their metadata or apply new recipes to them.
 
 The default data directory remains `.collage-data`. The commands below instead
 use a **fresh `.collage-data-v3` root** to avoid touching archived projects.
@@ -41,8 +42,7 @@ command and use the same root for every command in a workflow.
 Invoke-Item .\.collage-data-v3\users\local-dev\projects\portrait-demo\renders\v0001.png
 ```
 
-The first recipe makes a 900x1600 (9:16) white canvas with four complete 396x528
-photos at (36,224), (468,224), (36,848), and (468,848). Import order assigns
+The first recipe makes a 900x1600 (9:16) white canvas. Import order assigns
 Bridge 1, breakfast 2, London Eye 3, bookshop 4. Photo numbers are identifiers,
 not stacking positions or content recognition.
 
@@ -53,8 +53,7 @@ than deleting a previous project. To try the second 900x1200 (3:4) arrangement:
 .\.venv\Scripts\python.exe -m ai_collage --data-dir .\.collage-data-v3 apply-layout --project portrait-demo --layout .\examples\portrait_3x4.json
 ```
 
-The same whole photos sit at (36,48), (468,48), (36,624), and (468,624). Applying
-this after the first recipe accepts version 2, leaving version 1 untouched.
+Applying this after the first recipe accepts version 2, leaving version 1 untouched.
 Canvas aspect ratio and positions come from the JSON, not separate CLI flags.
 
 ## Commands and paths
@@ -67,9 +66,7 @@ Canvas aspect ratio and positions come from the JSON, not separate CLI flags.
 | `render --project ID [--version N]` | Reopen and rerender an accepted new-format version, defaulting to current. No new version or current-pointer change. |
 
 Results are JSON on stdout; errors use stderr and nonzero exit status.
-Photo records now use `photo_id`, replacing format 1's `source_image_id`.
-`apply-layout` still returns `version`, `layout_path`, and `render_path`.
-Saved snapshots now separate `recipe` from `geometry`.
+`apply-layout` returns `version`, `layout_path`, and `render_path`.
 
 For a selected data root, files live beneath:
 
@@ -85,28 +82,14 @@ a letter or digit. Windows device names such as `con` and `com1` are rejected.
 Imported paths resolve known UUID assets within the owner's uploads directory;
 recipes cannot supply paths. `local-dev` is a namespace, not authentication.
 There are no delete, reset, photo replacement/removal, or migration commands.
-Positions in authored recipes are `box.center_x` and `box.center_y`,
-normalized independently on the canvas axes. Resizing keeps that centre fixed.
-Derived render boxes still use top-left integer pixel coordinates.
+See the [layout field guide](layout-format.md) for recipe fields and coordinates.
 
 ### Saved snapshots and schema maintenance
 
-An accepted snapshot has its own `schema_version: 3` and positive `version`,
-one canonical validated input under `recipe`, and separate `geometry` ordered
-like the recipe's layers. Geometry contains the `photo_id`, normalized
-resolved frame, outer/inner pixel boxes, optional source window, and optional
-rotated footprint. Derived fields are required even when their value is null.
-The derived `geometry.box_normalized.x`/`y` are the continuous top-left
-calculated from the authored centre and continuous size. Derived pixel boxes
-also use top-left coordinates for rendering. Neither is an alternative authored
-position or a value to feed back as `center_x`/`center_y`.
-
-The engine recomputes geometry when reopening a snapshot and rejects
-inconsistencies before rendering or accepting a later version. Edit the
-original recipe and apply it again instead of changing a saved snapshot.
-Format 1 and 2 recipes, projects, and snapshots are unsupported. Existing project
-data remains an untouched archive; previously rendered PNGs remain viewable. No
-migration or legacy loader is provided.
+Saved snapshots contain `schema_version: 3`, an accepted `version`, the authored
+`recipe` and derived `geometry`. Edit and reapply the recipe, not the snapshot.
+Derived top-left positions are not authored `center_x`/`center_y` values.
+Reopening recomputes geometry and rejects inconsistencies.
 
 The generated schema is checked against the models in the tests. To regenerate
 it after intentionally changing a contract, run from the repository root:
@@ -117,178 +100,10 @@ it after intentionally changing a contract, run from the repository root:
 
 ## Conversational proposals (optional)
 
-Natural-language requests use two stages through the same provider/model:
-interpret the requested action/source and photo references, then generate a
-recipe only when needed.
-Ordinary edits use the selected working proposal. Rejecting a composition can
-request a fresh arrangement; rejecting a targeted edit can retry its original
-task/source. "Go back to the first one" selects its exact preserved PNG without
-generation or acceptance; "go back ... and make photo 2 smaller" edits that
-source directly. Essential ambiguity produces an interpretation-stage question.
-All lifecycle branches have offline coverage. The separately authorized
-[008 landscape smoke check](../planning/008_results.md#authorized-live-landscape-smoke-check)
-also completed initial composition and three targeted edits with the live model;
-later user-led observations are recorded in [009 results](../planning/009_results.md).
-
-Photo references use stable numbers, saved user-taught labels and bounded
-real task evidence. Interpretation uses the model's language capabilities for
-spacing variations, paraphrases and conversational references. It cannot see
-photo contents or invent untaught visual knowledge. Structural checks retain
-real IDs, actual quoted wording/evidence and numeric/exact-label conflicts;
-they do not prove the model understood the request.
-Qualitative amounts such as "a bit right" do not require exact distances.
-Collective instructions such as "photo 2 smaller than the others" or "remove all
-borders" do not need individual bindings for every group member. Interpretation
-binds individually identified photos and passes the complete task to generation;
-an actually unclear group may still need clarification.
-Explicit lists such as "photos 1 and 4" or "photos 1, 3 and 4" support individual
-normalized numbered references. Numbers must identify photos in the task, not
-be borrowed from unrelated quantities; photo IDs still must exist. Named and
-historical references require valid IDs and genuine cited evidence when supplied.
-Padded numeric tokens such as `photo 01` mean photo 1.
-Literal photo numbers and saved labels inside a quoted reference cannot
-contradict its binding. A label that itself denotes a photo number cannot
-reassign that stable ID.
-
-Teach a durable label with "photo 2 is breakfast" or "map Daunt Books to photo 4".
-Clear new identities are saved automatically, with a concise **Remembered**
-acknowledgement. Answering "Which photo is breakfast?" with `2` or `Photo 2`
-also remembers breakfast and continues the complete original edit, including
-after invalid answers or restart. A clarification asking for several identities
-also accepts explicit pairs such as `2 for breakfast and 3 for london eye`;
-the bare numbers must be paired with their respective labels, not quantities.
-Hypothetical, explicitly temporary and
-unresolved wording must not install lasting names. Interpretation is still
-fallible: actual quotes/IDs cannot prove arbitrary language was understood.
-
-Only a conflicting reassignment displays the exact old/new mappings and
-**pauses that complete memory batch and any associated edit**. Reply naturally,
-for example "Yes, remember those" or "No, that's not right"; users need not
-learn commands or quote internal receipt IDs. Approval interpretation requires
-`--live`, uses the same existing model stage and can consume a call.
-Only the application's current receipt can be approved. Revisions display a new
-receipt; rejection saves nothing and cancels the unapplied associated edit.
-Unclear replies and invalid answers do not silently approve.
-
-Memory-only requests produce acknowledgements without a proposal or baseline
-change. Learning-plus-editing continues the original task from its pinned source.
-One photo may have several saved labels: adding
-Daunt Books preserves bookshop; reassigning bookshop changes only that label.
-Labels compare case-insensitively with normalized whitespace and survive
-compaction, restart and proposal returns. Repeating an unchanged assignment
-needs no new write or confirmation.
-Learning combined with a return selects the exact saved PNG, without generating
-another image; a conflicting assignment still needs approval first.
-
-Ordinary layout changes need no naming gate. For saved `tower bridge`,
-model-led `bridge` can bind the same photo; `book shop` can bind `bookshop`
-without writing an alias. Genuine uncertainty or competing targets still asks
-for clarification. Only user-established additional labels become saved aliases.
-
-Ask "What photo names do you know?" for every active label and photo number,
-including multiple labels per photo. The application renders the list from
-state, without layout generation. It preserves any pending question,
-reassignment receipt or generation-timeout continuation.
-Say "Forget the name breakfast" to remove only that normalized label, not its
-photo, other labels or edits. Repeated forgetting is idempotent. A minimal
-per-label forgotten record in the same name table prevents old raw/compact
-history, supporting citations, retries or proposal returns from reviving it.
-This also works for a name found only in older task evidence. Using it again
-requires fresh user identity evidence; merely mentioning it is not teaching.
-Historical audit records remain untouched.
-
-Pending receipts are redisplayed on chat resume/status without calls. Local
-canvas/cropping or acceptance changes are blocked until the receipt is resolved;
-read-only commands remain available. External receipt/state conflicts and
-interrupted naming writes fail explicitly, without automatic reconciliation,
-approval or dispatch. Validated names may remain saved when later generation
-fails; that does not mean the working collage changed or an image was accepted.
-
-An ordinary enlargement permits minimal necessary inward movement of resized
-photos, retaining centres when the requested size fits. Explicit fixed positions
-and anchors take precedence; unrelated photos and authored styles stay unchanged.
-Generation corrections receive the latest invalid recipe plus earlier feedback
-from the same attempt, to retain successful repairs rather than undoing them.
-These are model instructions, not a geometry-repair solver. Rendering still
-rejects invalid frames, and the model must not quietly shrink a requested
-enlargement or enable cropping to make it fit.
-
-Model context keeps detail for up to **three recent logical tasks** plus up to
-**twelve relevant compact task records**, not the full event log. Clarification
-answers and validation corrections belong to their originating task. Records
-are derived from authoritative events/proposals, retaining the requested task
-separately from actual recipe changes keyed by photo number, plus stacking.
-An invalid interpretation followed by a valid correction keeps the same logical
-task origin, including through clarification answers and restart. Proposal
-publication checks the corrected origin and matching confirmed intent, alongside
-recipe/geometry/preview identity, before advancing the working baseline.
-Deterministic retrieval uses IDs/ordinals, ancestry, learned names, request
-wording and actual change facts; no model-written memory summaries, extra model
-stage or retrieval calls are used. Full audit history and proposals stay on disk.
-Omission counts distinguish unavailable detail from nonexistent history.
-
-When visible photo-reference evidence cites an older binding, its supporting
-reference records remain available to both the model and validator, recursively.
-Only reference/name-update metadata is carried across that boundary, not the
-older transcript or recipes. This does not create durable names or increase the
-three-task/twelve-record windows; existing input-size guards still apply.
-
-"Undo the last two edits" follows the current proposal's ancestry, skipping
-no-ops and non-edit outcomes, rather than counting the latest two created
-proposals. Fresh arrangements retain a navigation predecessor without acquiring
-an editing source; retries branch from the original source, not a rejected result.
-Generation for a retry retains the originating task's clarification answers
-even outside recent history, alongside feedback on the current retry.
-Descriptive returns can find older branches. The interpretation supplies
-destination evidence, which code checks before any baseline change or generation.
-History matching uses the same explicit photo-number list recognition as edit
-grounding, so plural/list wording still excludes unrelated-photo changes.
-Competing or unsupported matches require clarification. A concrete return
-confirmation retains its exact destination and original task across restart;
-"yes" confirms it, while rejection does not select or generate anything.
-A clearly independent replacement request supersedes the pending task.
-
-A pure return reuses the saved proposal/PNG without rerendering or acceptance.
-Return-and-edit selects an old generation source but leaves the current baseline
-unchanged if generation fails. Older wording is not maintained as standing
-instructions; preserve current recipe effects rather than replaying old requests.
-Active names, forgotten-name status, current task/answers, pending confirmations, resolved sources and required
-evidence survive optional-history size fitting. If essential input cannot fit,
-the request fails explicitly instead of silently forgetting it.
-
-Replay reports use **record version 9**, retaining explicit generation and
-interpretation reasoning selections. Conversation, proposal, event and
-acceptance-intent records use **version 8**, including automatic/approved writes,
-forgetting and read-only inspections. Replay-step and assessment records use
-**version 7**; step results include audited before/after identity snapshots;
-request-attempt records use **version 2**, recording
-their stage, actual reasoning selection and remaining deadline at dispatch.
-Layout/project format remains **3**; sequence definitions, preferences and
-controls retain their own unchanged versions. Old conversation/replay and
-request-attempt records are untouched archives:
-use fresh projects, not a legacy loader or
-migration. Existing supported deterministic recipes/snapshots remain usable.
-
-[017](../planning/017-conversational-photo-identity-memory.md) defines the current
-conversational memory policy. [012 results](../planning/012_results.md) retain
-the earlier deliberately confirmed-name policy. A separately authorized
-[replay follow-up](../planning/012_replay_results.md) exercised basic naming
-confirmation but recorded an exact-return failure; the subsequent
-[return repair/retest](../planning/012_return_repair_results.md) completed three
-fresh exact-return runs without corrections.
-[Human-led trial 05](../planning/012_trial05_results.md) then supported the user's
-successful phase sign-off and positive predictability feedback. Broader semantic
-reliability remains unproven; phase closure authorizes no further live calls.
-
-**Format 3 prompt/context adaptation is covered offline.** The agent now edits
-authored centres directly instead of calculating resize position offsets.
-A single authorized four-message format 3 replay completed without corrections
-or acceptance. This is exploratory evidence, not a repeated reliability assessment.
-Use fresh format 3 projects; do not resume archived format 2 projects.
-
-Live model requests require explicit authorization, not a provisioned allowance. See
-[record 005's handoff](../planning/005-model-connected-layouts.md#authorized-six-round-follow-up-handoff)
-for checkpoint status, evaluation evidence, and approval boundaries.
+Use photo numbers or user-taught names to request layouts and edits. The agent
+cannot see photo contents and asks when an essential reference is unclear.
+Proposals remain separate from explicitly accepted versions.
+Live model requests require explicit authorization.
 
 Engine-only users need no optional dependencies. To install the agent into the
 root application environment:
@@ -297,19 +112,10 @@ root application environment:
 .\.venv\Scripts\python.exe -m pip install -r .\requirements-agent.txt
 ```
 
-The verified offline combination is Agent Framework OpenAI provider 1.18.2,
-OpenAI SDK 2.54.0, and HTTPX 0.28.1. The manifest pins the provider and constrains
-the compatible SDK major version. Do not reuse or run the separate
-`temp-foundry-test` environment/scripts.
+Use the pinned agent requirements, not the separate `temp-foundry-test` environment.
 
-Interpretation instructions live in `ai_collage\agent\prompts\request-intent.md`.
-Generation loads `ai_collage\agent\prompts\layout-agent.md` plus the shared
-[layout field guide](layout-format.md); questions and lifecycle actions are
-not generation responses. Controls, resolved source/task, history and validation
-feedback are supplied separately. Fresh layouts retain the previous recipe as
-a reference to avoid repeating, not an editing baseline.
-To print both stages' instructions offline from the repository root, without
-credentials or model calls:
+To inspect interpretation/generation instructions offline, without credentials
+or model calls:
 
 ```powershell
 .\.venv\Scripts\python.exe -c "from ai_collage.agent.provider import instruction_bundle; print(instruction_bundle())"
@@ -334,49 +140,21 @@ proposals; `/show`, `/rate`, and `/accept` act on existing successful proposals.
 A resume uses the captured preferences and effective controls. Omit
 `--canvas`, or supply the same dimensions; use `/canvas` for an explicit change.
 
-Chat shows a concise action/source/photo summary only after interpretation is
-validated, then `Generating layout...` before waiting for generation. Questions,
-pending naming receipts, name acknowledgements and exact returns do not announce generation. This is
-terminal feedback, not an extra model call or model-generated explanation.
+### Chat options
 
-When validation is exhausted before publication and the actual working source
-is reverified, chat gives a brief rejection, the unchanged proposal ID (or no
-proposal yet), and permission to **rephrase or request a different change**.
-The generic message is intentional when a detailed workaround is not supported.
-Identity clarifications/rejections also show one validated taught label per
-named photo; when no names exist, they suggest photo numbers instead. Resizing
-and other unrelated failures do not get naming tips. Legitimately learned names
-can remain saved even when generation fails.
+| Option | Behavior |
+|---|---|
+| `--live` | Enable model requests after authorization; otherwise chat stays local-only. |
+| `--no-open` | Print preview paths without opening the OS image viewer. |
+| `--preferences FILE` | Capture defaults when creating a conversation. |
+| `--generation-reasoning high\|low` | Generation effort; default `low`. Also available in replay. |
+| `--interpretation-reasoning high\|low` | Interpretation effort; default `high`. Also available in replay. |
 
-Full validation diagnostics and raw responses remain in conversation events;
-terminal recovery text does not replace them. Publication/I/O and integrity
-failures stay explicit, without an unverified unchanged-state assurance.
-Rephrasing is a new user request, not an automatic retry or a guarantee of
-success. A bare "try again" is supported for the specific timeout case below,
-not promised as a universal recovery shortcut.
+Reasoning settings apply to corrections too, remain fixed for the session/run,
+and never escalate automatically. Repeat nondefault flags on replay resume;
+changing either selection is rejected.
 
-After a confirmed generation timeout before publication, the editing baseline
-is unchanged. Repeat the original prompt, say "try again", or repeat the last
-clarification answer (for example "2"). The existing interpretation stage can
-resume the failed task with its original source and answers, including after
-restart. An interpretation-stage service failure or timeout does not cancel
-that continuation or a pending clarification; the next explicit message can
-continue it. A clearly independent request replaces it. Retrying requires an
-explicit user message, may produce different output and may incur more usage.
-Unrelated publication/I/O failures do not carry the same unchanged-state promise.
-
-Chat and replay accept independent stage settings:
-`--generation-reasoning high|low` defaults to **low**;
-`--interpretation-reasoning high|low` defaults to **high**.
-Use `--generation-reasoning high` to restore higher generation effort explicitly.
-Each setting applies to its stage's corrections too; interpretation selection
-also covers clarification answers and timeout-continuation interpretation.
-There is no automatic effort escalation. Both choices are fixed for the chat
-session/replay run and recorded in request evidence. Repeat both selected flags
-on replay resume, which rejects either candidate changing (including an omitted
-flag selecting a different default). These options do not authorize a live trial.
-For a separately authorized interpretation trial with generation low, append
-`--generation-reasoning low --interpretation-reasoning low` to the normal command.
+### Local commands
 
 | Local command | Behavior |
 |---|---|
@@ -396,6 +174,50 @@ An older proposal can be accepted as the next version and becomes the editing
 baseline; an already-current acceptance is idempotent. Current canvas/cropping
 controls must permit the chosen proposal. External accepted-version changes,
 corrupt state, and altered previews produce explicit conflicts, not silent repair.
+
+### Natural-language requests
+
+| Example | Behavior |
+|---|---|
+| "Make photo 2 smaller" | Edit the selected working proposal. |
+| "Photo 2 is breakfast" | Remember a clear new name automatically. |
+| `2 for breakfast and 3 for london eye` | Answer a multi-name clarification and continue its original edit. |
+| "What photo names do you know?" | List active names/numbers without changing the layout or pending task. |
+| "Change breakfast to photo 1" | Confirm if this reassigns an existing name. |
+| "Forget the name breakfast" | Forget that label only; later use needs fresh identity evidence. |
+| "Go back to the first one" | Select its exact preserved PNG, without generation or acceptance. |
+| "Go back to the first one and make photo 2 smaller" | Edit that earlier source; failure leaves the current baseline unchanged. |
+| "Undo the last two edits" | Follow the current proposal's editing history, skipping no-ops. |
+
+An identity answer such as `2` or `Photo 2` also remembers the requested name.
+Names survive restart and proposal returns; one photo may have several labels.
+Casual references can resolve existing names without saving extra aliases.
+Memory-only requests create no proposal; learned names can remain saved if a
+subsequent layout edit fails.
+
+A conflicting reassignment pauses the whole memory batch and associated edit.
+Reply "Yes, remember those" or "No, that's not right"; approval uses `--live`
+and may consume a call. Until resolved, canvas/cropping changes and acceptance
+are blocked, but read-only commands remain available.
+
+Essential ambiguity produces a question. Rejecting a composition can request a
+fresh arrangement; rejecting a targeted edit can retry its original task/source.
+Enlargement may minimally reposition resized photos to fit unless positions
+are explicitly fixed. Invalid geometry is rejected, not silently repaired.
+
+### Request recovery
+
+| Outcome | Next action |
+|---|---|
+| Validation rejected before publication | Rephrase or request another change; chat identifies the unchanged baseline only after verifying it. |
+| Confirmed generation timeout before publication | Repeat the prompt, say "try again", or repeat the last clarification answer; the original task/source can continue after restart. |
+| Publication/I/O or integrity failure | Inspect the explicit error; the same unchanged-state assurance does not apply. |
+
+A new independent request replaces the pending task. Retries need an explicit
+message and can incur more usage; "try again" is not a universal recovery command.
+Full diagnostics and raw responses remain in conversation events.
+
+### Preferences
 
 Defaults live in:
 
@@ -417,27 +239,32 @@ design defaults, not restrictions. Edit this file explicitly for **future**
 conversations, or select `--preferences FILE` when creating one. Existing
 conversations retain their snapshot; requests never rewrite the defaults file.
 
-Conversation state, bounded event files, and immutable `proposals\P001`
-artifacts live under the project's `conversation` directory. Per-request usage
-records are saved automatically in `conversation\requests\attempt-0001.json`,
-etc. They are accounting, not an allowance or a cumulative usage limit.
-Chat and `/status` label project-wide token sums as **Known usage**. If usage is
-missing, they show the affected request count/attempt IDs and warn that totals
-are incomplete. The machine-readable `unknown_usage_attempts` is a list of IDs,
-not a count. A timeout may prevent provider usage from arriving; unknown does
-not mean zero consumption or no charge. Partial reported counts remain included
-in known totals; missing counts are never estimated. Raw accounting fields remain
-available in replay summaries and request records.
-All experiment runtime files remain ignored by Git.
+### Conversation files and usage
+
+State/events and immutable `proposals\P001` artifacts live under the project's
+`conversation` directory. Usage records are `conversation\requests\attempt-0001.json`,
+etc.; these are accounting, not a cumulative usage cap. Runtime files are ignored
+by Git.
+
+`/status` reports **Known usage** and identifies requests with missing usage.
+Unknown does not mean zero consumption or no charge; missing counts are not
+estimated. Machine-readable `unknown_usage_attempts` contains IDs, not a count.
+
+Model context includes up to three recent logical tasks plus up to twelve
+relevant compact task records, not the full audit log. Saved names persist separately.
+
+Current record versions: conversation/event/proposal/acceptance intent **8**,
+replay report **9**, replay step/assessment **7**, request attempt **2**.
+Unsupported versions are untouched archives: use fresh conversational projects,
+not a migration. Supported format-3 deterministic recipes/snapshots remain usable.
 
 ### Repeatable prompt sequences
 
 `python -m ai_collage.cli.replay` runs repository-owned JSON sequences through the
 same conversation/provider operations as chat. It captures results, not
 subjective quality or benchmark passes, and **never accepts a proposal**.
-It is the single sequence-execution path; the old fixed evaluator and its live
-entry point have been removed. Mechanical assessment now reads saved replays
-offline, separately from execution and acceptance.
+Mechanical assessment reads saved replays offline, separately from execution
+and acceptance.
 
 The supplied sequences are:
 
@@ -451,21 +278,16 @@ The supplied sequences are:
   and select the first proposal exactly.
 - `examples\sequences\05_clarification_continuation.json`: request an untaught
   name; pause for the planned identity answer `2` via `--answer`, not a scripted
-  third message. See [010d](../planning/010d-bounded-reasoning-evaluation.md)
-  for the frozen comparison and its separate live-execution boundary.
+  third message.
 - `examples\sequences\06_photo_identity_memory.json`: the ten-step learning,
-  listing, reassignment, forgetting and fresh re-establishment story from
-  [017](../planning/017-conversational-photo-identity-memory.md). Its required
+  listing, reassignment, forgetting and fresh re-establishment story. Its required
   questions and conflicting-name receipt need separately recorded replies.
 
-A sequence contains `record_version: 1`, a `name`, ordered `images` paths
-relative to the sequence file, `canvas` width/height, and `messages`.
-Each message has a unique `name`, `prompt`, and optional
-`reopen_before: true`. Photo numbers follow image order. Canvas dimensions
-are fixed for a replay; `canvas.cropping` defaults to false. Styling uses the
-conversation's captured defaults.
-The JSON `name` is a stable replay identity, not its filename. Renaming a
-sequence file in the same directory does not reset or invalidate an existing replay.
+Sequences use `record_version: 1`, a stable `name`, ordered `images` paths
+relative to the sequence file, fixed `canvas` dimensions and `messages`.
+Each message has a unique `name`, `prompt` and optional `reopen_before: true`.
+Photo IDs follow image order; `canvas.cropping` defaults to false. Styling uses
+captured conversation defaults.
 
 Validate sequence structure and source-file availability/hashes **offline**,
 without creating a project, opening credentials, or sending requests:
@@ -480,52 +302,38 @@ After separate live authorization, run **only the next message**:
 .\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-FRESH-PROJECT
 ```
 
-Repeat the same command with `--resume` to run the next message in that
-project. Add `--remaining` only when authorized to run all remaining messages
-without pausing after each proposal. A completed replay sends no further calls.
-No `--run`, `--ledger-data-dir`, or allowance provisioning is needed. There are
-at most four model calls per message, including validation corrections: a
-four-message batch makes at most 16 calls, normally eight with the two-stage
-flow. Interpretation gets at most two attempts; generation and its corrections
-share the remaining four-call allowance. Every explicit retry
-is a new bounded attempt at that message; accounting persists across invocations
-without imposing a lifetime cap.
+| Option | Behavior |
+|---|---|
+| `--resume` | Run the next message in the same project. |
+| `--remaining` | Run all remaining messages when authorized, stopping at questions/receipts/failures. |
+| `--resume --retry` | Explicitly retry a failed step when authorized. |
+| `--resume --answer TEXT --answer-origin user\|copilot` | Record an answer to the pending question or naming receipt. |
 
-Resume verifies the source photos, canvas, instructions and
-conversation state. Previously attempted messages cannot change. Unattempted
-messages may be edited, appended or removed; each execution preserves its
-own complete sequence snapshot. Manual chat/control/acceptance changes cause
-resume to stop rather than silently adopt a different baseline.
+Resume verifies photos, canvas, instructions, reasoning settings and state.
+Attempted messages cannot change; unattempted messages can. Manual chat/control/
+acceptance changes block resume. Completed replays make no further calls.
 
-Learning, forgetting and read-only listing acknowledgements advance one scripted step without creating a
-proposal, preview, source-relative layout difference or baseline change.
-A question or naming receipt pauses without advancing the sequence or answering
-on your behalf. New non-conflicting teaching does not create an approval stop;
-conflicting assignments still do.
-After reviewing the question/receipt, supply a recorded supplemental answer:
+Memory-only steps advance without a proposal. Questions and conflicting-name
+receipts pause without advancing or answering automatically. After reviewing
+the actual question/receipt, supply a recorded answer:
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_collage.cli.replay --sequence .\examples\sequences\02_landscape_staggered_adjustments.json --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --resume --answer "Photo 2" --answer-origin user
 ```
 
-Use `--answer-origin copilot` only for an answer actually authored by Copilot.
-For a naming receipt use, for example, `--answer "Yes, remember those"`, after
-reviewing every proposed mapping. Approval/rejection, the exact receipt and
-the actual answer/origin are retained; replay never approves automatically.
-Rejection records a discarded task, not a generated layout.
-The answer, origin and preceding question/receipt execution are captured separately;
-the original scripted message is not replaced. Each answer has a new four-call
-attempt limit and consumes the same optional outer allowance. At most two
-question/receipt-answer turns are allowed per scripted step. `--remaining` may
-continue subsequent scripted messages after successful completion. The runner
-never invents an answer. Manual chat/control changes still block replay resume;
-do not bypass that check to answer a question.
-A service failure stops immediately;
-an explicitly authorized retry requires `--resume --retry`. The existing
-bounded validation-correction loop still applies within a message. An
-interrupted, pending execution requires evidence inspection, not blind retry.
-Retrying a failed answer preserves its recorded answer and origin. Unsupported
-old replay versions cannot resume; their evidence remains unchanged.
+Use `--answer-origin copilot` only for Copilot-authored answers. For a naming
+receipt, use e.g. `--answer "Yes, remember those"` after reviewing every mapping.
+Answers/origins are recorded separately from the script; rejection discards the
+task without generating a layout. Do not bypass resume checks to answer.
+
+Each message/retry/answer has at most four calls, with at most two interpretation
+attempts; generation shares the remaining calls. Four uninterrupted messages
+therefore allow at most 16 calls. Each scripted step permits at most two answer
+turns. Answers/retries also consume any optional pass-wide call cap.
+
+Service failures stop immediately. Interrupted pending executions need evidence
+inspection, not blind retry. Retrying a failed answer preserves its answer/origin.
+Unsupported replay versions cannot resume; their evidence remains unchanged.
 
 Under the project's normal data directory, inspect:
 
@@ -540,22 +348,10 @@ conversation\proposals\P001\preview.png
 conversation\requests\attempt-0001.json
 ```
 
-The report records the next-message cursor and every execution, including
-failures/retries/questions. Per-execution results contain proposal/preview
-paths, resolved source/task, previous working baseline, authored-field differences
-from the actual edit source, each stage's request context path,
-attempt/correction counts, cumulative project request usage before/after,
-before/after identity-state snapshots, and elapsed stage time including
-validation/rendering. Raw model responses
-remain in the normal conversation events; individual request usage remains
-in the project's request records. Selection is a completed step, not a new
-proposal; it has no authored changes or generation call. Both prompts are
-captured in the instruction bundle and checked on resume.
-The report captures both reasoning candidates; offline integrity assessment
-checks each request's stage/reasoning against its corresponding candidate.
-No photos or local paths are added to the
-model context by the runner. Existing executions and proposal files are
-preserved when resuming.
+`report.json` holds the cursor and every execution, including failures/retries.
+Step results record task/source, actual recipe differences, identity snapshots,
+request contexts, usage, corrections and timing. Raw responses remain in
+conversation events. Resume preserves existing executions/artifacts.
 
 ### Optional Autopilot call cap
 
@@ -574,11 +370,9 @@ guard does not add fields to model context or bind a replay to a budget path.
 
 ### Assess saved replay evidence offline
 
-The assessment command needs no historical ledger, credentials, original input
-sequence file, or original source-photo paths. It reads the current-format saved
-replay, captured contexts, local request/event records, imported photos and
-immutable proposals without starting/recovering a conversation,
-rendering new previews, accepting anything, or making model requests.
+Assessment reads saved evidence offline, without rendering, accepting or making
+model requests. It needs no credentials, original sequence file or original
+source-photo paths.
 
 ```powershell
 # Either sequence: verify saved evidence only.
@@ -588,53 +382,32 @@ rendering new previews, accepting anything, or making model requests.
 .\.venv\Scripts\python.exe -m ai_collage.cli.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --profile dark-portrait-adjustments
 ```
 
-The default `integrity` profile checks source/instruction hashes, proposal
-identity/actual source relationships, schema/controls/recomputed geometry, saved recipe/PNG
-digests, audited receipt/name-state updates, approval/rejection and naming acknowledgements, per-execution
-result consistency and sequence completion. It does
-**not** check whether a move, swap or styling change followed the user's intent.
-An intact pending naming receipt is unassessed/incomplete, not a service failure
-or a completed edit. A discarded task can pass integrity without producing an image.
+| Profile | Checks |
+|---|---|
+| `integrity` (default) | Hashes, source relationships, valid geometry/controls, audited naming changes, result consistency and completion; **not whether edits followed user intent**. |
+| `dark-portrait-adjustments` | Sequence 01's 1200x1800 four-photo edits: dark background, relative size, subtle near-white borders, rounding/tilt, shrink, border removal and straightening. Not a landscape profile. |
+| `photo-identity-memory` | Sequence 06's ten memory milestones, questions, listings, exact reassignment approval and fresh identity answers, plus targeted 10% width reductions without unrelated changes. |
 
-The `dark-portrait-adjustments` profile additionally preserves the old fixed
-checks: dark-neutral background, photo 2 smaller than the others, subtle
-white or near-white borders (each RGB channel at least 240), rounding/tilt,
-an in-place shrink, border removal, straightening, and no unrelated authored
-changes. These are profile-specific rules, not universal composition
-requirements. It requires the four corresponding
-named messages on a 1200x1800 four-photo replay, with reopening before
-straightening; it is not a landscape profile.
-No prompts or live execution are duplicated in the assessor.
-
-The `photo-identity-memory` profile additionally checks sequence 06's ten memory
-milestones, read-only listings, pre-answer questions with unchanged state, exact
-reassignment approval and both fresh identity answers. Each resize must bind the
-intended photo and reduce its normalized width by 10% (absolute tolerance
-0.000001), preserving centres, other authored fields and stacking. It checks
-actual events and recipes, not just final names or cursor completion:
+Profile rules are sequence-specific, not universal composition requirements.
+The dark portrait profile requires reopening before straightening and border
+RGB channels at least 240. Identity resize tolerance is 0.000001; centres,
+other authored fields and stacking must remain unchanged.
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_collage.cli.assess --data-dir .\.collage-data-v3 --project YOUR-REPLAY-PROJECT --profile photo-identity-memory
 ```
 
-Each invocation appends `replay\assessments\0001.json`, then `0002.json`, etc.,
-with the assessed replay report's hash, profile, completion flag and per-execution
-results. It never rewrites the replay or an earlier assessment. Exit code 0
-means a complete replay whose applicable mechanical checks passed; failures
-or incomplete sequences return 1. Questions, interruptions and service failures
-have no proposal to assess and remain visible as `not_assessed`. A subsequent
-explicit retry may yield an eventual pass; that is not a first-attempt success
-claim, and the original failure remains recorded. Recorded clarification answers
-can continue a pending step; the assessment reports `clarification_assisted: true`
-rather than presenting that as an uninterrupted scripted success. Stage order,
-call accounting and captured source-relative changes are checked as evidence.
+Reports append to `replay\assessments\0001.json`, `0002.json`, etc.; previous
+evidence is never rewritten. Exit **0** means complete with all applicable
+mechanical checks passed; **1** means failed or incomplete. Questions,
+interruptions and service failures remain `not_assessed`. A discarded task
+can pass integrity without an image.
 
-Acceptance fidelity remains covered by offline conversation tests, not by an
-assessment that changes the project. Composition and subjective request quality
-are reviewed separately by the user or Copilot; there is no automated AI judge
-or subjective scoring system. Historical evaluation reports remain untouched.
+Clarification-assisted steps are marked `clarification_assisted: true`; later
+retries do not erase original failures or imply first-attempt success.
+Visual quality needs separate review; assessment has no automated AI judge.
 
-### Future authorized live use
+### Authorized live use
 
 These are instructions, **not permission to run paid calls**. Live use requires
 a keyless Azure login with access to the configured deployment. The application
@@ -650,45 +423,29 @@ configuration.
 
 For explicitly authorized live use, add `--live` to the chat command. Replays
 use their explicit execution command instead. Neither needs a shared run or
-allowance. Old experiment ledgers remain untouched historical evidence, not
-active limits, and this simplification grants no new service-call authorization.
+allowance.
 
-The transport durably records each actual outbound inference before dispatch.
-The per-request limits are 50,000 input
-tokens and 25,000 output tokens including reasoning. Each message has a shared
-**120-second interpretation-stage deadline** and an independent shared
-**180-second generation-stage deadline**, including each stage's validation
-corrections. Nested provider/transport waits do not renew these budgets.
-Local rendering/publication is outside the model-stage deadlines. Input
-preflight uses serialized UTF-8 bytes plus a reserve as a conservative token
-bound; actual provider usage is recorded separately. If needed, it removes
-optional compact records first, then oldest recent task detail and optional
-proposal catalogue entries until the complete outgoing request fits.
-It never cuts the original/current request, required source/task, pending
-question, or latest correction candidate/feedback. If essential input still
-exceeds the bound, a local error reports the measured bound and limit before
-dispatch, without using a call allowance or changing the baseline. Replay
-captures retain the effective context after size trimming. SDK/transport retries,
-tools, hosted history, response storage, and unexpected extra inference are
-disabled/rejected. The selected reasoning effort is explicitly requested and
-checked on the outbound request; reasoning tokens share the 25,000-token output cap.
-Storage-off is not a promise about all service logging.
+| Limit | Value |
+|---|---|
+| Calls per request | At most 4, including corrections; interpretation gets at most 2 attempts. |
+| Input/output | 50,000 input tokens; 25,000 output tokens including reasoning. |
+| Interpretation deadline | 120 seconds shared across its attempts and validation. |
+| Generation deadline | 180 seconds shared across its attempts and validation. |
 
-There are at most three validation-guided corrections for completed invalid
-JSON or hard layout/control violations: four total attempts per user request,
-stopping earlier on success, a per-request limit or an error. Numeric containment
-feedback includes current outer/rotated/sampled bounds, pixel overshoot, and
-conservative normalized `center_x`/`center_y` placement ranges under
-`safe_box_center_normalized`. It never changes the proposed recipe automatically.
-Context includes the valid baseline's authored centre coordinates and derived
-geometry for size/clearance checks. Resizing in place keeps those authored
-centres exactly; rounded render boxes are not replacement position anchors.
-A valid clarification waits for the real
-user. Service/authentication/incomplete/timeout/render-I/O failures do not
-trigger model correction. Photos, filenames, local paths, and credentials are
-not automatically sent: the agent receives photo numbers/dimensions, recipes,
-defaults, controls, and actual conversation text. User-entered text is not
-automatically scrubbed of sensitive information.
+Nested waits do not renew deadlines; local rendering/publication is outside them.
+Only completed invalid JSON or hard layout/control violations trigger corrections,
+not service/authentication, incomplete-response, timeout or render-I/O failures.
+SDK/transport retries and unexpected extra inference are disabled.
+
+Input preflight uses a conservative serialized-byte bound, separate from actual
+provider usage. Optional history can be trimmed; essential task/source,
+questions and correction feedback are retained. Oversized essential input fails
+before dispatch without consuming a call or changing the baseline.
+
+Photos, filenames, local paths and credentials are **not automatically sent**.
+The model receives photo numbers/dimensions, recipes, defaults, controls and
+conversation text. User-entered text is not scrubbed. Hosted history, tools and
+response storage are disabled; storage-off does not promise no service logging.
 
 ## Emma's layered 2:3 example
 
@@ -842,27 +599,18 @@ assessment use `python -m ai_collage.cli.replay` and
 .\.venv\Scripts\python.exe -m pytest -q .\tests\engine .\tests\cli
 ```
 
-Deterministic tests are grouped into contracts, geometry, centre anchoring,
-rendering, storage, CLI, and curated examples. This includes integration checks
-and CLI subprocesses, not only unit tests. Optional mocked agent/evaluation
-tests live separately under `tests\agent` and `tests\evaluation`.
-Run those when working on the agent:
+With the optional agent dependencies installed, run agent/evaluation tests:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q .\tests\agent .\tests\evaluation
 ```
 
-These agent tests use fake replies and mocked HTTP; they do not call a live
-model or initialize Azure credentials. With the optional dependencies installed,
-run the complete offline suite before closing a cross-package change:
+Run the complete offline suite:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q --tb=short -p no:cacheprovider
 ```
 
-Shared fixtures/helpers remain small. Synthetic photo tests check
-known pixels and shapes; they do not depend on the personal photos in `photos`.
-Example tests use synthetic 3:4 sources matching the recipes' required aspect
-ratios. Real-photo before/after comparisons are separate phase evidence.
-Tests block network access; workflow CLI subprocess helpers also remove Azure/OpenAI
-environment variables. There is no model-based aesthetic judgment.
+Tests block network access, use synthetic photos and fake model replies, and do
+not initialize Azure credentials. See [image-testing notes](../LESSONS.md#2-how-the-tests-check-images)
+for how the pixel checks work.

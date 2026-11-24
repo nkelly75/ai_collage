@@ -18,6 +18,9 @@ Working rules:
   the planning index summarizes status and links, and these instructions hold
   durable rules and references. Keep phase evidence, metrics, and accounting
   in the relevant results record; link rather than repeat them elsewhere.
+- Keep [LESSONS](../LESSONS.md) examples and code references current when related
+  implementation changes. Discuss new lessons with the user before adding them;
+  keep entries concrete rather than turning phase progress into general conclusions.
 - Stay within the approved scope and retry/service budgets. Historical plans
   are records, not authorization for new work or current format specifications.
 - No Git writes without explicit approval; preserve the user's staging,

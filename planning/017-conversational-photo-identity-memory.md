@@ -1,6 +1,7 @@
 # 017: Conversational photo identity memory
 
-**Status:** Implementation and the latest separately authorized replay-06 pass
+**Status:** Successfully completed and closed with the user's sign-off.
+Implementation and the latest separately authorized replay-06 pass
 are complete. After the assessment repair, fresh `p017-replay-06c` completed all
 ten objectives, and the subsequently authorized full offline regression passed.
 Human-led `p17-human-07` then exposed a numeric multi-mapping validation defect;
@@ -10,7 +11,8 @@ listing, confirmed reassignment, forgetting and fresh re-learning. The trial
 remains user-led; Copilot has not advanced it or made further live calls.
 Earlier stopped passes remain preserved.
 See [017 results](017_results.md). All live allowances are closed; further live
-evaluation by Copilot requires separate authorization. No phase sign-off.
+evaluation by Copilot requires separate authorization. This closes the bounded
+phase, not general reliability or broader Phase 1; no merge is authorized.
 
 ## Purpose and boundaries
 
