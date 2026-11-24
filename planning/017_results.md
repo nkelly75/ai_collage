@@ -482,3 +482,12 @@ describe their respective handoffs and remain as historical evidence.
 This closes neither general language reliability nor the broader Phase 1.
 Replay allowances remain closed; further live calls and branch integration
 require separate authorization.
+
+## Integration into main
+
+On 2026-11-24, the user reported merging `nkelly/llm-wip-1` into `main`,
+including the subsequent documentation updates. A read-only local Git check
+confirmed that `main` at `06bdedb` (`refresh docs including new LESSONS`)
+contained every commit from that branch, with a clean working tree.
+Earlier integration restrictions describe their original handoffs; this merge
+does not reopen live-call allowances or authorize further work.
