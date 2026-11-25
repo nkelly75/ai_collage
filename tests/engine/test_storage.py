@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 
 from PIL import Image
 from pydantic import ValidationError
@@ -10,6 +12,25 @@ from ai_collage.engine.models import CollageError, InputLayout, MAX_FILE_BYTES, 
 from ai_collage.engine.projects import ProjectStore, read_json
 
 from ..helpers import framed_layout_data, layout_data, photo_file, write_layout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows device-path resolution")
+@pytest.mark.parametrize("prefix_root", [True, False])
+@pytest.mark.parametrize("escape", [True, False])
+def test_containment_handles_transient_windows_device_prefix(tmp_path, monkeypatch, prefix_root, escape):
+    root = tmp_path / "store"
+    candidate = (tmp_path if escape else root) / "photo.jpg"
+    original = Path.resolve
+    prefixed = root if prefix_root else candidate
+    def resolve(path, *args, **kwargs):
+        result = original(path, *args, **kwargs)
+        return Path("\\\\?\\" + str(result)) if path == prefixed else result
+    monkeypatch.setattr(Path, "resolve", resolve)
+    if escape:
+        with pytest.raises(CollageError, match="escapes"):
+            project_module._contained(root, candidate)
+    else:
+        assert project_module._contained(root, candidate) == candidate
 
 
 def test_inconsistent_saved_border_geometry_is_rejected(store, sources, tmp_path):

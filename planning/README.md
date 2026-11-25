@@ -124,7 +124,10 @@ user's acceptance as a starting prototype; see [018a results](018a_results.md).
 [018b](018b-local-functions-tooling-and-skeleton.md) is complete and closed
 following the user's manual connectivity verification;
 see [results and limits](018b_results.md).
-018c and later increments remain unapproved.
+[018c](018c-persistent-project-flow.md) is **successfully completed and closed
+with the user's manual testing and sign-off** for the agreed create/save/list/reopen flow;
+see [results and limits](018c_results.md).
+Later increments remain unapproved.
 
 ## Planning records
 
@@ -159,7 +162,7 @@ and record 003 spans several feature increments.
 | [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Checkpoint committed by the user. |
 | [016: Human-led trial 06](016-user-led-natural-language-trial.md) | User reached P009 after the repair; not an Autopilot assignment. | [Observations and separately approved offline evidence-handoff repair](016_results.md); three-task policy unchanged. Human-led continuation remains separate. |
 | [017: Conversational photo identity memory](017-conversational-photo-identity-memory.md) | Successfully completed and closed with user sign-off; replay and offline regression passed, including the numeric-mapping repair. | See [017 results](017_results.md); human-led `p17-human-07` reached P012 with the repair and memory lifecycle live-confirmed. Copilot replay allowances stay closed; subsequently merged into `main` by the user. |
-| [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Revisable umbrella; 018a complete and accepted as a starting prototype. Later stages unapproved. | See [018a results](018a_results.md) for closeout and limitations. |
+| [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Revisable umbrella; 018a-018c complete and closed with user acceptance. Later stages unapproved. | See the [018 tracker](018-local-conversation-and-preview.md) for increment briefs, results and limits. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
@@ -179,7 +182,7 @@ from the original proposal are:
 | Independently shaped frames and pan/zoom waited for a future graphical UI. | Cover frames and pan/zoom already work through JSON recipes. Graphical controls remain future work; outside borders and rounded corners are also implemented. |
 | Image-background fitting was unresolved, and the draft used `expand=True` for rotation. | An ordinary lowest photo layer supplies an image background. Tilt uses centre-preserving rotation and validated sampled footprints; angles are -10 to +10 degrees, not the draft schema's -15 to +15. |
 | Phase 1 included model-generated layouts and durable conversations. | Offline foundation, durable conversations, and fixed checkpoint A layout/refinement/acceptance cases now pass. Phase 010 improved grounding, navigation and recovery; human trial 04 produced an accepted image. General reliability and broader Phase 1 sign-off remain outstanding. |
-| Captions, shadows, UI, and authenticated cloud deployment were envisioned. | These remain unimplemented; historical model names, hosting details, and cost estimates are not verified current selections or prices. |
+| Captions, shadows, UI, and authenticated cloud deployment were envisioned. | The local React UI and Functions-backed project persistence are implemented; captions, shadows and authenticated cloud deployment remain unimplemented. Historical model names, hosting details, and cost estimates are not verified current selections or prices. |
 
 Format 1 and 2 saved projects remain untouched archives, not loadable or migrated by
 the current CLI. Their PNGs remain viewable. Current reproduction instructions

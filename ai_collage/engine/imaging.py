@@ -13,6 +13,8 @@ from .models import (
     Border,
     CollageError,
     Photo,
+    PhotoMediaError,
+    PhotoSizeError,
     PixelBox,
     ResolvedLayout,
 )
@@ -21,20 +23,20 @@ from .models import (
 def load_photo(path: Path) -> tuple[Image.Image, str]:
     """Return an oriented RGBA image and canonical extension; caller closes it."""
     if path.stat().st_size > MAX_FILE_BYTES:
-        raise CollageError(f"{path}: photo exceeds the 25 MiB file limit.")
+        raise PhotoSizeError(f"{path}: photo exceeds the 25 MiB file limit.")
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(path) as source:
                 extension = {"JPEG": ".jpg", "PNG": ".png"}.get(source.format)
                 if extension is None:
-                    raise CollageError(f"{path}: only JPEG and PNG photos are supported.")
+                    raise PhotoMediaError(f"{path}: only JPEG and PNG photos are supported.")
                 if source.width * source.height > MAX_IMAGE_PIXELS:
-                    raise CollageError(
+                    raise PhotoSizeError(
                         f"{path}: photo exceeds {MAX_IMAGE_PIXELS:,} decoded pixels."
                     )
                 if getattr(source, "n_frames", 1) != 1:
-                    raise CollageError(f"{path}: animated/multiframe images are unsupported.")
+                    raise PhotoMediaError(f"{path}: animated/multiframe images are unsupported.")
                 source.load()
                 with ImageOps.exif_transpose(source) as oriented:
                     return oriented.convert("RGBA"), extension

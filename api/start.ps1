@@ -1,7 +1,17 @@
 [CmdletBinding()]
-param()
+param(
+    [ValidateRange(1, 65535)][int]$Port = 7071,
+    [string]$UiOrigin = 'http://127.0.0.1:5173'
+)
 
 $ErrorActionPreference = 'Stop'
+$origin = $null
+if (-not [Uri]::TryCreate($UiOrigin, [UriKind]::Absolute, [ref]$origin) -or
+    $origin.Scheme -ne 'http' -or $origin.Host -ne '127.0.0.1' -or
+    $origin.AbsolutePath -ne '/' -or $origin.Query -or $origin.Fragment -or $origin.UserInfo -or
+    $UiOrigin -ne $origin.GetLeftPart([UriPartial]::Authority)) {
+    throw 'UiOrigin must be an exact http://127.0.0.1:<port> origin.'
+}
 $venv = Join-Path $PSScriptRoot '.venv'
 if (-not (Test-Path -LiteralPath (Join-Path $venv 'Scripts\python.exe') -PathType Leaf)) {
     throw 'API environment missing. Complete the user-run setup in api\README.md first.'
@@ -27,6 +37,10 @@ $settings = @{
     AzureWebJobsDashboard = $null
     APPLICATIONINSIGHTS_CONNECTION_STRING = $null
     APPINSIGHTS_INSTRUMENTATIONKEY = $null
+    PYTHONPATH = "$(Split-Path -Parent $PSScriptRoot);$env:PYTHONPATH"
+    AI_COLLAGE_API_AUTHORITY = "127.0.0.1:$Port"
+    AI_COLLAGE_UI_ORIGIN = $UiOrigin
+    FUNCTIONS_REQUEST_BODY_SIZE_LIMIT = '167772160'
 }
 $previous = @{}
 foreach ($name in $settings.Keys) {
@@ -49,7 +63,7 @@ try {
         throw 'Use Azure Functions Core Tools 4.17.0 or newer 4.x for loopback address support.'
     }
 
-    & $func start --address 127.0.0.1 --port 7071 --cors http://127.0.0.1:5173
+    & $func start --address 127.0.0.1 --port $Port --cors $UiOrigin
     if ($LASTEXITCODE -ne 0) { throw "Functions host exited with code $LASTEXITCODE." }
 } finally {
     foreach ($name in $settings.Keys) {

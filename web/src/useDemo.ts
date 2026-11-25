@@ -37,7 +37,7 @@ export function useDemo() {
     if (!next || !matchesPrompt(input, next.prompt)) {
       setError(next
         ? 'Only the suggested sample message is supported. No AI request was made.'
-        : 'The sample walkthrough is complete. Select a proposal or reset the prototype.')
+        : 'The sample walkthrough is complete. Select a proposal or reset the demo.')
       return false
     }
     setError('')
@@ -61,8 +61,18 @@ export function useDemo() {
     setNotice('Accepted in this tab only. No version was saved.')
   }
 
+  function reset() {
+    setMessages([welcome])
+    setStepIndex(0)
+    setActive(null)
+    setAccepted(null)
+    setPending(null)
+    setError('')
+    setNotice('')
+  }
+
   return {
-    messages, active, accepted, error, notice, next, submit, select, accept,
+    messages, active, accepted, error, notice, next, submit, select, accept, reset,
     busy: pending !== null,
     progress: pending
       ? pending.phase === 'intent' ? 'Understanding your request' : 'Creating your layout'

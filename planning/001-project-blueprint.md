@@ -132,7 +132,20 @@ Azure Functions
 - **Generate/refine:** Browser -> Function -> Foundry -> validation/rendering -> private Blob Storage.
 - **Preview/download:** Browser -> Function -> private stored output -> Function -> browser.
 - Initially, the browser does not access Blob Storage directly or directly write stored layout state. Set explicit upload-byte and decoded-image-dimension limits; validate images before processing.
-- **Optional later optimization:** The backend could authorize short-lived, blob-specific user delegation SAS URLs for direct image transfers. Restrict permissions to the operation, protect these bearer credentials, and validate direct uploads before processing. Storage CORS is not authorization. This optimization is not required initially.
+- **Upload performance and priority:** Keep Function-mediated uploads for the
+  expected one/two-user use. They add buffering, memory use and storage-transfer
+  work; measure hosted behavior before optimizing. Local success does not
+  establish Internet upload performance. Direct uploads are not a short-term
+  priority.
+- **Optional later optimization:** The backend could authorize direct Blob
+  uploads using short-lived, blob-specific [user delegation SAS URLs](https://learn.microsoft.com/en-us/azure/storage/common/storage-sas-overview#when-to-use-a-shared-access-signature).
+  This removes the Function from the bulk-transfer path and can support
+  chunked uploads and per-file retries, at the cost of more upload-lifecycle
+  logic. Authenticate/authorize upload grants, use private storage and HTTPS,
+  restrict permissions and protect these bearer credentials. Enforce quotas,
+  clean up abandoned uploads, and validate file bytes/decoded dimensions before
+  publishing a project; bind publication to the validated immutable bytes, not
+  a still-writable upload. Storage CORS is not authorization.
 
 ---
 

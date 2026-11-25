@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Form } from 'react-bootstrap'
 import { Link } from './Link'
+import { ApiError, loadProject, saveProject } from './api'
 import { canvasPresets, projectIdError } from './projects'
 import type { Photo, Project } from './projects'
 
 interface LocalPhoto extends Photo {
   status: 'loading' | 'ready' | 'error'
+  file: File
 }
 
-export function Setup({ onCreate, projectIds }: {
+export function Setup({ onCreate, onUncertain }: {
   onCreate: (project: Project) => void
-  projectIds: string[]
+  onUncertain: (id: string) => void
 }) {
   const [id, setId] = useState('')
   const [selected, setSelected] = useState<LocalPhoto[]>([])
@@ -19,10 +21,16 @@ export function Setup({ onCreate, projectIds }: {
   const [width, setWidth] = useState('1200')
   const [height, setHeight] = useState('1800')
   const urls = useRef<string[]>([])
+  const pending = useRef<AbortController | null>(null)
+  const pendingCreate = useRef('')
+  const [busy, setBusy] = useState(false)
+  const [lookupId, setLookupId] = useState('')
 
   useEffect(() => () => {
+    pending.current?.abort()
+    if (pendingCreate.current) onUncertain(pendingCreate.current)
     urls.current.forEach((url) => URL.revokeObjectURL(url))
-  }, [])
+  }, [onUncertain])
 
   function chooseFiles(files: FileList | null) {
     urls.current.forEach((url) => URL.revokeObjectURL(url))
@@ -46,7 +54,7 @@ export function Setup({ onCreate, projectIds }: {
     setSelected(values.map((file, index) => {
       const src = URL.createObjectURL(file)
       urls.current.push(src)
-      return { number: index + 1, src, status: 'loading' }
+      return { number: index + 1, src, status: 'loading', file }
     }))
   }
 
@@ -54,14 +62,11 @@ export function Setup({ onCreate, projectIds }: {
     setSelected((previous) => previous.map((photo) => photo.src === src ? { ...photo, status } : photo))
   }
 
-  function create() {
+  async function create() {
+    if (pending.current) return
     const invalidId = projectIdError(id)
     if (invalidId) {
       setError(invalidId)
-      return
-    }
-    if (projectIds.includes(id)) {
-      setError('That project ID is already in use in this tab.')
       return
     }
     if (![width, height].every((value) => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 4096)) {
@@ -72,21 +77,62 @@ export function Setup({ onCreate, projectIds }: {
       setError('Choose 2-6 readable photos and wait for their previews to load.')
       return
     }
-    urls.current = []
-    onCreate({
-      id, kind: 'draft',
-      canvas: { width: Number(width), height: Number(height) },
-      photos: selected.map(({ number, src }) => ({ number, src })),
-    })
+    const controller = new AbortController()
+    pending.current = controller
+    pendingCreate.current = id
+    setBusy(true)
+    setError('')
+    setLookupId('')
+    try {
+      const project = await saveProject(id, { width: Number(width), height: Number(height) },
+        selected.map((photo) => photo.file), controller.signal)
+      if (!controller.signal.aborted) {
+        pendingCreate.current = ''
+        onCreate(project)
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        const uncertain = cause instanceof ApiError && cause.uncertain
+        setError(`${cause instanceof Error ? cause.message : 'Project could not be saved.'}${uncertain
+          ? ' The project may have been saved. Check its saved state before trying again.' : ''}`)
+        if (uncertain || (cause instanceof ApiError && ['project_exists', 'project_busy'].includes(cause.code))) {
+          setLookupId(id)
+        }
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        pendingCreate.current = ''
+        pending.current = null
+        setBusy(false)
+      }
+    }
+  }
+
+  async function checkSaved() {
+    if (pending.current) return
+    const controller = new AbortController()
+    pending.current = controller
+    setBusy(true)
+    try {
+      const project = await loadProject(lookupId, controller.signal)
+      if (!controller.signal.aborted) onCreate(project)
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Lookup failed.')
+    } finally {
+      if (!controller.signal.aborted) {
+        pending.current = null
+        setBusy(false)
+      }
+    }
   }
 
   return <>
     <div className="page-heading"><h1>New project</h1></div>
     <Form className="surface project-setup" noValidate onSubmit={(event) => {
       event.preventDefault()
-      create()
+      void create()
     }}>
-      <div className="setup-fields">
+      <fieldset className="setup-fields" disabled={busy}>
         <Form.Group controlId="project-id">
           <Form.Label>Project ID</Form.Label>
           <Form.Control value={id} placeholder="project-1" aria-describedby="id-help" maxLength={64}
@@ -132,13 +178,13 @@ export function Setup({ onCreate, projectIds }: {
           </div>
           <Form.Text id="canvas-help">1-4096 pixels per side, matching the Python layout contract.</Form.Text>
         </fieldset>
-      </div>
-      <div className="setup-photos">
+      </fieldset>
+      <fieldset className="setup-photos" disabled={busy}>
         <Form.Group controlId="photos">
           <Form.Label>Choose 2-6 photos</Form.Label>
           <input id="photos" className="form-control" type="file" accept="image/jpeg,image/png" multiple
             aria-describedby="photo-help" onChange={(event) => chooseFiles(event.currentTarget.files)} />
-          <Form.Text id="photo-help">JPEG/PNG, up to 25 MiB each. Kept in this tab, not uploaded.</Form.Text>
+          <Form.Text id="photo-help">JPEG/PNG, up to 25 MiB each. Uploaded only when you create the project.</Form.Text>
         </Form.Group>
         <div className="photo-strip local-photos" aria-label="Selected photos">
           {selected.map((photo) => <figure key={photo.src} className="photo-tile">
@@ -150,12 +196,16 @@ export function Setup({ onCreate, projectIds }: {
         </div>
         {selected.some((photo) => photo.status === 'error') &&
           <Alert variant="warning" role="alert">Could not display a selected photo. Choose readable JPEG or PNG files.</Alert>}
-      </div>
+      </fieldset>
       <div className="setup-actions">
         {error && <Alert variant="warning" role="alert">{error}</Alert>}
-        <p>Browser draft only. Rendering and chat for your own photos are not connected.</p>
-        <div className="d-flex gap-2">
-          <Button type="submit">Create browser draft</Button>
+        <p>Photos and canvas settings will be saved locally by the backend. Rendering and chat are not connected yet.</p>
+        <p>Leaving while saving does not guarantee cancellation. Check the saved project before trying again.</p>
+        <div className="d-flex flex-wrap gap-2">
+          <Button type="submit" disabled={busy}>{busy ? 'Working...' : 'Create project'}</Button>
+          {lookupId && <Button variant="outline-primary" disabled={busy} onClick={() => void checkSaved()}>
+            Check saved project {lookupId}
+          </Button>}
           <Link href="/" className="btn btn-outline-secondary">Cancel</Link>
         </div>
       </div>

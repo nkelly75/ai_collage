@@ -584,6 +584,8 @@ for the rationale behind the feature increments.
 | `ai_collage\agent` | Conversation, interpretation safeguards, requests/provider and prompts | `tests\agent` |
 | `ai_collage\evaluation` | Callable replay execution and offline evidence assessment | `tests\evaluation` |
 | `ai_collage\cli` | Argument parsing and terminal chat/presentation | `tests\cli` |
+| `ai_collage\application` | Application workflows coordinating existing engine and agent capabilities | `tests\application` |
+| `api` | Functions HTTP adapters and local host launcher | `tests\api` |
 
 The agent depends on the engine; evaluation uses both, and CLI modules expose
 their operations. Neither engine nor agent depends on evaluation or CLI.
@@ -605,11 +607,22 @@ With the optional agent dependencies installed, run agent/evaluation tests:
 .\.venv\Scripts\python.exe -m pytest -q .\tests\agent .\tests\evaluation
 ```
 
-Run the complete offline suite:
+From the repository root, run the complete core/application offline suite with
+the existing Python environment (no Functions SDK required):
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q --tb=short -p no:cacheprovider
 ```
+
+API tests live in the same test tree but are excluded from that default suite.
+Run them separately with the API environment, which also has the Functions SDK:
+
+```powershell
+.\api\.venv\Scripts\python.exe -m pytest -q -c .\api\pytest.ini .\tests\api
+```
+
+Both environments import the same application source. See the
+[API setup](../api/README.md) for its environment prerequisites.
 
 Tests block network access, use synthetic photos and fake model replies, and do
 not initialize Azure credentials. See [image-testing notes](../LESSONS.md#2-how-the-tests-check-images)

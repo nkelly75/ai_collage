@@ -7,7 +7,7 @@ export interface Photo {
 
 export interface Project {
   id: string
-  kind: 'sample' | 'draft'
+  kind: 'sample' | 'saved'
   photos: Photo[]
   canvas: { width: number; height: number }
 }

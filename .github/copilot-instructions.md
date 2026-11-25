@@ -7,6 +7,7 @@ user sign-off.
 
 Read first:
 - [README](../README.md): overview, Quick start, and examples.
+- [Architecture](../architecture.md): package boundaries and CLI/web/API flows.
 - [Planning index](../planning/README.md): current status, vision, historical
   decisions, and future-phase approval conventions.
 - [CLI guide](../docs/cli-guide.md): workflows, storage, limits, and verification.
@@ -18,11 +19,20 @@ Working rules:
   the planning index summarizes status and links, and these instructions hold
   durable rules and references. Keep phase evidence, metrics, and accounting
   in the relevant results record; link rather than repeat them elsewhere.
+- Keep [architecture.md](../architecture.md) current when package responsibilities,
+  entry points, dependencies or persistence flows change. Describe implemented
+  behavior; keep future plans and phase accounting in the planning records.
 - Keep [LESSONS](../LESSONS.md) examples and code references current when related
   implementation changes. Discuss new lessons with the user before adding them;
   keep entries concrete rather than turning phase progress into general conclusions.
 - Stay within the approved scope and retry/service budgets. Historical plans
   are records, not authorization for new work or current format specifications.
+- For approved work in this repository, small task-related UI dependency
+  additions/updates may include editing `web\package.json`, running local npm
+  installations and updating `web\package-lock.json` without another approval.
+  Prefer existing dependencies; avoid unrelated package churn. Major framework
+  upgrades, global/toolchain installations and Python-environment changes
+  still require separate approval.
 - No Git writes without explicit approval; preserve the user's staging,
   history, and branches.
 - Run application code/tests offline unless separately authorized. Do not run

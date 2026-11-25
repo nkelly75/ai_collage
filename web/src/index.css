@@ -26,8 +26,6 @@ a { color: #245c4d; }
 .app-header nav a[aria-current="page"] { font-weight: 700; text-decoration: underline; text-underline-offset: .3rem; }
 .app-header nav .btn { font-size: .75rem; }
 .sample-notice { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .4rem 1rem; background: #e9eee7; border-radius: .35rem; padding: .4rem .65rem; font-size: .75rem; color: #3e5548; }
-.backend-check { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .65rem; min-width: 0; overflow-wrap: anywhere; }
-.backend-check .btn { font-size: .75rem; padding: .15rem .5rem; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .85rem 0; }
 .page-heading h1 { font-size: 1.35rem; font-weight: 650; margin: 0; overflow-wrap: anywhere; }
 .page-heading .btn { font-size: .85rem; }
@@ -50,6 +48,7 @@ a { color: #245c4d; }
 .local-photos { margin-top: 1rem; }
 .setup-actions { grid-column: 1 / -1; border-top: 1px solid #e9eae1; padding-top: 1rem; }
 .setup-actions p { font-size: .8rem; color: #617164; }
+.alert, .setup-actions .btn { overflow-wrap: anywhere; }
 .photo-strip { display: flex; gap: .75rem; overflow-x: auto; padding-bottom: .3rem; }
 .photo-tile { flex: 0 0 72px; margin: 0; display: grid; grid-template-rows: 96px auto; gap: .3rem; }
 .photo-tile img { max-width: 72px; max-height: 96px; width: auto; height: auto; align-self: center; justify-self: center; object-fit: contain; }

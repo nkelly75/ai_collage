@@ -15,6 +15,8 @@ ENV_NAMES = (
     "FUNCTIONS_CORE_TOOLS_TELEMETRY_OPTOUT", "AzureWebJobsSecretStorageType",
     "AzureWebJobsStorage", "AzureWebJobsDashboard",
     "APPLICATIONINSIGHTS_CONNECTION_STRING", "APPINSIGHTS_INSTRUMENTATIONKEY",
+    "PYTHONPATH", "AI_COLLAGE_API_AUTHORITY", "AI_COLLAGE_UI_ORIGIN",
+    "FUNCTIONS_REQUEST_BODY_SIZE_LIMIT",
 )
 
 
@@ -32,7 +34,7 @@ def launcher(tmp_path):
     scripts = api / ".venv" / "Scripts"
     scripts.mkdir(parents=True)
     (scripts / "python.exe").touch()
-    shutil.copyfile(Path(__file__).parents[1] / "start.ps1", api / "start.ps1")
+    shutil.copyfile(Path(__file__).parents[2] / "api" / "start.ps1", api / "start.ps1")
     tools = tmp_path / "tools"
     tools.mkdir()
     shim = tools / "fake_func.py"
@@ -56,7 +58,7 @@ def launcher(tmp_path):
     return api, tools, tmp_path / "capture.json"
 
 
-def run_launcher(shell, launcher, *, unset=(), **overrides):
+def run_launcher(shell, launcher, *, unset=(), arguments=None, **overrides):
     api, tools, capture = launcher
     env = os.environ.copy()
     env.update({name: "original-test-value" for name in ENV_NAMES})
@@ -65,6 +67,7 @@ def run_launcher(shell, launcher, *, unset=(), **overrides):
         TEST_START_SCRIPT=str(api / "start.ps1"),
         TEST_CAPTURE=str(capture),
         TEST_ENV_NAMES=",".join(ENV_NAMES),
+        TEST_START_ARGUMENTS=json.dumps(arguments or {}),
     )
     env.update(overrides)
     for name in unset:
@@ -76,7 +79,11 @@ $before = @{}
 foreach ($name in $names) { $before[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 $location = (Get-Location).Path
 $failure = $null
-try { & $env:TEST_START_SCRIPT } catch { $failure = $_.Exception.Message }
+$startArguments = @{}
+($env:TEST_START_ARGUMENTS | ConvertFrom-Json).PSObject.Properties | ForEach-Object {
+    $startArguments[$_.Name] = $_.Value
+}
+try { & $env:TEST_START_SCRIPT @startArguments } catch { $failure = $_.Exception.Message }
 $changed = @($names | Where-Object {
     [Environment]::GetEnvironmentVariable($_, 'Process') -cne $before[$_]
 })
@@ -123,6 +130,10 @@ def test_launcher_configures_only_child_host_and_restores_caller(shell, launcher
     assert child["env"]["FUNCTIONS_WORKER_RUNTIME"] == "python"
     assert child["env"]["FUNCTIONS_CORE_TOOLS_TELEMETRY_OPTOUT"] == "1"
     assert child["env"]["AzureWebJobsSecretStorageType"] == "files"
+    assert child["env"]["PYTHONPATH"].split(";")[0] == str(api.parent)
+    assert child["env"]["AI_COLLAGE_API_AUTHORITY"] == "127.0.0.1:7071"
+    assert child["env"]["AI_COLLAGE_UI_ORIGIN"] == "http://127.0.0.1:5173"
+    assert child["env"]["FUNCTIONS_REQUEST_BODY_SIZE_LIMIT"] == "167772160"
     for name in (
         "AzureWebJobsStorage", "AzureWebJobsDashboard",
         "APPLICATIONINSIGHTS_CONNECTION_STRING", "APPINSIGHTS_INSTRUMENTATIONKEY",
@@ -136,6 +147,27 @@ def test_launcher_reports_missing_environment_without_starting_host(shell, launc
     code, error = run_launcher(shell, launcher)
     assert code == 1
     assert "API environment missing" in error
+    assert not capture.exists()
+
+
+def test_launcher_matches_alternate_loopback_port_pair(shell, launcher):
+    _, _, capture = launcher
+    code, error = run_launcher(shell, launcher, arguments={
+        "Port": 7072, "UiOrigin": "http://127.0.0.1:5174",
+    })
+    assert (code, error) == (0, None)
+    child = json.loads(capture.read_text())
+    assert child["args"][-4:] == ["--port", "7072", "--cors", "http://127.0.0.1:5174"]
+    assert child["env"]["AI_COLLAGE_API_AUTHORITY"] == "127.0.0.1:7072"
+    assert child["env"]["AI_COLLAGE_UI_ORIGIN"] == "http://127.0.0.1:5174"
+
+
+@pytest.mark.parametrize("origin", ["http://foreign.example:5173", "http://127.0.0.1:5173/path"])
+def test_launcher_rejects_nonlocal_or_nonorigin_cors(shell, launcher, origin):
+    _, _, capture = launcher
+    code, error = run_launcher(shell, launcher, arguments={"UiOrigin": origin})
+    assert code == 1
+    assert "UiOrigin must be an exact" in error
     assert not capture.exists()
 
 

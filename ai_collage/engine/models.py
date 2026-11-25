@@ -25,6 +25,14 @@ class CollageError(Exception):
     """An invalid input or inconsistent local project."""
 
 
+class PhotoSizeError(CollageError):
+    """An encoded or decoded photo exceeds the supported limits."""
+
+
+class PhotoMediaError(CollageError):
+    """A photo uses an unsupported format or frame count."""
+
+
 def validate_project_id(value: str) -> str:
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", value):
         raise CollageError(

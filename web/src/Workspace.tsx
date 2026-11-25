@@ -8,8 +8,7 @@ import type { useDemo } from './useDemo'
 export function Workspace({ project, demo }: { project: Project; demo: ReturnType<typeof useDemo> }) {
   const [draft, setDraft] = useState('')
   const end = useRef<HTMLDivElement>(null)
-  const isSample = project.kind === 'sample'
-  const active = isSample && demo.active ? proposals[demo.active] : null
+  const active = demo.active ? proposals[demo.active] : null
 
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
@@ -19,10 +18,10 @@ export function Workspace({ project, demo }: { project: Project; demo: ReturnTyp
     <div className="page-heading workspace-heading">
       <h1>{project.id}</h1>
       <span>{project.photos.length} photos / {project.canvas.width} x {project.canvas.height} px
-        <Badge bg="light" text="dark">{isSample ? 'Scripted sample' : 'Browser draft'}</Badge>
+        <Badge bg="light" text="dark">Scripted sample</Badge>
       </span>
     </div>
-    {isSample ? <div className="workspace-grid">
+    <div className="workspace-grid">
       <section className="surface conversation-panel" aria-labelledby="conversation-title">
         <div className="panel-heading"><h2 id="conversation-title">Conversation</h2></div>
         <div className="message-list" role="log" aria-label="Conversation" aria-live="polite">
@@ -97,10 +96,6 @@ export function Workspace({ project, demo }: { project: Project; demo: ReturnTyp
           <p className="visually-hidden" role="status">{demo.notice}</p>
         </div>
       </section>
-    </div> : <section className="surface draft-details" aria-labelledby="photos-title">
-      <h2 id="photos-title">Photos</h2>
-      <PhotoStrip items={project.photos} />
-      <p className="empty-note">Browser draft only. Rendering and chat for your own photos are not connected.</p>
-    </section>}
+    </div>
   </div>
 }

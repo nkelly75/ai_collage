@@ -16,6 +16,7 @@ from .models import (
     CollageError,
     InputLayout,
     Photo,
+    PhotoSizeError,
     Project,
     ResolvedLayout,
     validate_project_id,
@@ -64,9 +65,20 @@ def _write_json(path: Path, value: Project | ResolvedLayout) -> None:
     path.write_bytes(raw)
 
 
-def _contained(root: Path, path: Path) -> Path:
+def _resolved_path(path: Path) -> Path:
     resolved = path.resolve()
-    if not resolved.is_relative_to(root.resolve()):
+    # Windows resolve() can retain the device prefix during concurrent mkdir.
+    if os.name == "nt":
+        value = str(resolved)
+        if value.startswith("\\\\?\\UNC\\"):
+            return Path("\\\\" + value[8:])
+        return Path(value.removeprefix("\\\\?\\"))
+    return resolved
+
+
+def _contained(root: Path, path: Path) -> Path:
+    resolved = _resolved_path(path)
+    if not resolved.is_relative_to(_resolved_path(root)):
         raise CollageError(f"Path escapes its data directory: {path}")
     return resolved
 
@@ -130,7 +142,7 @@ class ProjectStore:
             try:
                 for number, source in enumerate(images, start=1):
                     if source.stat().st_size > MAX_FILE_BYTES:
-                        raise CollageError(f"{source}: photo exceeds the 25 MiB file limit.")
+                        raise PhotoSizeError(f"{source}: photo exceeds the 25 MiB file limit.")
                     asset_id = uuid4().hex
                     staged_asset = staging / asset_id
                     shutil.copyfile(source, staged_asset)

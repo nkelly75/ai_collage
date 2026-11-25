@@ -5,7 +5,9 @@
 see [018a results](018a_results.md). Separately authorized 018b is complete and
 closed following the user's manual connectivity verification;
 see [018b results](018b_results.md).
-018c and later increments remain unapproved.
+[018c](018c-persistent-project-flow.md) is complete and closed following the
+user's manual testing and explicit sign-off; see [results and limits](018c_results.md).
+Later increments remain unapproved.
 The subphase boundaries and sequence below may change as we learn; they are
 not a fixed delivery plan or authorization to implement all stages.
 
@@ -49,9 +51,14 @@ project.
 |---|---|---|
 | [018a: Frontend tooling and UI skeleton](018a-frontend-tooling-and-ui-skeleton.md) | Build the rough workspace with self-contained sample conversation and previews, without a backend or Functions tooling. | Complete and closed with user acceptance as a starting prototype; [results](018a_results.md). |
 | [018b: Local Functions tooling and connectivity](018b-local-functions-tooling-and-skeleton.md) | Inventory prerequisites, hand over user-run setup, then prove a placeholder Function can be called from the web prototype. | Complete and closed following user verification; [results and limits](018b_results.md). |
-| 018c: Local project and history API | Expose local projects, photos, history, previews, and baseline selection. | Tentative; not specified. |
-| 018d: Split conversational requests | Connect interpretation and layout generation through server-held validated intent. | Tentative; not specified. |
-| 018e: Connected experience and human trial | Connect the UI and API, then assess the end-to-end experience. | Tentative; not specified. |
+| [018c: Persistent project flow](018c-persistent-project-flow.md) | Connect UI project creation, listing and reopening to local persistence for selected photos and canvas settings, without model calls. | Complete and closed following manual testing and user sign-off; [results and limits](018c_results.md). |
+| 018d: Saved history and local actions | Connect saved conversation/proposal history, backend previews/downloads, baseline selection and explicit acceptance, without generating new proposals. | Tentative; not specified. |
+| 018e: Split conversational requests | Connect interpretation/clarification and layout generation through server-held validated intent, with visible progress and recovery. | Tentative; not specified. |
+| 018f: End-to-end trial and refinement | Assess the complete create/resume/converse/preview/accept flow and address observed issues. | Tentative; not specified. |
+
+Each increment includes its usable UI/API connection rather than postponing
+all UI wiring to a final integration phase. The placement of history/local
+actions remains revisable when the next increment is separately specified.
 
 Only detail the next increment when ready. Add stable links to its brief and
 results as they are created; do not create placeholder briefs for later stages.
@@ -65,7 +72,9 @@ results as they are created; do not create placeholder briefs for later stages.
   toolchain. Defer Azure Functions Core Tools and other Functions-specific
   setup until 018b; neither Functions nor Azurite blocks the first UI review.
 - Select and document project dependencies in the next brief before installing
-  them. No dependency installation is authorized by this tracker.
+  them. Small task-related UI changes follow the standing
+  [repository dependency permission](../.github/copilot-instructions.md);
+  other installations require explicit approval.
 - Each subphase needs agreed scope, acceptance criteria, offline checks, and
   an explicit implementation approval before bounded Autopilot work. Stop at
   its handoff for review rather than automatically continuing to the next.
