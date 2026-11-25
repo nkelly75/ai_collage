@@ -23,8 +23,9 @@ Clear user-supplied names and identity answers are remembered automatically.
 Ask to list, correct or forget them; only conflicting reassignments pause for
 confirmation. Casual references need not create additional saved aliases.
 See the [conversation guide](docs/cli-guide.md#conversational-proposals-optional).
-Live model requests require explicit bounded authorization. A graphical UI,
-image understanding, and cloud hosting remain future work.
+Live model requests require explicit bounded authorization. A browser-only UI
+prototype is also available below; real collage API integration, image
+understanding, and cloud hosting remain future work.
 
 **Layout format 3** uses centre-anchored `center_x`/`center_y` positions,
 explicit whole/cover modes, stable `photo_id` values, and a back-to-front
@@ -48,7 +49,26 @@ position, resize, and composite the original photos instead of regenerating
 them. [Emma's original collage](photos/em_manual_collage.jpg) is a useful
 reference for exploring which layout capabilities the project needs.
 
-## Quick start
+## UI getting started
+
+After the one-time [backend setup](api/README.md) and [UI setup](web/README.md),
+open two PowerShell terminals at the repository root:
+
+```powershell
+# Terminal 1: backend
+.\api\start.ps1
+```
+
+```powershell
+# Terminal 2: UI
+npm --prefix .\web run dev
+```
+
+Open **http://127.0.0.1:5173** and click **Check backend**. Stop each server with
+Ctrl+C in its terminal. Projects/chat are still browser-only; this checks
+connectivity, not real collage operations.
+
+## CLI quick start
 
 Use Python 3.12+ and PowerShell from the repository root. Rendering runs offline
 without credentials. These commands use `.collage-data-v3`, separate from any

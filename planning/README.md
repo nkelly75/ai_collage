@@ -121,7 +121,10 @@ It records the initial UI layout, revisable subphases, tooling approval gates,
 and the deferred cloud-persistence work.
 [018a](018a-frontend-tooling-and-ui-skeleton.md) is complete and closed with the
 user's acceptance as a starting prototype; see [018a results](018a_results.md).
-Later subphases remain deliberately unspecified and unapproved.
+[018b](018b-local-functions-tooling-and-skeleton.md) is complete and closed
+following the user's manual connectivity verification;
+see [results and limits](018b_results.md).
+018c and later increments remain unapproved.
 
 ## Planning records
 

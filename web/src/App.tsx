@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Badge, Button, Container } from 'react-bootstrap'
+import { BackendCheck } from './BackendCheck'
 import { Link } from './Link'
 import { navigate, usePath } from './navigation'
 import { sampleProject } from './projects'
@@ -40,7 +41,8 @@ function Session({ onReset }: { onReset: () => void }) {
       </nav>
     </header>
     <div className="sample-notice">
-      <strong>Frontend prototype.</strong> No backend or AI. Drafts and sample history last only until refresh.
+      <span><strong>Frontend prototype.</strong> Projects and chat are browser-only and reset on refresh. No AI.</span>
+      <BackendCheck />
     </div>
     <main id="main">
       {project ? <Workspace key={project.id} project={project} demo={demo} />

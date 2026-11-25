@@ -2,7 +2,10 @@
 
 **Status:** Tentative umbrella tracker, approved for capturing direction only.
 018a is complete and closed with the user's acceptance as a starting prototype;
-see [018a results](018a_results.md). Later increments remain unapproved.
+see [018a results](018a_results.md). Separately authorized 018b is complete and
+closed following the user's manual connectivity verification;
+see [018b results](018b_results.md).
+018c and later increments remain unapproved.
 The subphase boundaries and sequence below may change as we learn; they are
 not a fixed delivery plan or authorization to implement all stages.
 
@@ -45,7 +48,7 @@ project.
 | Increment | Intended outcome | Status |
 |---|---|---|
 | [018a: Frontend tooling and UI skeleton](018a-frontend-tooling-and-ui-skeleton.md) | Build the rough workspace with self-contained sample conversation and previews, without a backend or Functions tooling. | Complete and closed with user acceptance as a starting prototype; [results](018a_results.md). |
-| 018b: Local Functions tooling and skeleton | Check backend prerequisites and establish a minimal locally running Functions host, without model calls. | Tentative; not specified. |
+| [018b: Local Functions tooling and connectivity](018b-local-functions-tooling-and-skeleton.md) | Inventory prerequisites, hand over user-run setup, then prove a placeholder Function can be called from the web prototype. | Complete and closed following user verification; [results and limits](018b_results.md). |
 | 018c: Local project and history API | Expose local projects, photos, history, previews, and baseline selection. | Tentative; not specified. |
 | 018d: Split conversational requests | Connect interpretation and layout generation through server-held validated intent. | Tentative; not specified. |
 | 018e: Connected experience and human trial | Connect the UI and API, then assess the end-to-end experience. | Tentative; not specified. |
@@ -72,6 +75,11 @@ results as they are created; do not create placeholder briefs for later stages.
   No Git writes are authorized by this tracker.
 
 ## Cross-cutting decisions and deferred work
+
+**Retire the connectivity scaffold:** As real Functions are wired into the UI,
+remove the temporary **Check backend** control and diagnostic-only wiring/tests
+once real requests provide connection/error feedback. Keep `/api/health` only
+if there is a deliberate ongoing health-check need, not as leftover demo plumbing.
 
 The split API must keep validated intent on the server, reject stale prepared
 operations and duplicate execution, and bound each stage below the hosting HTTP

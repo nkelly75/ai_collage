@@ -149,6 +149,19 @@ describe('frontend-only prototype', () => {
     expect(screen.queryByRole('button', { name: /Continue from here:/ })).not.toBeInTheDocument()
   })
 
+  it('keeps the sample usable after a failed backend check without further requests', async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError('Backend is stopped'))
+    render(<App />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Check backend' }))
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('Backend is stopped')
+    openSample()
+    await suggestedMessage()
+    expect(screen.getByAltText('Proposal P001')).toBeVisible()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps acceptance independent from baseline navigation and retains later history', async () => {
     render(<App />)
     await finishWalkthrough()

@@ -1,7 +1,9 @@
-# Collage studio: 018a frontend prototype
+# Collage studio: local web prototype
 
 A local React + TypeScript + Vite app, styled with Bootstrap/React-Bootstrap.
-It has **no backend or AI connection**. All interactions reset on refresh.
+Projects and conversation remain **browser-only, with no AI connection**.
+An optional manual check can call the local Python health Function.
+All interactions reset on refresh.
 
 ## Run in PowerShell
 
@@ -17,7 +19,8 @@ npm run dev
 `npm ci` downloads the locked project dependencies; skip it when they are already
 installed and the lockfile has not changed. Vite binds to **127.0.0.1:5173** and
 refuses an occupied port instead of silently choosing another. Stop it with
-Ctrl+C. No global frontend packages, Functions tools, or cloud credentials needed.
+Ctrl+C. No global frontend packages or cloud credentials are needed. Functions
+tools are required only for the optional backend check.
 
 ```powershell
 npm run build
@@ -30,6 +33,22 @@ npm test
 CSS and assets into `dist`. `npm run dev` serves source with live updates;
 `npm run preview` serves the production build on loopback for inspection,
 not as a production server.
+
+## Optional backend check
+
+Start the [local Python Function](../api/README.md) in a separate terminal, then
+click **Check backend** in the prototype notice. It directly requests
+`http://127.0.0.1:7071/api/health`, requiring HTTP 200 and JSON with `status: "ok"`.
+It shows checking, success or failure, with a five-second timeout covering the
+response body too. There are no automatic checks, retries or mock successes.
+The sample and drafts still work when the host is stopped.
+
+To change the API base address, set `$env:VITE_API_BASE_URL = 'http://127.0.0.1:7071'`
+before starting Vite (or building for deployment); the app appends `/api/health`.
+Restart Vite after changing configuration. Invalid configuration is reported,
+not replaced with another address. Requests do not use a Vite proxy, credentials
+or redirects. Browser connection failures can mean a stopped host, incorrect
+address or mismatched CORS origin.
 
 ## Testing
 
@@ -106,7 +125,8 @@ drafts/photo URLs so navigation does not discard them; abandoned setup selection
 are released on leaving setup. Native History API navigation needs no router
 package. This is not a production API
 contract, language parser, second renderer, or persistence layer.
-Dependencies and assets are served locally, with no external fonts, images,
-telemetry, or runtime service requests. Tests block fetch/XHR/WebSocket and
-browser-storage access while exercising interactions.
+Dependencies and assets are served locally, with no external fonts, images or
+telemetry. The only runtime service request is the explicitly triggered health
+check; project/photo/model traffic is not implemented. Tests block unmocked
+fetch/XHR/WebSocket and browser-storage access while exercising interactions.
 

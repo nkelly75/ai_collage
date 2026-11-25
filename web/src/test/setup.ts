@@ -3,7 +3,7 @@ import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
 
 beforeEach(() => {
-  const blocked = () => { throw new Error('The frontend prototype must not access services or persistence.') }
+  const blocked = () => { throw new Error('Tests must explicitly mock backend requests; persistence is not implemented.') }
   vi.stubGlobal('fetch', vi.fn(blocked))
   vi.stubGlobal('XMLHttpRequest', blocked)
   vi.stubGlobal('WebSocket', blocked)
