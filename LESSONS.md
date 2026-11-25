@@ -180,6 +180,6 @@ feedback effectively.
 
 Implementation examples: `_bounds_error` in
 [geometry](ai_collage/engine/geometry.py) builds the structured feedback;
-`Conversation._feedback` and `Conversation.request` in
+`Conversation._feedback` and the shared `Conversation._request_stage` loop in
 [conversation handling](ai_collage/agent/conversation.py) pass it into bounded
 correction attempts.

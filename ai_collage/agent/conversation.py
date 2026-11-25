@@ -14,7 +14,8 @@ from .files import canonical, child, digest, save
 from .models import (
     HISTORY, INTENT, AcceptanceIntent, Controls, ConversationState, EditIntent, Exchange,
     FreshIntent, InspectNamesIntent, Intent, LayoutSource, LocalEvent, MemoryIntent,
-    NameReceipt, NameUpdate, NamesIntent, PhotoName, Preferences, Proposal, QuestionIntent, RequestResult,
+    NameReceipt, NameUpdate, NamesIntent, PhotoName, Preferences, PreparedGeneration,
+    Proposal, QuestionIntent, RequestResult,
     ReceiptPointer, ResolvedIntent, ResumeIntent, RetryIntent, SelectIntent,
 )
 from ..engine.geometry import LayoutBoundsError, resolve_layout
@@ -765,26 +766,110 @@ class Conversation:
         self, prompt: str, client: ModelClient, requests: RequestLog | None = None,
         *, progress: Progress | None = None,
     ) -> RequestResult:
+        requests = requests if requests is not None else RequestLog(self.store, self.project_id)
+        result = await self.interpret(prompt, client, requests, progress=progress)
+        if isinstance(result, PreparedGeneration):
+            return await self.generate(result, client, requests, progress=progress)
+        return result
+
+    async def interpret(
+        self, prompt: str, client: ModelClient, requests: RequestLog | None = None,
+        *, progress: Progress | None = None,
+    ) -> RequestResult | PreparedGeneration:
+        """Resolve a request, returning immediately when no layout is needed."""
+        return await self._request_stage(prompt, client, requests, progress=progress)
+
+    def _generation_digest(self, intent: ResolvedIntent) -> str:
+        sources = (self._current_source(), intent.source, intent.reference)
+        recipes = [self.source_recipe(source) for source in sources if source is not None]
+        return digest(
+            canonical(self.store.load(self.project_id)) + canonical(self.state)
+            + b"".join(canonical(event) for event in self.history())
+            + b"".join(canonical(recipe) for recipe in recipes if recipe is not None)
+        )
+
+    def _prepare_generation(
+        self, prompt: str, intent: ResolvedIntent, request_start: int,
+        calls_used: int, requests: RequestLog,
+    ) -> PreparedGeneration:
+        self._fresh()
+        return PreparedGeneration(
+            project_id=self.project_id, photo_digest=self.photo_digest,
+            state_digest=self._generation_digest(intent), prompt=prompt, intent=intent,
+            request_start=request_start, active_task=self._active_task,
+            independent_task=self._independent_task, calls_used=calls_used,
+            limits=requests.limits, generation_reasoning=requests.generation_reasoning,
+            interpretation_reasoning=requests.interpretation_reasoning,
+        )
+
+    async def generate(
+        self, prepared: PreparedGeneration, client: ModelClient,
+        requests: RequestLog | None = None, *, progress: Progress | None = None,
+    ) -> RequestResult:
+        """Continue a bound interpretation without repeating its saved effects."""
+        self._fresh()
+        if (
+            prepared.project_id != self.project_id or prepared.photo_digest != self.photo_digest
+            or prepared.state_digest != self._generation_digest(prepared.intent)
+        ):
+            raise CollageError("Prepared generation belongs to another project or stale state/source.")
+        events = [
+            event for number, event in zip(self.state.history, self.history(), strict=True)
+            if number >= prepared.request_start
+        ]
+        if (
+            len(events) != prepared.calls_used
+            or not isinstance(events[-1], Exchange)
+            or events[-1].outcome != "intent" or events[-1].intent != prepared.intent
+            or events[-1].prompt != prepared.prompt or events[-1].task_id != prepared.active_task
+            or any(not isinstance(event, Exchange) or event.stage != "interpretation"
+                   or event.outcome != "invalid" for event in events[:-1])
+        ):
+            raise CollageError("Prepared generation does not match its interpretation history.")
+        if requests is None:
+            requests = RequestLog(
+                self.store, self.project_id,
+                generation_reasoning=prepared.generation_reasoning,
+                interpretation_reasoning=prepared.interpretation_reasoning,
+            )
+            requests.limits = prepared.limits
+        if (
+            requests.limits != prepared.limits
+            or requests.generation_reasoning != prepared.generation_reasoning
+            or requests.interpretation_reasoning != prepared.interpretation_reasoning
+        ):
+            raise CollageError("Prepared generation request limits/reasoning changed.")
+        result = await self._request_stage(
+            prepared.prompt, client, requests, progress=progress, prepared=prepared,
+        )
+        assert isinstance(result, RequestResult)
+        return result
+
+    async def _request_stage(
+        self, prompt: str, client: ModelClient, requests: RequestLog | None,
+        *, progress: Progress | None, prepared: PreparedGeneration | None = None,
+    ) -> RequestResult | PreparedGeneration:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_JSON_BYTES // 4:
             raise CollageError("Prompt must be nonempty and at most 256 KiB UTF-8.")
         requests = requests if requests is not None else RequestLog(self.store, self.project_id)
         if requests.root != child(self.root, "requests"):
             raise CollageError("Request accounting belongs to a different project.")
         feedback = None
-        intent = None
-        request_start = self._next_event()
-        self._independent_task = False
-        request_task, request_origin = self._task_origin(prompt)
-        self._active_task = request_task
-        requests.begin_stage("interpretation")
-        previous_stage = "interpretation"
-        for call in range(4):
+        intent = prepared.intent if prepared is not None else None
+        request_start = prepared.request_start if prepared is not None else self._next_event()
+        self._independent_task = prepared.independent_task if prepared is not None else False
+        if prepared is None:
+            request_task, request_origin = self._task_origin(prompt)
+            self._active_task = request_task
+        else:
+            self._active_task = prepared.active_task
+        requests.begin_stage("generation" if prepared is not None else "interpretation")
+        if prepared is not None and progress is not None:
+            progress("generation", intent)
+        for call in range(prepared.calls_used if prepared is not None else 0, 4):
+            if prepared is None and intent is not None:
+                return self._prepare_generation(prompt, intent, request_start, call, requests)
             stage = "interpretation" if intent is None else "generation"
-            if stage != previous_stage:
-                requests.begin_stage(stage)
-                previous_stage = stage
-                if progress is not None:
-                    progress("generation", intent)
             context = self.context(
                 prompt, feedback, stage=stage, intent=intent, request_start=request_start,
             )

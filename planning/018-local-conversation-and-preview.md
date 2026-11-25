@@ -52,13 +52,33 @@ project.
 | [018a: Frontend tooling and UI skeleton](018a-frontend-tooling-and-ui-skeleton.md) | Build the rough workspace with self-contained sample conversation and previews, without a backend or Functions tooling. | Complete and closed with user acceptance as a starting prototype; [results](018a_results.md). |
 | [018b: Local Functions tooling and connectivity](018b-local-functions-tooling-and-skeleton.md) | Inventory prerequisites, hand over user-run setup, then prove a placeholder Function can be called from the web prototype. | Complete and closed following user verification; [results and limits](018b_results.md). |
 | [018c: Persistent project flow](018c-persistent-project-flow.md) | Connect UI project creation, listing and reopening to local persistence for selected photos and canvas settings, without model calls. | Complete and closed following manual testing and user sign-off; [results and limits](018c_results.md). |
-| 018d: Saved history and local actions | Connect saved conversation/proposal history, backend previews/downloads, baseline selection and explicit acceptance, without generating new proposals. | Tentative; not specified. |
-| 018e: Split conversational requests | Connect interpretation/clarification and layout generation through server-held validated intent, with visible progress and recovery. | Tentative; not specified. |
-| 018f: End-to-end trial and refinement | Assess the complete create/resume/converse/preview/accept flow and address observed issues. | Tentative; not specified. |
+| [018d: Behavior-preserving stage extraction](018d-behavior-preserving-stage-extraction.md) | Extract shared interpretation and generation capabilities within the existing Python agent, with an explicit typed handoff. Preserve CLI/replay's composed request experience and establish a verified backend baseline before further web integration. | Complete and closed with user acceptance; [results and limits](018d_results.md). |
+| 018e: Real conversation and previews | Build on the extracted stages to connect prompts, clarification/name-confirmation replies, generation and ordinary follow-up edits through Functions/UI. Display backend-rendered proposals and restore the transcript/current preview after refresh. Include split HTTP requests and meaningful progress. | Tentative; detailed brief not yet written. |
+| 018f: Complete the design workflow | Add proposal thumbnails/navigation, "Continue from here", explicit acceptance and PNG download. Distinguish the editing baseline from the accepted version, and complete recovery UX for interrupted requests and pending questions. | Tentative; detailed brief not yet written. |
+| 018g: End-to-end trial and focused refinement | Exercise create/converse/refine/revisit/accept/download/reopen with the user's photos, including backend restart. Address observed correctness/usability issues and obtain user sign-off, rather than add another feature tranche. | Tentative; detailed brief not yet written. |
 
-Each increment includes its usable UI/API connection rather than postponing
-all UI wiring to a final integration phase. The placement of history/local
-actions remains revisable when the next increment is separately specified.
+018d deliberately establishes the backend baseline before resuming Functions/UI
+work. Keep `Conversation.request()` as the ordinary composed operation over the
+same extracted stages, not a second legacy implementation. Preserve existing
+commands, prompts, reasoning defaults, correction/call allowances, request
+accounting, saved formats and naming/baseline/history behavior. Make the stage
+handoff explicit and reconstructible with a fresh conversation instance.
+
+The full existing offline Python suites and focused composed-versus-split
+equivalence checks establish the extraction baseline. The approved detailed
+brief includes a bounded selection of existing live replays after extraction
+and the offline gate, with no intermediate approval pause while all checks stay
+green, not a fresh paid before-and-after baseline. Functions endpoints,
+browser changes, durable web-operation records and HTTP-specific deadline policy
+are outside 018d. The [detailed extraction brief](018d-behavior-preserving-stage-extraction.md)
+defines the approved scope, call caps and stop rules.
+
+The following increments each include their usable UI/API connection rather
+than postponing UI wiring to a final integration phase. The intended milestones
+are a prompt-to-preview experience with newly created projects after 018e, the
+complete basic design workflow after 018f, and a user-accepted local experience
+after 018g. Basic saved transcript/preview restoration belongs in 018e; richer
+history navigation and explicit acceptance belong in 018f.
 
 Only detail the next increment when ready. Add stable links to its brief and
 results as they are created; do not create placeholder briefs for later stages.
@@ -94,7 +114,12 @@ The split API must keep validated intent on the server, reject stale prepared
 operations and duplicate execution, and bound each stage below the hosting HTTP
 limit. Reject overlapping project mutations on the backend, including requests
 from different tabs; collaborative editing and conflict-resolution UX are not
-requirements. Detailed mechanics belong in the relevant subphase brief.
+requirements. These protections and honest timeout handling belong in 018e's
+first integration, not a later hardening pass. Splitting requests must not
+silently renew correction/call allowances or introduce automatic paid retries.
+Preserve CLI/replay limits; choose HTTP-specific deadlines with headroom for
+validation, rendering, storage and response delivery. Detailed mechanics belong
+in the relevant subphase brief.
 
 **Persistence follow-up remains explicit:** Local-directory support is not
 cloud readiness. Before shared deployment, implement and verify private

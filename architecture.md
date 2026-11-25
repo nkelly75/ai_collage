@@ -49,6 +49,19 @@ through `ProjectFlow` or start Functions. Both paths use the same Python source.
 The application package adds coordination where an operation spans those
 existing capabilities.
 
+`Conversation.request()` composes the same separately callable `interpret()`
+and `generate()` stages. Interpretation either finishes with a normal result
+(question, naming confirmation, acknowledgement or exact selection), or returns
+a typed `PreparedGeneration` handoff. That data-only value can round-trip
+through JSON and continue with fresh conversation/request objects or a new
+process. It binds the project/photos, saved state/history and layout sources,
+task boundary, consumed correction allowance, limits and reasoning settings;
+stale or already-used handoffs are rejected before another model call.
+The existing correction/validation/publication loop is shared, not copied.
+No new ordinary-project record or layout format is introduced. This is an
+internal agent contract, not authority to trust browser-supplied intent;
+HTTP operation storage and concurrency remain future application/API work.
+
 The real web path currently supports create/save/list/reopen and photo serving.
 Its agent use is empty conversation initialization, not live chat or generation.
 The separate `/demo` route simulates conversation/proposals with bundled assets;

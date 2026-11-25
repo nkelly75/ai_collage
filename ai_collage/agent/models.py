@@ -332,6 +332,31 @@ class Limits(Record):
 Reasoning = Literal["high", "low"]
 
 
+class PreparedGeneration(BaseModel):
+    """Internal, reconstructible handoff; not a browser-authorized intent."""
+
+    model_config = Record.model_config
+    handoff_version: Literal[1] = 1
+    project_id: str
+    photo_digest: Digest
+    state_digest: Digest
+    prompt: Annotated[str, Field(min_length=1, pattern=r"\S")]
+    intent: ResolvedIntent
+    request_start: PositiveInt
+    active_task: PositiveInt
+    independent_task: bool
+    calls_used: Annotated[int, Field(ge=1, le=2)]
+    limits: Limits
+    generation_reasoning: Reasoning
+    interpretation_reasoning: Reasoning
+
+    @model_validator(mode="after")
+    def generation_only(self) -> "PreparedGeneration":
+        if self.intent.action == "select":
+            raise ValueError("Exact selection finishes during interpretation.")
+        return self
+
+
 class Attempt(Record):
     record_version: Literal[2] = 2
     number: PositiveInt

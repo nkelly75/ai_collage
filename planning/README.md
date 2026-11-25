@@ -127,6 +127,11 @@ see [results and limits](018b_results.md).
 [018c](018c-persistent-project-flow.md) is **successfully completed and closed
 with the user's manual testing and sign-off** for the agreed create/save/list/reopen flow;
 see [results and limits](018c_results.md).
+[018d: Behavior-preserving stage extraction](018d-behavior-preserving-stage-extraction.md)
+is **successfully completed and closed with the user's acceptance** following
+the full offline gate and approved bounded live replay pass;
+see [results and limits](018d_results.md).
+The replay allowance, including unused calls, is closed.
 Later increments remain unapproved.
 
 ## Planning records
