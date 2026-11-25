@@ -1,0 +1,117 @@
+:root {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #233531;
+  background: #f5f4ef;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --bs-body-font-family: "Segoe UI", system-ui, sans-serif;
+  --bs-body-color: #233531;
+  --bs-body-bg: #f5f4ef;
+}
+
+body { margin: 0; min-width: 320px; }
+button, a, textarea, select, input { touch-action: manipulation; }
+a { color: #245c4d; }
+.btn-primary { --bs-btn-bg: #245c4d; --bs-btn-border-color: #245c4d; --bs-btn-hover-bg: #194638; --bs-btn-hover-border-color: #194638; --bs-btn-active-bg: #194638; --bs-btn-disabled-bg: #466f64; --bs-btn-disabled-border-color: #466f64; }
+.btn-outline-primary { --bs-btn-color: #245c4d; --bs-btn-border-color: #245c4d; --bs-btn-hover-bg: #245c4d; --bs-btn-hover-border-color: #245c4d; --bs-btn-active-bg: #194638; --bs-btn-disabled-color: #466f64; --bs-btn-disabled-border-color: #466f64; }
+.btn { border-radius: .35rem; font-weight: 600; }
+.btn:focus-visible, a:focus-visible { outline: 3px solid #b16a29; outline-offset: 3px; box-shadow: none; }
+.form-control:focus, .form-select:focus { border-color: #367663; box-shadow: 0 0 0 .2rem #36766326; }
+.app-shell { padding: 0 1.25rem 1rem; }
+.app-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 54px; }
+.brand { color: #233531; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.app-header nav { display: flex; align-items: center; gap: 1.25rem; font-size: .85rem; }
+.app-header nav a { text-decoration: none; }
+.app-header nav a[aria-current="page"] { font-weight: 700; text-decoration: underline; text-underline-offset: .3rem; }
+.app-header nav .btn { font-size: .75rem; }
+.sample-notice { background: #e9eee7; border-radius: .35rem; padding: .4rem .65rem; font-size: .75rem; color: #3e5548; }
+.page-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .85rem 0; }
+.page-heading h1 { font-size: 1.35rem; font-weight: 650; margin: 0; overflow-wrap: anywhere; }
+.page-heading .btn { font-size: .85rem; }
+.surface { background: #fffefa; border: 1px solid #e1e2d9; border-radius: .5rem; overflow: hidden; }
+.project-list { max-width: 1000px; }
+.project-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1rem 1.25rem; border-bottom: 1px solid #e9eae1; }
+.project-row:last-child { border-bottom: 0; }
+.project-row > div { min-width: 0; }
+.project-link { font-weight: 600; overflow-wrap: anywhere; }
+.project-row p { font-size: .8rem; color: #617164; margin: .35rem 0 0; }
+.badge { font-weight: 500; }
+.not-found { display: block; }
+.not-found p { margin-top: 1rem; }
+.project-setup { max-width: 1100px; padding: 1.25rem; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 1.5rem; }
+.project-setup .form-label { font-size: .85rem; font-weight: 600; }
+.project-setup .form-text { font-size: .75rem; }
+.canvas-fields { margin-top: 1.25rem; }
+.canvas-fields legend { font-size: 1rem; font-weight: 650; }
+.canvas-dimensions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; margin-top: .75rem; }
+.local-photos { margin-top: 1rem; }
+.setup-actions { grid-column: 1 / -1; border-top: 1px solid #e9eae1; padding-top: 1rem; }
+.setup-actions p { font-size: .8rem; color: #617164; }
+.photo-strip { display: flex; gap: .75rem; overflow-x: auto; padding-bottom: .3rem; }
+.photo-tile { flex: 0 0 72px; margin: 0; display: grid; grid-template-rows: 96px auto; gap: .3rem; }
+.photo-tile img { max-width: 72px; max-height: 96px; width: auto; height: auto; align-self: center; justify-self: center; object-fit: contain; }
+.photo-tile figcaption { text-align: center; font-size: .75rem; font-weight: 600; color: #56645e; }
+.workspace-heading > span { display: flex; gap: .75rem; align-items: center; font-size: .75rem; color: #67736d; white-space: nowrap; }
+.workspace-grid { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr); gap: .85rem; height: calc(100dvh - 153px); min-height: 460px; }
+.conversation-panel, .preview-panel { display: flex; flex-direction: column; min-height: 0; }
+.panel-heading { display: flex; justify-content: space-between; align-items: center; gap: .5rem; border-bottom: 1px solid #e9eae1; padding: .65rem 1rem; flex-shrink: 0; }
+.panel-heading h2 { font-size: .85rem; font-weight: 650; margin: 0; }
+.panel-heading > span { font-size: .75rem; }
+.message-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.1rem 1.5rem; }
+.message { font-size: .9rem; line-height: 1.65; margin-bottom: 1.25rem; overflow-wrap: anywhere; }
+.message:last-of-type { margin-bottom: 0; }
+.message-author { font-size: .72rem; font-weight: 650; margin-bottom: .3rem; color: #587162; }
+.message-copy { min-width: 0; }
+.message-copy > p:last-child { margin-bottom: 0; }
+.message-user { margin-left: 12%; background: #edf1e9; padding: .65rem .85rem; border-radius: .4rem; }
+.message-with-proposal { display: grid; grid-template-columns: minmax(0, 1fr) 100px; gap: 1.25rem; align-items: start; }
+.proposal-card { display: flex; flex-direction: column; align-items: center; gap: .35rem; background: #f3f5ef; border: 1px solid #e3e7dd; border-radius: .3rem; padding: .4rem; }
+.proposal-card img { width: auto; height: 96px; max-width: 100%; object-fit: contain; }
+.proposal-card > span { font-size: .65rem; white-space: nowrap; }
+.proposal-card .btn { font-size: .7rem; width: 100%; padding: .25rem; }
+.composer { flex-shrink: 0; padding: .6rem 1rem .75rem; border-top: 1px solid #e9eae1; }
+.progress-line { font-size: .75rem; color: #3d5f4c; }
+.progress-line:not(:empty) { margin-bottom: .4rem; }
+.progress-line .spinner-border { width: .75rem; height: .75rem; margin-right: .25rem; }
+.suggested-prompt { text-align: left; width: 100%; font-size: .75rem; font-weight: 400; background: #f2f4ee; border-color: #e4e9dc; margin-bottom: .5rem; padding: .4rem .6rem; }
+.composer textarea { resize: vertical; font-size: .85rem; background: white; max-height: 140px; }
+.composer-actions { display: flex; justify-content: space-between; gap: .5rem; align-items: center; margin-top: .5rem; }
+.composer-actions span { font-size: .7rem; color: #6b756d; }
+.composer-actions .btn { font-size: .8rem; padding: .3rem 1rem; }
+.preview-stage { background: #eaece5; flex: 1; min-height: 100px; padding: 1rem; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+.active-preview { display: block; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 4px 12px #28362721; }
+.empty-note { font-size: .85rem; color: #617164; margin: 0; }
+.preview-stage .empty-note { text-align: center; max-width: 250px; }
+.preview-details { padding: .65rem 1rem; flex-shrink: 0; }
+.preview-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
+.preview-actions .btn { font-size: .75rem; padding: .35rem .5rem; }
+.acceptance-note { font-size: .7rem; color: #617164; margin: .5rem 0 0; }
+.draft-details { padding: 1rem; max-width: 1100px; }
+.draft-details h2 { font-size: .9rem; margin-bottom: 1rem; }
+.draft-details .photo-strip { margin-bottom: 1rem; }
+.skip-link { background: white; padding: .5rem; }
+
+@media (max-width: 991px) {
+  .workspace-grid { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .conversation-panel { min-height: 580px; height: 75dvh; }
+  .preview-stage { flex: none; height: 420px; }
+  .project-setup { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 575px) {
+  .app-shell { padding: 0 .65rem .75rem; }
+  .app-header { flex-wrap: wrap; gap: .4rem; padding: .6rem 0; }
+  .app-header nav { gap: .8rem; width: 100%; justify-content: space-between; }
+  .workspace-heading { align-items: start; flex-direction: column; gap: .4rem; }
+  .project-setup { padding: 1rem; }
+  .project-row { padding: 1rem; }
+  .message-list { padding: 1rem; }
+  .message-with-proposal { grid-template-columns: minmax(0, 1fr) 80px; gap: .65rem; }
+  .proposal-card img { height: 84px; }
+  .proposal-card > span { font-size: .58rem; }
+  .proposal-card .btn { font-size: .65rem; }
+  .preview-stage { height: 380px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}

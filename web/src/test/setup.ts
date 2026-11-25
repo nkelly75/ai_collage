@@ -1,0 +1,18 @@
+import '@testing-library/jest-dom/vitest'
+import { cleanup } from '@testing-library/react'
+import { afterEach, beforeEach, vi } from 'vitest'
+
+beforeEach(() => {
+  const blocked = () => { throw new Error('The frontend prototype must not access services or persistence.') }
+  vi.stubGlobal('fetch', vi.fn(blocked))
+  vi.stubGlobal('XMLHttpRequest', blocked)
+  vi.stubGlobal('WebSocket', blocked)
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(blocked)
+  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(blocked)
+})
+
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})

@@ -116,10 +116,12 @@ The user subsequently merged `nkelly/llm-wip-1` into `main`; see the
 [integration note](017_results.md#integration-into-main).
 
 [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md)
-captures the **tentative next direction**, not implementation authorization.
+captures the **tentative local-web direction**, not blanket implementation authorization.
 It records the initial UI layout, revisable subphases, tooling approval gates,
-and the deferred cloud-persistence work. A separate 018a brief is still needed;
-later subphases remain deliberately unspecified.
+and the deferred cloud-persistence work.
+[018a](018a-frontend-tooling-and-ui-skeleton.md) is complete and closed with the
+user's acceptance as a starting prototype; see [018a results](018a_results.md).
+Later subphases remain deliberately unspecified and unapproved.
 
 ## Planning records
 
@@ -154,7 +156,7 @@ and record 003 spans several feature increments.
 | [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Checkpoint committed by the user. |
 | [016: Human-led trial 06](016-user-led-natural-language-trial.md) | User reached P009 after the repair; not an Autopilot assignment. | [Observations and separately approved offline evidence-handoff repair](016_results.md); three-task policy unchanged. Human-led continuation remains separate. |
 | [017: Conversational photo identity memory](017-conversational-photo-identity-memory.md) | Successfully completed and closed with user sign-off; replay and offline regression passed, including the numeric-mapping repair. | See [017 results](017_results.md); human-led `p17-human-07` reached P012 with the repair and memory lifecycle live-confirmed. Copilot replay allowances stay closed; subsequently merged into `main` by the user. |
-| [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Tentative umbrella; initial UI direction and revisable subphases captured. No implementation authorized. | New planning record; 018a tooling/skeleton brief not yet written. |
+| [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Revisable umbrella; 018a complete and accepted as a starting prototype. Later stages unapproved. | See [018a results](018a_results.md) for closeout and limitations. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

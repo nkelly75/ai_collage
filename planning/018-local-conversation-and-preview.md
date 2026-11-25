@@ -1,9 +1,10 @@
 # 018: Local conversation-and-preview experience
 
 **Status:** Tentative umbrella tracker, approved for capturing direction only.
-Implementation has not started. The subphase boundaries and sequence below
-may change as we learn from the first rough UI; they are not a fixed delivery
-plan or authorization to implement all stages.
+018a is complete and closed with the user's acceptance as a starting prototype;
+see [018a results](018a_results.md). Later increments remain unapproved.
+The subphase boundaries and sequence below may change as we learn; they are
+not a fixed delivery plan or authorization to implement all stages.
 
 ## Purpose and boundaries
 
@@ -43,7 +44,7 @@ project.
 
 | Increment | Intended outcome | Status |
 |---|---|---|
-| 018a: Frontend tooling and UI skeleton | Check frontend prerequisites, then build the rough workspace with controlled sample conversation and previews, without a backend or Functions tooling. | Next candidate; separate brief still needed. |
+| [018a: Frontend tooling and UI skeleton](018a-frontend-tooling-and-ui-skeleton.md) | Build the rough workspace with self-contained sample conversation and previews, without a backend or Functions tooling. | Complete and closed with user acceptance as a starting prototype; [results](018a_results.md). |
 | 018b: Local Functions tooling and skeleton | Check backend prerequisites and establish a minimal locally running Functions host, without model calls. | Tentative; not specified. |
 | 018c: Local project and history API | Expose local projects, photos, history, previews, and baseline selection. | Tentative; not specified. |
 | 018d: Split conversational requests | Connect interpretation and layout generation through server-held validated intent. | Tentative; not specified. |
