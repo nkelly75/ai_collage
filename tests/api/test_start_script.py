@@ -17,6 +17,8 @@ ENV_NAMES = (
     "APPLICATIONINSIGHTS_CONNECTION_STRING", "APPINSIGHTS_INSTRUMENTATIONKEY",
     "PYTHONPATH", "AI_COLLAGE_API_AUTHORITY", "AI_COLLAGE_UI_ORIGIN",
     "FUNCTIONS_REQUEST_BODY_SIZE_LIMIT",
+    "AI_COLLAGE_LIVE", "AI_COLLAGE_CALL_BUDGET_PATH",
+    "AI_COLLAGE_MAX_CALLS", "AI_COLLAGE_TRIAL_PROJECT",
 )
 
 
@@ -134,11 +136,39 @@ def test_launcher_configures_only_child_host_and_restores_caller(shell, launcher
     assert child["env"]["AI_COLLAGE_API_AUTHORITY"] == "127.0.0.1:7071"
     assert child["env"]["AI_COLLAGE_UI_ORIGIN"] == "http://127.0.0.1:5173"
     assert child["env"]["FUNCTIONS_REQUEST_BODY_SIZE_LIMIT"] == "167772160"
+    assert child["env"]["AI_COLLAGE_LIVE"] == "0"
     for name in (
         "AzureWebJobsStorage", "AzureWebJobsDashboard",
         "APPLICATIONINSIGHTS_CONNECTION_STRING", "APPINSIGHTS_INSTRUMENTATIONKEY",
+        "AI_COLLAGE_CALL_BUDGET_PATH", "AI_COLLAGE_MAX_CALLS", "AI_COLLAGE_TRIAL_PROJECT",
     ):
         assert child["env"][name] is None
+
+
+def test_launcher_live_trial_forwarding_and_restoration(shell, launcher):
+    api, _, capture = launcher
+    ledger = str(api.parent / "trial budget.json")
+    code, error = run_launcher(shell, launcher, arguments={
+        "Live": True, "CallBudgetPath": ledger, "MaxCalls": 12, "TrialProject": "trial",
+    })
+    assert (code, error) == (0, None)
+    child = json.loads(capture.read_text())
+    assert child["env"]["AI_COLLAGE_LIVE"] == "1"
+    assert child["env"]["AI_COLLAGE_CALL_BUDGET_PATH"] == ledger
+    assert child["env"]["AI_COLLAGE_MAX_CALLS"] == "12"
+    assert child["env"]["AI_COLLAGE_TRIAL_PROJECT"] == "trial"
+
+
+@pytest.mark.parametrize("arguments", [
+    {"Live": True, "MaxCalls": 12},
+    {"Live": True, "CallBudgetPath": "relative.json", "TrialProject": "trial"},
+    {"CallBudgetPath": "C:\\trial\\budget.json", "TrialProject": "trial"},
+])
+def test_launcher_rejects_incomplete_or_implicit_live_trial(shell, launcher, arguments):
+    _, _, capture = launcher
+    code, error = run_launcher(shell, launcher, arguments=arguments)
+    assert code == 1 and "Trial configuration requires" in error
+    assert not capture.exists()
 
 
 def test_launcher_reports_missing_environment_without_starting_host(shell, launcher):

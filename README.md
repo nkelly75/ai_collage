@@ -24,9 +24,9 @@ Ask to list, correct or forget them; only conflicting reassignments pause for
 confirmation. Casual references need not create additional saved aliases.
 See the [conversation guide](docs/cli-guide.md#conversational-proposals-optional).
 Live model requests require explicit bounded authorization. A local web UI
-can now create and reopen saved photo/canvas projects; real conversational
-API integration, image
-understanding, and cloud hosting remain future work.
+can create and reopen saved projects, converse through the shared Python agent
+and display saved previews. Image understanding and cloud hosting remain future
+work.
 
 **Layout format 3** uses centre-anchored `center_x`/`center_y` positions,
 explicit whole/cover modes, stable `photo_id` values, and a back-to-front
@@ -57,7 +57,7 @@ open two PowerShell terminals at the repository root:
 
 ```powershell
 # Terminal 1: backend
-.\api\start.ps1
+.\api\start.ps1 -Live
 ```
 
 ```powershell
@@ -67,10 +67,16 @@ npm --prefix .\web run dev
 
 Open **http://127.0.0.1:5173**, choose **New project**, select 2-6 JPEG/PNG photos
 and a canvas, then **Create project**. Reopen saved projects from **Projects**
-or their URLs, including after refresh/restart. New web data uses the separate
-`.collage-data-web` root; existing CLI projects are not listed. Conversation and
-generation are not connected yet. **Demo** is a separate scripted London
-walkthrough, usable without the backend. Stop each server with Ctrl+C.
+or their URLs, including after refresh/restart. Send a request and refine the
+result by photo number. `-Live` explicitly enables potentially paid model calls
+using the existing backend credentials; omit it for model-free project setup
+and browsing. Refresh restores saved messages/previews, but requires **Continue
+generation** for a prepared stage that has not started. See the
+[API guide](api/README.md#conversation-and-recovery) for timeout/recovery limits.
+New web data uses the separate `.collage-data-web` root; existing CLI projects
+are not listed. Acceptance, historical thumbnail navigation and download
+controls remain future work. **Demo** is a separate scripted London walkthrough,
+usable without the backend. Stop each server with Ctrl+C.
 
 ## CLI quick start
 

@@ -20,7 +20,7 @@ export class ApiError extends Error {
   }
 }
 
-function apiUrl(path: string) {
+export function apiUrl(path: string) {
   const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:7071'
   try {
     const url = new URL(path, `${base.replace(/\/+$/, '')}/`)
@@ -47,7 +47,15 @@ function validId(value: unknown): value is string {
   return typeof value === 'string' && !projectIdError(value)
 }
 
-async function request(path: string, signal: AbortSignal, body?: FormData): Promise<unknown> {
+interface RequestOptions {
+  body?: FormData | string
+  timeout?: number
+  statuses?: number[]
+  json?: boolean
+}
+
+export async function request(path: string, signal: AbortSignal, options: RequestOptions = {}): Promise<unknown> {
+  const { body, timeout = body ? 60_000 : 10_000, statuses = [body ? 201 : 200], json = false } = options
   const url = apiUrl(path)
   const controller = new AbortController()
   if (signal.aborted) throw new DOMException('Request cancelled.', 'AbortError')
@@ -61,7 +69,7 @@ async function request(path: string, signal: AbortSignal, body?: FormData): Prom
     timer = setTimeout(() => {
       controller.abort()
       reject(new ApiError('Backend request timed out.', 0, '', Boolean(body)))
-    }, body ? 60_000 : 10_000)
+    }, timeout)
   })
   signal.addEventListener('abort', cancel, { once: true })
   const work = async () => {
@@ -69,6 +77,7 @@ async function request(path: string, signal: AbortSignal, body?: FormData): Prom
     try {
       response = await fetch(url, {
         method: body ? 'POST' : 'GET', body, signal: controller.signal,
+        ...(json ? { headers: { 'Content-Type': 'application/json' } } : {}),
         mode: 'cors', credentials: 'omit', cache: 'no-store', redirect: 'error',
       })
     } catch (error) {
@@ -81,14 +90,14 @@ async function request(path: string, signal: AbortSignal, body?: FormData): Prom
       value = await response.json()
     } catch {
       throw new ApiError(`Backend returned HTTP ${response.status} without valid JSON.`,
-        response.status, '', Boolean(body) && response.status !== 413)
+        response.status, '', Boolean(body) && (json || response.status !== 413))
     }
-    if (response.status !== (body ? 201 : 200)) {
+    if (!statuses.includes(response.status)) {
       const error = record(value) && record(value.error) ? value.error : null
       throw new ApiError(
         error && typeof error.message === 'string' ? error.message : `Backend returned HTTP ${response.status}.`,
         response.status, error && typeof error.code === 'string' ? error.code : '',
-        Boolean(body) && response.status >= 500,
+        Boolean(body) && (json || response.status >= 500),
       )
     }
     return value
@@ -142,7 +151,7 @@ export async function saveProject(id: string, size: Project['canvas'], files: Fi
   const body = new FormData()
   body.append('metadata', JSON.stringify({ project_id: id, canvas: size }))
   files.forEach((file, index) => body.append(`photo_${index + 1}`, file))
-  const result = project(await request('api/projects', signal, body))
+  const result = project(await request('api/projects', signal, { body }))
   if (result.id !== id || result.canvas.width !== size.width || result.canvas.height !== size.height ||
       result.photos.length !== files.length) throw new ApiError('Backend returned a different project.', 0, '', true)
   return result

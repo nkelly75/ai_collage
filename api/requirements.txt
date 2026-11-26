@@ -1,2 +1,2 @@
 azure-functions==1.26.0
--r ../requirements.txt
+-r ../requirements-agent.txt

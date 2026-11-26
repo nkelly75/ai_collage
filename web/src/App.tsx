@@ -6,7 +6,7 @@ import { Link } from './Link'
 import { navigate, usePath } from './navigation'
 import { projectIdError, sampleProject } from './projects'
 import type { Project } from './projects'
-import { PhotoStrip } from './PhotoStrip'
+import { RealWorkspace } from './RealWorkspace'
 import { Setup } from './Setup'
 import { Workspace } from './Workspace'
 import { useDemo } from './useDemo'
@@ -66,15 +66,7 @@ function SavedProject({ id }: { id: string }) {
     }}>Retry</Button>{' '}<Link href="/">Back to projects</Link>
   </div>
   if (!project) return <p role="status">Loading project...</p>
-  return <div className="workspace">
-    <div className="page-heading workspace-heading"><h1>{project.id}</h1>
-      <span>{project.photos.length} photos / {project.canvas.width} x {project.canvas.height} px
-        <Badge bg="light" text="dark">Saved locally</Badge></span></div>
-    <section className="surface draft-details" aria-labelledby="photos-title">
-      <h2 id="photos-title">Photos</h2><PhotoStrip items={project.photos} />
-      <p className="empty-note">Photos and canvas settings are saved. Conversation and collage generation are not connected yet.</p>
-    </section>
-  </div>
+  return <RealWorkspace project={project} />
 }
 
 export default function App() {
@@ -87,7 +79,7 @@ export default function App() {
   useEffect(() => {
     document.title = `${isProject ? id : path === '/demo' ? 'London demo' : path === '/new' ? 'New project' : 'Projects'} - Collage studio`
   }, [id, isProject, path])
-  return <Container fluid className={`app-shell${path === '/demo' ? ' project-shell' : ''}`}>
+  return <Container fluid className={`app-shell${path === '/demo' || isProject ? ' project-shell' : ''}`}>
     <a className="visually-hidden-focusable skip-link" href="#main">Skip to content</a>
     <header className="app-header">
       <Link href="/" className="brand">Collage studio</Link>
@@ -102,7 +94,7 @@ export default function App() {
     </header>
     <div className="sample-notice">{path === '/demo'
       ? 'Scripted demo. Conversation, previews and acceptance are simulated and reset on refresh.'
-      : 'Local project storage. Conversation and collage generation are not connected yet.'}</div>
+      : 'Local project storage. Conversations use the backend; original photos are rendered without AI image regeneration.'}</div>
     <main id="main">
       {uncertainId && <Alert variant="warning" role="alert" dismissible onClose={() => setUncertainId('')}>
         Creation of {uncertainId} may have finished after you left setup.{' '}

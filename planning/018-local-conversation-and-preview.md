@@ -7,7 +7,11 @@ closed following the user's manual connectivity verification;
 see [018b results](018b_results.md).
 [018c](018c-persistent-project-flow.md) is complete and closed following the
 user's manual testing and explicit sign-off; see [results and limits](018c_results.md).
-Later increments remain unapproved.
+[018d](018d-behavior-preserving-stage-extraction.md) is complete and closed with
+the user's acceptance; see [results and limits](018d_results.md).
+[018e](018e-real-conversation-and-previews.md) is complete and closed following
+the user's manual testing and explicit sign-off; see [results and limits](018e_results.md).
+Its live allowance is closed. Later increments remain unapproved.
 The subphase boundaries and sequence below may change as we learn; they are
 not a fixed delivery plan or authorization to implement all stages.
 
@@ -53,7 +57,7 @@ project.
 | [018b: Local Functions tooling and connectivity](018b-local-functions-tooling-and-skeleton.md) | Inventory prerequisites, hand over user-run setup, then prove a placeholder Function can be called from the web prototype. | Complete and closed following user verification; [results and limits](018b_results.md). |
 | [018c: Persistent project flow](018c-persistent-project-flow.md) | Connect UI project creation, listing and reopening to local persistence for selected photos and canvas settings, without model calls. | Complete and closed following manual testing and user sign-off; [results and limits](018c_results.md). |
 | [018d: Behavior-preserving stage extraction](018d-behavior-preserving-stage-extraction.md) | Extract shared interpretation and generation capabilities within the existing Python agent, with an explicit typed handoff. Preserve CLI/replay's composed request experience and establish a verified backend baseline before further web integration. | Complete and closed with user acceptance; [results and limits](018d_results.md). |
-| 018e: Real conversation and previews | Build on the extracted stages to connect prompts, clarification/name-confirmation replies, generation and ordinary follow-up edits through Functions/UI. Display backend-rendered proposals and restore the transcript/current preview after refresh. Include split HTTP requests and meaningful progress. | Tentative; detailed brief not yet written. |
+| [018e: Real conversation and previews](018e-real-conversation-and-previews.md) | Build on the extracted stages to connect prompts, clarification/name-confirmation replies, generation and ordinary follow-up edits through Functions/UI. Display backend-rendered proposals and restore the transcript/current preview after refresh. Include split HTTP requests and meaningful progress. | Complete and closed following manual testing and user sign-off. Live allowance closed; [results and limits](018e_results.md). |
 | 018f: Complete the design workflow | Add proposal thumbnails/navigation, "Continue from here", explicit acceptance and PNG download. Distinguish the editing baseline from the accepted version, and complete recovery UX for interrupted requests and pending questions. | Tentative; detailed brief not yet written. |
 | 018g: End-to-end trial and focused refinement | Exercise create/converse/refine/revisit/accept/download/reopen with the user's photos, including backend restart. Address observed correctness/usability issues and obtain user sign-off, rather than add another feature tranche. | Tentative; detailed brief not yet written. |
 

@@ -51,6 +51,7 @@ class Conversation:
     def __init__(
         self, store: ProjectStore, project_id: str, *,
         canvas: tuple[int, int] | None = None, preferences: Path | None = None,
+        read_only: bool = False,
     ):
         self.store = store
         self.project_id = project_id
@@ -72,8 +73,13 @@ class Conversation:
                 raise CollageError("Resume uses captured preferences; omit --preferences.")
             if canvas is not None and canvas != (self.state.controls.width, self.state.controls.height):
                 raise CollageError("Resume canvas differs; use /canvas explicitly.")
-            self._recover()
+            if read_only:
+                self._fresh()
+            else:
+                self._recover()
         else:
+            if read_only:
+                raise CollageError("Saved conversation is missing; read-only access cannot initialize it.")
             if canvas is None:
                 raise CollageError("A new conversation requires --canvas WIDTH HEIGHT.")
             controls = Controls(width=canvas[0], height=canvas[1])
@@ -867,6 +873,7 @@ class Conversation:
         if prepared is not None and progress is not None:
             progress("generation", intent)
         for call in range(prepared.calls_used if prepared is not None else 0, 4):
+            requests.check_work_deadline()
             if prepared is None and intent is not None:
                 return self._prepare_generation(prompt, intent, request_start, call, requests)
             stage = "interpretation" if intent is None else "generation"
@@ -1093,6 +1100,7 @@ class Conversation:
         self, prompt: str, raw: str, resolved: ResolvedLayout, requests: RequestLog,
         intent: ResolvedIntent,
     ) -> RequestResult:
+        requests.check_work_deadline()
         self._fresh()
         proposals = child(self.root, "proposals")
         proposals.mkdir(parents=True, exist_ok=True)
@@ -1115,6 +1123,7 @@ class Conversation:
             staging = Path(directory)
             preview = staging / "preview.png"
             render_layout(resolved, project.photos, self.store.photo_paths(project), preview)
+            requests.check_work_deadline()
             proposal = Proposal(
                 proposal_id=proposal_id, turn_id=event_id,
                 parent=intent.source.proposal_id if intent.source else None, intent=intent,
@@ -1130,6 +1139,7 @@ class Conversation:
                 preview,
             )
             self._fresh()
+            requests.check_work_deadline()
             staging.rename(child(proposals, proposal_id))
         self._append(event, baseline=proposal_id)
         return RequestResult(kind="proposal", proposal_id=proposal_id, event_id=event_id)

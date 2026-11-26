@@ -1,10 +1,11 @@
-# Local Python project API
+# Local Python API
 
 Loopback-only Azure Functions routes create, list and reopen local photo/canvas
-projects. Thin HTTP adapters call `ai_collage.application.projects` directly,
-coordinating the existing engine importer and empty, model-free conversation
-initialization.
-No source copies, CLI subprocesses, model credentials or cloud storage are used.
+projects and expose real conversation/previews. Thin HTTP adapters call the
+project/conversation application workflows, coordinating the same engine and
+agent used by CLI/replay. No source copies, CLI subprocesses or cloud storage
+are used. Model access requires explicit `-Live`; creation and reads never
+initialize credentials or make model calls.
 The routes are anonymous development endpoints, not a deployable authentication
 or ownership boundary.
 
@@ -21,13 +22,16 @@ python -m venv .\api\.venv
 ```
 
 Skip installation when already set up. `api\requirements.txt` includes the
-root engine requirements (Pillow/Pydantic) alongside the Functions SDK; the
+root agent requirements (including engine and keyless model dependencies)
+alongside the Functions SDK; the
 root `.venv` is not used by the worker.
 
 In a separate PowerShell terminal from Vite:
 
 ```powershell
 .\api\start.ps1
+# Explicitly enable potentially paid conversation stages instead:
+.\api\start.ps1 -Live
 ```
 
 The launcher selects `api\.venv`, adds the checkout to the process-local
@@ -38,6 +42,10 @@ It never installs packages or changes global settings, and restores its
 environment/cwd on exit, including failure. No activation,
 `local.settings.json`, connection string, extension bundle or emulator is needed.
 Stop with Ctrl+C; do not terminate unrelated processes occupying these ports.
+Live requests use the same backend deployment and noninteractive
+`DefaultAzureCredential` path as the CLI. Keep credentials in the backend's
+existing environment/sign-in setup, never Vite/browser configuration. This
+launcher does not sign in or make a model preflight.
 
 To use another free loopback pair, match the UI's address and API base:
 
@@ -95,16 +103,101 @@ browser Origins; origin-less local tools are permitted. These restrictions and
 CORS are not authentication. Application failures use
 `{"error":{"code":"...","message":"..."}}`: 400 invalid input, 403 forbidden
 Host/Origin, 404 missing project/photo, 409 duplicate/busy/invalid saved state,
-413 size, 415 media, 500 unexpected storage/server failure.
+413 size, 415 media, 422 confirmed model/validation failure, 503 live disabled,
+504 confirmed stage timeout, 500 unexpected storage/server failure or uncertain
+publication. The error code and saved operation matter, not HTTP status alone.
 Unexpected errors are logged without exposing local paths in responses.
 
 Creation stages photos and the normal empty conversation privately, publishing
 the project directory last. Canvas dimensions live only in existing conversation
-controls. An OS-held per-project lock rejects competing local creates.
+controls. An OS-held per-project lock rejects competing local creates and conversation
+mutations across tabs/worker processes.
+Project-list/detail reads do not acquire that mutation guard.
 Handled failures clean up owned staging/assets; a killed worker can leave
 private staging/unreferenced assets, not a half-published project. There is no
 garbage collector or protection against arbitrary CLI writes to this root.
 GETs validate existing records without repair or initialization.
+
+## Conversation and recovery
+
+| Route | Request / result |
+|---|---|
+| `GET /api/projects/<id>/conversation` | `{project_id, revision, live_enabled, messages, baseline, pending, operation}`. Messages contain stable `id`, `role`, `text`, `kind`, nullable `proposal_id`. Baseline is null or `{proposal_id}`. Pending is null or `{kind, message}` for a question/name confirmation. Operation is the latest unresolved operation, or null. |
+| `POST /api/projects/<id>/conversation/requests` | Strict JSON `{request_id, prompt, revision}`; canonical UUID, nonempty prompt at most 256 KiB UTF-8, current 64-hex revision. HTTP 201 for new operation, 200 for a recognized duplicate. Interpretation only. |
+| `GET /api/projects/<id>/conversation/requests/<uuid>` | Read an existing operation, including completed/failed results. |
+| `POST /api/projects/<id>/conversation/requests/<uuid>/generate` | Strict JSON `{revision}`. Claim the server-held prepared handoff once. HTTP 200; no browser intent/recipe/limit overrides. |
+| `GET /api/projects/<id>/proposals/<proposal_id>/preview` | Verified immutable published PNG, `no-store`/`nosniff`. Does not regenerate or accept it. |
+
+JSON bodies are at most 1 MiB, with duplicate/unknown fields and coercions
+rejected. Operation DTOs contain `request_id`, `status`, `summary`,
+`result_kind`, `message`, `proposal_id`, nullable `{code,message}` `error`,
+`can_continue` and current `revision`. Status is `interpreting`, `prepared`,
+`generating`, `completed`, `failed` or `uncertain`. Result kinds match the
+agent's proposal/selection/question/name_confirmation/acknowledgement.
+Responses contain no handoffs, raw model JSON, reasoning, credentials or paths.
+
+One Send automatically chains the two stage requests when generation is needed.
+After refresh, **Continue generation** is required for prepared work. A lost
+response must be followed by a GET, not a resubmitted prompt. A repeated UUID
+with changed submission returns `request_id_conflict`; competing mutation
+returns `project_busy`; unresolved prior work returns `operation_unresolved`;
+stale revision/source returns `stale_revision`/`stale_preparation` (all 409).
+`live_disabled` is 503, and a configured trial's other projects return
+`trial_project_only` (403).
+
+Model-stage limits remain **120s interpretation / 180s generation**, sharing
+correction budgets exactly as CLI/replay. HTTP work envelopes target
+**150s / 210s**, with checks before model work and before publication, including
+after rendering. The browser waits **160s / 220s**, including body parsing;
+ordinary reads wait 10s and creation 60s. The app-wide Functions execution
+ceiling is 225s, not an increase to a model budget. The hosted 230s HTTP
+load-balancer limit is not a local Core Tools limit.
+
+These are not guarantees of forcible synchronous-render/storage cancellation.
+Browser timeout/disconnection and a killed worker can leave an unknown outcome.
+Read the saved result/preview. Confirmed terminal failures (`stage_failed` or
+`stage_timeout`) do not auto-retry; a new explicit Send is a new potentially
+paid attempt and must use existing agent recovery semantics. Names saved during
+interpretation are not rolled back.
+Exhausted generation-validation attempts report that no valid layout was
+created within the attempt limit and the previous preview is unchanged.
+The UI automatically refreshes confirmed failure state using read-only GETs;
+this is not another stage attempt. If those reads fail, manual status checking
+remains available without describing the known failure as an unknown outcome.
+
+An interrupted claim or uncertain publication (`outcome_unknown`) blocks a new
+paid mutation for manual evidence inspection. A claim is never made retryable
+just because it is old or its process/lock disappeared. Completed agent writes
+with an unrecorded application result may still show their verified current
+preview while reporting uncertainty. No automatic repair, queue or retry worker
+is present. Browser status observation is bounded to 225s per session, at most
+one GET every 2s, then manual **Check status**.
+
+Conversation/operation/preview handlers execute in request-scoped executor
+threads, not on the Functions worker's shared event loop. Each stage runs its
+async model call in that thread's event loop; synchronous validation, rendering
+and storage therefore do not block the shared loop servicing other requests.
+This is not a detached job or queue. Project guards, stage limits and uncertain
+outcome handling are unchanged; disconnecting a browser does not stop a worker
+thread or roll back its work.
+
+### Bounded single-project trials
+
+For a separately authorized trial, configure the same absolute ledger and
+project on every host restart, alongside an isolated `AI_COLLAGE_DATA_DIR`:
+
+```powershell
+.\api\start.ps1 -Live -TrialProject trial-project -CallBudgetPath C:\absolute\trial\calls.json -MaxCalls 12
+```
+
+The launcher sets process-local `AI_COLLAGE_LIVE`, `AI_COLLAGE_TRIAL_PROJECT`,
+`AI_COLLAGE_CALL_BUDGET_PATH` and `AI_COLLAGE_MAX_CALLS`, clearing inherited trial
+settings for an ordinary launch and restoring them on exit. The application
+requires all three budget settings together and restricts live mutations to
+that project. The existing `call_budget` guard reserves actual attempts in
+`RequestLog.reserve`, across stages/process restarts. Limits cannot be renewed
+by reopening. Keep trials single-writer and do not share their ledger with
+another host/store. This example does not authorize any trial or extra calls.
 
 ### Manual test-project cleanup
 
@@ -131,8 +224,9 @@ repository root, select the environment and suite explicitly:
 ```
 
 Tests use generated photos/temp roots and block unmocked external services.
-They cover multipart validation, original bytes/orientation, read-only reopening,
-failure rollback, limits and cross-process guards. Launcher tests use fake Core
+They cover multipart/JSON validation, original bytes/orientation, read-only
+reopening, split stages, durable claims, failure windows, limits and
+cross-process guards. Launcher tests use fake Core
 Tools in installed Windows PowerShell/PowerShell 7 hosts. The default root
 configuration includes `tests\application` but excludes `tests\api`; the API
 command selects `tests\api` explicitly. Both environments import the same checkout

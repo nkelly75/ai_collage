@@ -199,7 +199,7 @@ export function Setup({ onCreate, onUncertain }: {
       </fieldset>
       <div className="setup-actions">
         {error && <Alert variant="warning" role="alert">{error}</Alert>}
-        <p>Photos and canvas settings will be saved locally by the backend. Rendering and chat are not connected yet.</p>
+        <p>Photos and canvas settings will be saved locally by the backend without model requests. After creation, enable live conversation to request a collage.</p>
         <p>Leaving while saving does not guarantee cancellation. Check the saved project before trying again.</p>
         <div className="d-flex flex-wrap gap-2">
           <Button type="submit" disabled={busy}>{busy ? 'Working...' : 'Create project'}</Button>

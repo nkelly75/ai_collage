@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -5,9 +6,10 @@ import os
 import azure.functions as func
 from pydantic import ValidationError
 
-from ai_collage.engine.models import CollageError
+from ai_collage.engine.models import MAX_JSON_BYTES, CollageError
 from ai_collage.engine.projects import parse_json
 from ai_collage.application.projects import FlowError, ProjectFlow, ProjectSetup, configured_store
+from ai_collage.application.conversation import ConversationFlow, GenerationRequest, Submission
 
 
 MAX_BODY_BYTES = 160 * 1024 * 1024
@@ -27,7 +29,7 @@ def check_request(req: func.HttpRequest) -> None:
     if req.headers.get("Host") != authority:
         raise FlowError("forbidden_host", "Request Host is not the configured local API.", 403)
     if req.method == "POST" and req.headers.get("Origin") not in {None, origin}:
-        raise FlowError("forbidden_origin", "Upload Origin is not the configured local UI.", 403)
+        raise FlowError("forbidden_origin", "Request Origin is not the configured local UI.", 403)
 
 
 def create_project(req: func.HttpRequest, flow: ProjectFlow) -> dict:
@@ -75,17 +77,61 @@ def dispatch(req: func.HttpRequest, operation: str) -> func.HttpResponse:
         return func.HttpResponse(raw, mimetype=content_type, headers={
             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
         })
-    except FlowError as exc:
+    except Exception as exc:
+        return request_error(exc)
+
+
+def request_error(exc: Exception) -> func.HttpResponse:
+    if isinstance(exc, FlowError):
         return json_response({"error": {"code": exc.code, "message": str(exc)}}, exc.status)
-    except (ValidationError, CollageError, ValueError) as exc:
-        logging.info("Invalid project request: %s", type(exc).__name__)
-        return json_response({"error": {"code": "invalid_request", "message": "Invalid project ID, metadata or upload."}}, 400)
-    except OSError:
-        logging.exception("Local project storage operation failed")
-        return json_response({"error": {"code": "storage_error", "message": "Local storage operation failed; check saved state before retrying."}}, 500)
-    except Exception:
-        logging.exception("Unexpected project API failure")
-        return json_response({"error": {"code": "server_error", "message": "Project operation failed; check saved state before retrying."}}, 500)
+    if isinstance(exc, (ValidationError, CollageError, ValueError)):
+        logging.info("Invalid API request: %s", type(exc).__name__)
+        code, message, status = "invalid_request", "Invalid request ID, body or saved resource.", 400
+    elif isinstance(exc, OSError):
+        logging.exception("Local storage operation failed")
+        code, message, status = "storage_error", "Local storage operation failed; check saved state before retrying.", 500
+    else:
+        logging.exception("Unexpected API failure")
+        code, message, status = "server_error", "Operation failed; check saved state before retrying.", 500
+    return json_response({"error": {"code": code, "message": message}}, status)
+
+
+def json_body(req: func.HttpRequest) -> object:
+    if req.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+        raise FlowError("unsupported_media", "Use an application/json body.", 415)
+    raw = req.get_body()
+    if len(raw) > MAX_JSON_BYTES:
+        raise FlowError("request_too_large", "JSON body exceeds 1 MiB.", 413)
+    return parse_json(raw)
+
+
+def _dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpResponse:
+    try:
+        check_request(req)
+        flow = ConversationFlow(configured_store())
+        project_id = req.route_params["project_id"]
+        if operation == "conversation":
+            return json_response(flow.detail(project_id))
+        if operation == "requests":
+            submission = Submission.model_validate(json_body(req))
+            result, created = asyncio.run(flow.interpret(project_id, submission))
+            return json_response(result, 201 if created else 200)
+        if operation == "operation":
+            return json_response(flow.operation(project_id, req.route_params["request_id"]))
+        if operation == "generate":
+            body = GenerationRequest.model_validate(json_body(req))
+            return json_response(asyncio.run(flow.generate(project_id, req.route_params["request_id"], body)))
+        raw = flow.preview(project_id, req.route_params["proposal_id"])
+        return func.HttpResponse(raw, mimetype="image/png", headers={
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        })
+    except Exception as exc:
+        return request_error(exc)
+
+
+async def dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpResponse:
+    # Rendering and snapshot validation must not occupy the Functions event loop.
+    return await asyncio.to_thread(_dispatch_conversation, req, operation)
 
 
 @app.route(route="projects", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -101,3 +147,28 @@ def project(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="projects/{project_id}/photos/{photo_id}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def photo(req: func.HttpRequest) -> func.HttpResponse:
     return dispatch(req, "photo")
+
+
+@app.route(route="projects/{project_id}/conversation", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+async def conversation(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "conversation")
+
+
+@app.route(route="projects/{project_id}/conversation/requests", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+async def conversation_requests(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "requests")
+
+
+@app.route(route="projects/{project_id}/conversation/requests/{request_id}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+async def conversation_operation(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "operation")
+
+
+@app.route(route="projects/{project_id}/conversation/requests/{request_id}/generate", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+async def conversation_generate(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "generate")
+
+
+@app.route(route="projects/{project_id}/proposals/{proposal_id}/preview", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+async def proposal_preview(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "preview")

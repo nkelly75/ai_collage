@@ -60,6 +60,10 @@ class StageTimeout(CollageError):
     """A confirmed model-stage timeout, not a publication or generic I/O error."""
 
 
+class WorkTimeout(CollageError):
+    """An adapter's outer work envelope expired before publication."""
+
+
 class RequestLog:
     def __init__(
         self, store: ProjectStore, project_id: str, *, generation_reasoning: Reasoning = "low",
@@ -75,6 +79,11 @@ class RequestLog:
         self.interpretation_reasoning = interpretation_reasoning
         self.stage: str | None = None
         self._deadline: float | None = None
+        self.work_deadline: float | None = None
+
+    def check_work_deadline(self) -> None:
+        if self.work_deadline is not None and monotonic() >= self.work_deadline:
+            raise WorkTimeout("Application work deadline exhausted; check saved state before retrying.")
 
     def begin_stage(self, stage: str) -> None:
         if stage not in {"interpretation", "generation"}:
@@ -87,6 +96,7 @@ class RequestLog:
         self._deadline = monotonic() + seconds
 
     def remaining_seconds(self) -> float:
+        self.check_work_deadline()
         remaining = (
             self._deadline - monotonic() if self._deadline is not None
             else self.limits.timeout_seconds

@@ -60,13 +60,18 @@ def configured_store() -> ProjectStore:
 
 
 @contextmanager
-def project_guard(store: ProjectStore, project_id: str):
+def project_guard(store: ProjectStore, project_id: str, *, create: bool = True):
     validate_project_id(project_id)
     directory = child(store.owner_dir, ".locks")
-    directory.mkdir(parents=True, exist_ok=True)
-    with child(directory, f"{project_id}.lock").open("a+b") as lock:
+    path = child(directory, f"{project_id}.lock")
+    if not create and not path.exists():
+        yield
+        return
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b" if create else "r+b") as lock:
         lock.seek(0, 2)
-        if lock.tell() == 0:
+        if lock.tell() == 0 and create:
             lock.write(b"\0")
             lock.flush()
         lock.seek(0)
@@ -88,6 +93,16 @@ def project_guard(store: ProjectStore, project_id: str):
                 msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def project_is_busy(store: ProjectStore, project_id: str) -> bool:
+    try:
+        with project_guard(store, project_id, create=False):
+            return False
+    except FlowError as exc:
+        if exc.code != "project_busy":
+            raise
+        return True
 
 
 class ProjectFlow:

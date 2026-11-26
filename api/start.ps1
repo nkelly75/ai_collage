@@ -1,10 +1,20 @@
 [CmdletBinding()]
 param(
     [ValidateRange(1, 65535)][int]$Port = 7071,
-    [string]$UiOrigin = 'http://127.0.0.1:5173'
+    [string]$UiOrigin = 'http://127.0.0.1:5173',
+    [switch]$Live,
+    [string]$CallBudgetPath,
+    [ValidateRange(1, 200)][int]$MaxCalls = 12,
+    [string]$TrialProject
 )
 
 $ErrorActionPreference = 'Stop'
+if ($CallBudgetPath -or $TrialProject -or $PSBoundParameters.ContainsKey('MaxCalls')) {
+    if (-not $Live -or -not $CallBudgetPath -or -not $TrialProject -or
+        [IO.Path]::GetPathRoot($CallBudgetPath) -notmatch '^(?:[A-Za-z]:\\|\\\\)') {
+        throw 'Trial configuration requires -Live, -TrialProject and an absolute -CallBudgetPath (optional -MaxCalls).'
+    }
+}
 $origin = $null
 if (-not [Uri]::TryCreate($UiOrigin, [UriKind]::Absolute, [ref]$origin) -or
     $origin.Scheme -ne 'http' -or $origin.Host -ne '127.0.0.1' -or
@@ -41,6 +51,10 @@ $settings = @{
     AI_COLLAGE_API_AUTHORITY = "127.0.0.1:$Port"
     AI_COLLAGE_UI_ORIGIN = $UiOrigin
     FUNCTIONS_REQUEST_BODY_SIZE_LIMIT = '167772160'
+    AI_COLLAGE_LIVE = $(if ($Live) { '1' } else { '0' })
+    AI_COLLAGE_CALL_BUDGET_PATH = $(if ($CallBudgetPath) { $CallBudgetPath } else { $null })
+    AI_COLLAGE_MAX_CALLS = $(if ($CallBudgetPath) { "$MaxCalls" } else { $null })
+    AI_COLLAGE_TRIAL_PROJECT = $(if ($TrialProject) { $TrialProject } else { $null })
 }
 $previous = @{}
 foreach ($name in $settings.Keys) {

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { conversation } from './test/conversation'
 
 const canvas = { width: 2048, height: 1024 }
 const detail = {
@@ -69,8 +70,13 @@ describe('saved project flow', () => {
     history.replaceState(null, '', '/new')
     let finish!: (value: Response) => void
     vi.mocked(fetch).mockImplementationOnce(() => new Promise((done) => { finish = done }))
-      .mockResolvedValueOnce(json(detail)).mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(conversation({ project_id: 'sample-london' })))
+      .mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(conversation({ project_id: 'sample-london' })))
     const view = render(<App />)
+    expect(screen.getByText(/saved locally by the backend without model requests/)).toBeVisible()
+    expect(screen.getByText(/enable live conversation to request a collage/)).toBeVisible()
     await fillSetup()
     fireEvent.click(screen.getByRole('button', { name: 'Create project' }))
     fireEvent.submit(document.querySelector('form')!)
@@ -86,13 +92,13 @@ describe('saved project flow', () => {
     expect(screen.getByAltText('Photo 1')).toHaveAttribute('src',
       'http://127.0.0.1:7071/api/projects/sample-london/photos/1')
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
-    expect(screen.queryByLabelText('Your message')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('Your message')).toBeEnabled())
     expect(screen.queryByRole('button', { name: 'Accept proposal' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Download PNG' })).not.toBeInTheDocument()
     view.unmount()
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'sample-london' })).toBeVisible()
-    expect(vi.mocked(fetch).mock.calls.map((call) => call[1]?.method)).toEqual(['POST', 'GET', 'GET'])
+    expect(vi.mocked(fetch).mock.calls.map((call) => call[1]?.method)).toEqual(['POST', 'GET', 'GET', 'GET', 'GET'])
     expect(Storage.prototype.getItem).not.toHaveBeenCalled()
     expect(Storage.prototype.setItem).not.toHaveBeenCalled()
   })
@@ -117,9 +123,10 @@ describe('saved project flow', () => {
     if (status !== 409) expect(screen.getByRole('alert')).toHaveTextContent('may have been saved')
     fireEvent.change(screen.getByLabelText('Project ID'), { target: { value: 'another-id' } })
     vi.mocked(fetch).mockResolvedValueOnce(json(detail)).mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(conversation({ project_id: 'sample-london' })))
     fireEvent.click(lookup)
     expect(await screen.findByRole('heading', { name: 'sample-london' })).toBeVisible()
-    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(fetch).toHaveBeenCalledTimes(4)
   })
 
   it('shows missing/corrupt detail failures and photo-load errors without demo history', async () => {
@@ -127,6 +134,7 @@ describe('saved project flow', () => {
     vi.mocked(fetch).mockResolvedValueOnce(json({ error: { message: 'Not found.' } }, 404))
       .mockResolvedValueOnce(json({ error: { message: 'State is invalid.' } }, 409))
       .mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(conversation({ project_id: 'sample-london' })))
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'Project not found' })).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
@@ -136,7 +144,7 @@ describe('saved project flow', () => {
     await screen.findByAltText('Photo 1')
     fireEvent.error(screen.getByAltText('Photo 1'))
     expect(screen.getByRole('alert')).toHaveTextContent('Photo 1')
-    expect(screen.queryByRole('log')).not.toBeInTheDocument()
+    expect(screen.getByRole('log')).toBeInTheDocument()
   })
 
   it('aborts navigation-away requests and ignores responses that arrive afterward', async () => {
@@ -156,6 +164,7 @@ describe('saved project flow', () => {
     history.replaceState(null, '', '/new')
     vi.mocked(fetch).mockImplementationOnce(() => new Promise(() => {}))
       .mockResolvedValueOnce(json({ projects: [] })).mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(conversation({ project_id: 'sample-london' })))
     render(<App />)
     await fillSetup()
     fireEvent.click(screen.getByRole('button', { name: 'Create project' }))
@@ -167,7 +176,7 @@ describe('saved project flow', () => {
     expect(await screen.findByRole('heading', { name: 'sample-london' })).toBeVisible()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
-    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(fetch).toHaveBeenCalledTimes(4)
   })
 
   it('validates files, IDs and canvas bounds before upload and releases previews', async () => {

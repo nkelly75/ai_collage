@@ -15,7 +15,7 @@ status; the [README](README.md) is the usage entry point.
 |---|---|---|
 | `ai_collage\engine` | Offline layout/project contracts, geometry, photo validation, deterministic rendering and project storage. | [Models](ai_collage/engine/models.py), [geometry](ai_collage/engine/geometry.py), [imaging](ai_collage/engine/imaging.py), [ProjectStore](ai_collage/engine/projects.py) |
 | `ai_collage\agent` | Conversation state, photo-reference memory, interpretation, proposals and acceptance; optional, bounded model requests. Uses the engine to validate and render, rather than generating replacement images. | [Conversation](ai_collage/agent/conversation.py), [requests](ai_collage/agent/requests.py), [provider](ai_collage/agent/provider.py) |
-| `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Currently coordinates project creation, listing, reopening and photo retrieval. | [Package purpose](ai_collage/application/__init__.py), [ProjectFlow](ai_collage/application/projects.py) |
+| `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Coordinates projects, durable split-stage conversation operations, read-only transcript/preview projection and local request claims. | [ProjectFlow](ai_collage/application/projects.py), [ConversationFlow](ai_collage/application/conversation.py) |
 | `ai_collage\cli` | Command parsing and terminal presentation for engine, conversation and evaluation operations. | [Main CLI](ai_collage/cli/main.py), [chat](ai_collage/cli/chat.py) |
 | `ai_collage\evaluation` | Scripted conversation replay and offline assessment of saved evidence; tooling, not part of an ordinary web request. Live replay requires separate authorization. | [Replay](ai_collage/evaluation/replay.py), [assessment](ai_collage/evaluation/assess.py) |
 | `api` | Thin Azure Functions HTTP adapter and local host configuration/launcher. Translates requests into application calls and results/errors into HTTP responses. | [Functions](api/function_app.py), [launcher](api/start.ps1) |
@@ -35,7 +35,7 @@ api (Functions adapter)
     |
     | ordinary Python calls
     v
-application (ProjectFlow)
+application (ProjectFlow / ConversationFlow)
     |                 |
     v                 v
   engine <---------- agent
@@ -60,10 +60,14 @@ stale or already-used handoffs are rejected before another model call.
 The existing correction/validation/publication loop is shared, not copied.
 No new ordinary-project record or layout format is introduced. This is an
 internal agent contract, not authority to trust browser-supplied intent;
-HTTP operation storage and concurrency remain future application/API work.
+HTTP operation storage and concurrency belong to `ConversationFlow`, not the
+agent handoff or a client-supplied intent.
 
-The real web path currently supports create/save/list/reopen and photo serving.
-Its agent use is empty conversation initialization, not live chat or generation.
+The real web path supports create/save/list/reopen, photo serving, conversation
+and backend-rendered proposals. One Send interprets, then generates if needed
+through separate HTTP requests. Questions, naming and exact returns use the
+same agent behavior as CLI/replay. Dedicated thumbnail navigation, acceptance
+and download controls are not yet connected.
 The separate `/demo` route simulates conversation/proposals with bundled assets;
 it is not evidence that conversational API integration is implemented.
 
@@ -91,6 +95,47 @@ Reopening uses `ProjectFlow` to validate the existing project, conversation and
 photo identity without initializing or repairing saved state. Photo responses
 serve the imported original bytes; image validation still uses the engine.
 
+## A conversation request, end to end
+
+1. The browser sends text, one UUID and its last known revision to Functions.
+   The application takes the existing cross-process per-project guard and
+   persists a claim before calling `Conversation.interpret()`.
+2. Interpretation either produces a final question/acknowledgement/selection,
+   or saves a strict server-owned handoff. The browser shows a deterministic
+   action/source/photo-reference summary, not another model-generated summary.
+3. Only the still-active initiating Send automatically POSTs generation. The
+   application claims the saved handoff once, verifies its revision/source
+   binding and invokes `Conversation.generate()` with captured limits.
+4. The agent validates/renders/publishes the ordinary immutable proposal.
+   The application records its result reference, and read-only routes project
+   the transcript/current baseline and serve verified preview bytes.
+
+Web-only, version-1 records under `web-operations` preserve submission identity,
+stage claims and result references. They are not another agent memory or a
+replacement project/layout format. Reads use `Conversation(read_only=True)`:
+they validate shared history, names and proposals but cannot initialize or
+repair acceptance. Duplicate POSTs cannot repeat model calls; unrelated
+mutations in different projects need not block.
+
+The Functions conversation adapter runs each request in an executor thread,
+with a request-local event loop for async agent stages. Synchronous rendering,
+snapshot validation and filesystem work stay off the shared Functions event
+loop so other HTTP requests can be serviced. These remain ordinary bounded
+HTTP requests, not detached jobs. Project-list/detail reads do not take the
+conversational mutation guard.
+
+Reload observes an existing operation, never resubmits its prompt. Prepared
+work requires explicit Continue generation. A running claim without its OS-held
+guard is uncertain, not an expired lease. Publication/result-recording ambiguity
+blocks new paid work for inspection. No queue, background worker, automatic
+paid retry or general crash-repair UI is present.
+
+The existing model budgets remain 120s/180s. HTTP work envelopes add rendering/
+storage headroom with pre-publication checks; they do not forcibly cancel
+synchronous I/O. Browser disconnection is not evidence that backend work stopped.
+The [API guide](api/README.md#conversation-and-recovery) defines actual deadlines
+and recovery behavior.
+
 ## Boundaries to preserve
 
 - Keep layout validation, geometry and rendering in `engine`. It must not depend
@@ -112,11 +157,13 @@ Web projects default to the separate checkout-relative `.collage-data-web`
 root. The CLI selects its root through `--data-dir`; web listing does not
 discover CLI roots or archives. Both paths use the existing backend record
 formats. Web canvas settings live in conversation controls, not another
-web-specific settings file.
+web-specific settings file. Only web conversation submissions create additive
+application operation records; ordinary CLI/replay projects do not.
 
 The root `.venv` and `api\.venv` are separate dependency environments, not
 separate backends. The Functions worker uses the API environment, which adds
-the Functions SDK while importing the same checkout source. React has its own
+the Functions SDK and reuses the root agent requirements while importing the
+same checkout source. React has its own
 Node toolchain; it does not render collages.
 
 Python tests share the root `tests` tree. For example,

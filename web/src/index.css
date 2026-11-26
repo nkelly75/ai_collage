@@ -65,6 +65,13 @@ a { color: #245c4d; }
 .message-author { font-size: .72rem; font-weight: 650; margin-bottom: .3rem; color: #587162; }
 .message-copy { min-width: 0; }
 .message-copy > p:last-child { margin-bottom: 0; }
+.message-text { white-space: pre-wrap; margin-bottom: .3rem; }
+.message-proposal { font-size: .75rem; color: #587162; }
+.operation-summary, .pending-interaction { font-size: .8rem; overflow-wrap: anywhere; }
+.operation-summary { white-space: pre-wrap; }
+.pending-interaction p { margin-bottom: .4rem; }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .6rem; }
+.preview-stage > [role="alert"] { font-size: .85rem; overflow-wrap: anywhere; }
 .message-user { margin-left: 12%; background: #edf1e9; padding: .65rem .85rem; border-radius: .4rem; }
 .message-with-proposal { display: grid; grid-template-columns: minmax(0, 1fr) 100px; gap: 1.25rem; align-items: start; }
 .proposal-card { display: flex; flex-direction: column; align-items: center; gap: .35rem; background: #f3f5ef; border: 1px solid #e3e7dd; border-radius: .3rem; padding: .4rem; }
@@ -80,10 +87,11 @@ a { color: #245c4d; }
 .composer-actions { display: flex; justify-content: space-between; gap: .5rem; align-items: center; margin-top: .5rem; }
 .composer-actions span { font-size: .7rem; color: #6b756d; }
 .composer-actions .btn { font-size: .8rem; padding: .3rem 1rem; }
-.preview-stage { background: #eaece5; flex: 1; min-height: 100px; padding: 1rem; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+.preview-stage { position: relative; background: #eaece5; flex: 1; min-height: 100px; padding: 1rem; display: flex; justify-content: center; align-items: center; overflow: hidden; }
 .active-preview { display: block; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 4px 12px #28362721; }
 .empty-note { font-size: .85rem; color: #617164; margin: 0; }
 .preview-stage .empty-note { text-align: center; max-width: 250px; }
+.preview-stage .preview-loading { position: absolute; top: .5rem; left: 1rem; right: 1rem; max-width: none; padding: .3rem; background: #eaece5; }
 .preview-details { padding: .65rem 1rem; flex-shrink: 0; }
 .preview-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
 .preview-actions .btn { font-size: .75rem; padding: .35rem .5rem; }
