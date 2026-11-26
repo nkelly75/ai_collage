@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { generateRequest, interpretRequest, loadConversation, loadOperation, previewUrl } from './conversationApi'
-import { conversation, json, operation, preparedRevision, requestId, revision } from './test/conversation'
+import { downloadCollage, generateRequest, interpretRequest, loadConversation, loadOperation, loadSelection, previewUrl, selectCollage } from './conversationApi'
+import { conversation, json, operation, preparedRevision, requestId, revision, selection } from './test/conversation'
 
 const signal = () => new AbortController().signal
 
@@ -103,5 +103,55 @@ describe('strict conversation API boundary', () => {
     await expect(interpretRequest('trip', 'not-a-uuid', 'hello', revision, signal())).rejects.toThrow('Invalid request ID')
     await expect(generateRequest('trip', requestId, 'old', signal())).rejects.toThrow('Invalid saved revision')
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses strict model-free selection identities and rejects mismatched outcomes', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json(selection(), 201)).mockResolvedValueOnce(json(selection()))
+    await expect(selectCollage('trip', requestId, 'P001', revision, true, signal())).resolves.toEqual(selection())
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual({
+      action_id: requestId, proposal_id: 'P001', revision, abandon_pending: true,
+    })
+    await expect(loadSelection('trip', requestId, signal())).resolves.toEqual(selection())
+    for (const value of [
+      selection({ action_id: '22345678-1234-4234-8234-123456789abc' }),
+      selection({ proposal_id: 'P002' }), selection({ revision: null }),
+      { ...selection(), status: 'prepared' }, { ...selection(), extra: true },
+    ]) {
+      vi.mocked(fetch).mockResolvedValueOnce(json(value, 201))
+      await expect(selectCollage('trip', requestId, 'P001', revision, false, signal())).rejects.toThrow('Unexpected conversation response')
+    }
+  })
+
+  it('downloads the exact PNG blob with safe policy and filename and releases its URL', async () => {
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const create = vi.fn((_blob: Blob) => 'blob:test-download')
+    const revoke = vi.fn()
+    const OriginalURL = URL
+    vi.stubGlobal('URL', class extends OriginalURL {
+      static createObjectURL = create
+      static revokeObjectURL = revoke
+    })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.download).toBe('trip-P001.png')
+      expect(this.href).toBe('blob:test-download')
+    })
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(png, { headers: { 'Content-Type': 'image/png' } }))
+    await downloadCollage('trip', 'P001', signal())
+    const blob = create.mock.calls[0][0]
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(png)
+    expect(click).toHaveBeenCalledOnce()
+    expect(revoke).toHaveBeenCalledWith('blob:test-download')
+    expect(document.querySelector('a[download]')).toBeNull()
+    expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({
+      method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'error', mode: 'cors',
+    })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not download JSON errors or wrong-content success responses', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ error: { code: 'invalid_preview', message: 'Saved PNG changed.' } }, 409))
+      .mockResolvedValueOnce(json({ bytes: 'not a PNG' }))
+    await expect(downloadCollage('trip', 'P001', signal())).rejects.toThrow('Saved PNG changed')
+    await expect(downloadCollage('trip', 'P001', signal())).rejects.toThrow('did not return a PNG')
   })
 })

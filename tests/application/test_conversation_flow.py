@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
@@ -13,7 +15,7 @@ from ai_collage.agent.files import save
 from ai_collage.agent.models import AcceptanceIntent
 from ai_collage.agent.requests import StageTimeout
 from ai_collage.application.conversation import (
-    ConversationFlow, ConversationSettings, GenerationRequest, Submission,
+    ConversationFlow, ConversationSettings, GenerationRequest, SelectionSubmission, Submission,
 )
 from ai_collage.application.projects import FlowError, ProjectFlow, ProjectSetup
 from ai_collage.engine.projects import read_json
@@ -49,6 +51,240 @@ def generate(flow, operation, *responses):
     return asyncio.run(flow.generate("demo", operation["request_id"], GenerationRequest(
         revision=operation["revision"],
     )))
+
+
+def select(flow, proposal_id, *, abandon=False, revision=None, action_id=None):
+    submission = SelectionSubmission(
+        action_id=action_id or str(uuid4()), proposal_id=proposal_id,
+        revision=revision or flow.detail("demo")["revision"], abandon_pending=abandon,
+    )
+    result, created = flow.select("demo", submission)
+    return result, created, submission
+
+
+def two_proposals(flow):
+    for prompt in ("Make a collage", "Make another collage"):
+        prepared, _ = send(flow, prompt, intent("fresh"))
+        generate(flow, prepared, reply())
+
+
+def test_transcript_keeps_selection_activity_with_its_snapshot(flow, monkeypatch):
+    two_proposals(flow)
+    before = flow.detail("demo")
+    original_snapshot = flow._snapshot
+    selected = False
+
+    def select_after_snapshot(project_id):
+        nonlocal selected
+        result = original_snapshot(project_id)
+        if not selected:
+            selected = True
+            flow.select(project_id, SelectionSubmission(
+                action_id=str(uuid4()), proposal_id="P001",
+                revision=before["revision"], abandon_pending=False,
+            ))
+        return result
+
+    monkeypatch.setattr(flow, "_snapshot", select_after_snapshot)
+    assert flow.detail("demo") == before
+    assert flow.detail("demo")["baseline"] == {"proposal_id": "P001"}
+
+
+def test_local_selection_is_repeatable_model_free_durable_and_keeps_names(flow):
+    two_proposals(flow)
+    named, _ = send(flow, "Photo 2 is breakfast", intent("remember", name_updates=[
+        {"name": "breakfast", "photo_id": 2, "quote": "Photo 2 is breakfast"},
+    ]))
+    assert named["result_kind"] == "acknowledgement"
+    original = Conversation(flow.store, "demo", read_only=True)
+    pngs = {p: flow.preview("demo", p) for p in ("P001", "P002")}
+    flow.settings.live = False
+    flow.client = FakeModel()
+    first, created, submission = select(flow, "P001")
+    assert created and first["status"] == "completed" and not flow.client.contexts
+    restored = ConversationFlow(flow.store, flow.settings, flow.client)
+    view = restored.detail("demo")
+    assert view["baseline"] == {"proposal_id": "P001"}
+    assert view["selection"]["enabled"] and view["selection"]["confirmation"] is None
+    assert view["messages"][-1]["role"] == "activity"
+    assert view["messages"][-1]["text"] == "You chose collage P001 as the starting point for further edits."
+    assert [p["proposal_id"] for p in view["proposals"]] == ["P001", "P002"]
+    assert Conversation(flow.store, "demo", read_only=True).state.photo_names == original.state.photo_names
+    select(restored, "P002")
+    before = snapshot(flow.store.data_dir)
+    duplicate, created = restored.select("demo", submission)
+    assert not created and duplicate["proposal_id"] == "P001"
+    assert restored.detail("demo")["baseline"]["proposal_id"] == "P002"
+    assert snapshot(flow.store.data_dir) == before
+    with pytest.raises(FlowError) as error:
+        restored.select("demo", submission.model_copy(update={"proposal_id": "P002"}))
+    assert error.value.code == "action_id_conflict"
+    assert flow.store.load("demo").current_version is None
+    for p, raw in pngs.items():
+        assert restored.preview("demo", p) == raw
+    restored.settings.live = True
+    select(restored, "P001")
+    prepared, _ = send(restored, "Make photo 2 smaller", intent("edit", source="current"))
+    assert restored.client.contexts[-1]["current_layout"] == original.proposal("P001").recipe.model_dump(mode="json")
+    generate(restored, prepared, reply())
+    assert Conversation(flow.store, "demo", read_only=True).proposal("P003").parent == "P001"
+
+
+@pytest.mark.parametrize("pending", ["question", "names", "prepared"])
+def test_confirmed_selection_ends_only_the_pending_task_and_retires_preparation(flow, pending):
+    two_proposals(flow)
+    for photo in (1,):
+        prompt = f"Photo {photo} is breakfast"
+        send(flow, prompt, intent("remember", name_updates=[
+            {"name": "breakfast", "photo_id": photo, "quote": prompt},
+        ]))
+    request = None
+    if pending == "question":
+        send(flow, "Make the tower smaller", intent("question", question="Which photo is the tower?"))
+    elif pending == "names":
+        send(flow, "Photo 2 is breakfast", intent("remember", name_updates=[
+            {"name": "breakfast", "photo_id": 2, "quote": "Photo 2 is breakfast"},
+        ]))
+    else:
+        request, _ = send(flow, "Make photo 1 smaller", intent("edit", source="current"))
+    saved = Conversation(flow.store, "demo", read_only=True)
+    abandoned = saved.selection_task()
+    view = flow.detail("demo")
+    assert view["selection"]["confirmation"]
+    before = snapshot(flow.store.data_dir)
+    with pytest.raises(FlowError) as error:
+        select(flow, "P001")
+    assert error.value.code == "confirmation_required"
+    assert snapshot(flow.store.data_dir) == before
+    select(flow, "P001", abandon=True)
+    restored = Conversation(flow.store, "demo", read_only=True)
+    assert restored.selection_task() is None and restored._pending_question() is None
+    assert restored.state.pending_names is None and restored.state.photo_names == saved.state.photo_names
+    assert next(t for t in restored.tasks() if t.task_id == abandoned).outcome == "abandoned"
+    assert flow.detail("demo")["pending"] is None and flow.detail("demo")["operation"] is None
+    if request:
+        contexts = len(flow.client.contexts)
+        assert generate(flow, request)["status"] == "abandoned"
+        assert not flow.client.contexts
+        assert contexts == 1
+    next_request, _ = send(flow, "Make photo 2 smaller", intent("edit", source="current"))
+    assert flow.client.contexts[-1]["pending_question"] is None
+    assert flow.client.contexts[-1]["active_task"]["request"] == "Make photo 2 smaller"
+    generate(flow, next_request, reply())
+    assert Conversation(flow.store, "demo", read_only=True).proposal("P003").parent == "P001"
+
+
+def test_selection_rejects_stale_confirmation_unknown_target_and_unresolved_claim(flow):
+    two_proposals(flow)
+    old = flow.detail("demo")["revision"]
+    select(flow, "P001")
+    before = snapshot(flow.store.data_dir)
+    for target, revision, code in (
+        ("P002", old, "stale_revision"),
+        ("P999", None, None),
+        ("P001", None, "already_current"),
+    ):
+        with pytest.raises((FlowError, CollageError)) as error:
+            select(flow, target, revision=revision)
+        if code:
+            assert error.value.code == code
+        assert snapshot(flow.store.data_dir) == before
+    prepared, _ = send(flow, "Make photo 1 smaller", intent("edit", source="current"))
+    operation = read_json(flow._path("demo", prepared["request_id"]))
+    operation["status"] = "generating"
+    flow._path("demo", prepared["request_id"]).write_text(json.dumps(operation))
+    assert not flow.detail("demo")["selection"]["enabled"]
+    with pytest.raises(FlowError) as error:
+        select(flow, "P002", abandon=True)
+    assert error.value.code == "operation_unresolved"
+
+
+@pytest.mark.parametrize("window", ["retirement", "state", "result"])
+def test_selection_partial_publication_fails_closed_without_repair(flow, monkeypatch, window):
+    two_proposals(flow)
+    prepared, _ = send(flow, "Make photo 1 smaller", intent("edit", source="current"))
+    submission = SelectionSubmission(
+        action_id=str(uuid4()), proposal_id="P001", revision=flow.detail("demo")["revision"], abandon_pending=True,
+    )
+    if window == "retirement":
+        original = flow._save
+        def fail(operation):
+            if operation.status == "abandoned":
+                raise OSError("offline retirement failure")
+            return original(operation)
+        monkeypatch.setattr(flow, "_save", fail)
+    elif window == "state":
+        monkeypatch.setattr(Conversation, "_commit", lambda *args: (_ for _ in ()).throw(OSError("offline state failure")))
+    else:
+        original = flow._save_selection
+        def fail(action):
+            if action.status == "completed":
+                raise OSError("offline result failure")
+            return original(action)
+        monkeypatch.setattr(flow, "_save_selection", fail)
+    with pytest.raises(OSError):
+        flow.select("demo", submission)
+    before = snapshot(flow.store.data_dir)
+    assert flow.selection("demo", submission.action_id)["status"] == "uncertain"
+    assert flow.select("demo", submission)[1] is False
+    for action in (
+        lambda: generate(flow, prepared),
+        lambda: asyncio.run(flow.interpret("demo", Submission(
+            request_id=str(uuid4()), prompt="Another edit", revision=submission.revision,
+        ))),
+        lambda: flow.select("demo", submission.model_copy(update={"action_id": str(uuid4())})),
+    ):
+        with pytest.raises(FlowError) as error:
+            action()
+        assert error.value.code == "selection_unresolved"
+    assert snapshot(flow.store.data_dir) == before
+
+
+def test_selection_and_generation_share_the_cross_process_guard(flow, monkeypatch):
+    two_proposals(flow)
+    prepared, _ = send(flow, "Make photo 1 smaller", intent("edit", source="current"))
+    entered, release = threading.Event(), threading.Event()
+    original = Conversation.select_proposal
+    def held(self, *args, **kwargs):
+        entered.set()
+        assert release.wait(5), "Offline selection gate was not released."
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(Conversation, "select_proposal", held)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        selecting = executor.submit(select, flow, "P001", abandon=True)
+        try:
+            assert entered.wait(3)
+            assert not flow.detail("demo")["selection"]["enabled"]
+            with pytest.raises(FlowError) as error:
+                generate(flow, prepared)
+            assert error.value.code == "project_busy"
+        finally:
+            release.set()
+        assert selecting.result(timeout=5)[0]["status"] == "completed"
+    assert generate(flow, prepared)["status"] == "abandoned" and not flow.client.contexts
+
+
+def test_pending_confirmation_cannot_authorize_a_changed_state(flow):
+    two_proposals(flow)
+    send(flow, "Make the tower smaller", intent("question", question="Which photo is the tower?"))
+    old = flow.detail("demo")["revision"]
+    send(flow, "List photo names", intent("list_names"))
+    before = snapshot(flow.store.data_dir)
+    with pytest.raises(FlowError) as error:
+        select(flow, "P001", abandon=True, revision=old)
+    assert error.value.code == "stale_revision"
+    assert snapshot(flow.store.data_dir) == before and flow.detail("demo")["pending"]["kind"] == "question"
+
+
+def test_local_selection_preserves_cli_acceptance_and_uncorrupted_navigation(flow):
+    two_proposals(flow)
+    select(flow, "P001")
+    conversation = Conversation(flow.store, "demo")
+    assert conversation.accept("P002") == 1
+    assert Conversation(flow.store, "demo", read_only=True).state.baseline == "P002"
+    assert conversation.select_proposal("P001") > 0
+    assert Conversation(flow.store, "demo", read_only=True).state.baseline == "P001"
+    assert flow.store.load("demo").current_version == 1
 
 
 def test_split_duplicate_reads_and_fresh_process_preserve_one_turn(flow):

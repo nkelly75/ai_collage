@@ -27,7 +27,7 @@ def api_flow(monkeypatch):
     return store, settings, model
 
 
-def call(endpoint, *, body=None, raw=None, request_id=None, proposal_id=None, **headers):
+def call(endpoint, *, body=None, raw=None, request_id=None, proposal_id=None, action_id=None, **headers):
     values = {"Host": "127.0.0.1:7071", **headers}
     if body is not None or raw is not None:
         values.setdefault("Content-Type", "application/json")
@@ -35,7 +35,7 @@ def call(endpoint, *, body=None, raw=None, request_id=None, proposal_id=None, **
         "POST" if body is not None or raw is not None else "GET",
         "http://127.0.0.1:7071/api/projects/trip/conversation",
         headers=values, body=raw if raw is not None else json.dumps(body).encode() if body is not None else b"",
-        route_params={"project_id": "trip", "request_id": request_id, "proposal_id": proposal_id},
+        route_params={"project_id": "trip", "request_id": request_id, "proposal_id": proposal_id, "action_id": action_id},
     )
     return asyncio.run(endpoint(req))
 
@@ -117,6 +117,70 @@ def test_unknown_fields_disabled_host_and_invalid_ids_are_explicit(api_flow):
     assert call(function_app.conversation_operation, request_id="../elsewhere").status_code == 400
     assert call(function_app.conversation_operation, request_id=str(uuid4())).status_code == 404
     assert not model.contexts
+
+
+def test_local_selection_http_is_model_free_idempotent_and_downloads_exact_png(api_flow):
+    from PIL import Image
+    store, settings, model = api_flow
+    model.responses = iter([intent("fresh"), reply(), intent("fresh"), reply()])
+    for _ in range(2):
+        body = submission()
+        op = payload(call(function_app.conversation_requests, body=body))
+        assert call(function_app.conversation_generate, body={"revision": op["revision"]},
+                    request_id=body["request_id"]).status_code == 200
+    settings.live = False
+    body = {"action_id": str(uuid4()), "proposal_id": "P001",
+            "revision": payload(call(function_app.conversation))["revision"], "abandon_pending": False}
+    selected = call(function_app.conversation_selections, body=body)
+    assert selected.status_code == 201 and payload(selected)["status"] == "completed"
+    before = {p: p.read_bytes() for p in store.data_dir.rglob("*") if p.is_file()}
+    assert call(function_app.conversation_selections, body=body).status_code == 200
+    saved = call(function_app.conversation_selection, action_id=body["action_id"])
+    assert payload(saved)["proposal_id"] == "P001"
+    view = payload(call(function_app.conversation))
+    assert view["baseline"]["proposal_id"] == "P001" and view["messages"][-1]["role"] == "activity"
+    assert len(view["proposals"]) == 2 and view["selection"]["enabled"]
+    png = call(function_app.proposal_preview, proposal_id="P002")
+    assert png.get_body() == ConversationFlow(store, settings).preview("trip", "P002")
+    assert Image.open(BytesIO(png.get_body())).size == (100, 100)
+    assert len(model.contexts) == 4 and store.load("trip").current_version is None
+    assert {p: p.read_bytes() for p in store.data_dir.rglob("*") if p.is_file()} == before
+    assert call(function_app.conversation_selection, action_id="../secret").status_code == 400
+    assert call(function_app.conversation_selection, action_id=str(uuid4())).status_code == 404
+
+
+@pytest.mark.parametrize("change,status", [
+    ({"abandon_pending": "false"}, 400), ({"intent": {}}, 400),
+    ({"proposal_id": "../P001"}, 400), ({"action_id": "BAD"}, 400),
+])
+def test_local_selection_rejects_malformed_inputs_before_mutation(api_flow, change, status):
+    store, _, model = api_flow
+    before = {p: p.read_bytes() for p in store.data_dir.rglob("*") if p.is_file()}
+    body = {"action_id": str(uuid4()), "proposal_id": "P001",
+            "revision": payload(call(function_app.conversation))["revision"], "abandon_pending": False, **change}
+    response = call(function_app.conversation_selections, body=body)
+    assert response.status_code == status and not model.contexts
+    assert {p: p.read_bytes() for p in store.data_dir.rglob("*") if p.is_file()} == before
+
+
+def test_local_selection_retirement_is_explicit_over_http(api_flow):
+    _, settings, model = api_flow
+    model.responses = iter([intent("fresh"), reply(), intent("edit", source="current")])
+    original = submission()
+    prepared = payload(call(function_app.conversation_requests, body=original))
+    call(function_app.conversation_generate, body={"revision": prepared["revision"]}, request_id=original["request_id"])
+    paused_body = submission()
+    prepared = payload(call(function_app.conversation_requests, body=paused_body))
+    body = {"action_id": str(uuid4()), "proposal_id": "P001",
+            "revision": prepared["revision"], "abandon_pending": False}
+    rejected = call(function_app.conversation_selections, body=body)
+    assert rejected.status_code == 409 and payload(rejected)["error"]["code"] == "confirmation_required"
+    settings.live = False
+    selected = call(function_app.conversation_selections, body={**body, "abandon_pending": True})
+    assert selected.status_code == 201
+    retired = call(function_app.conversation_generate, body={"revision": prepared["revision"]}, request_id=paused_body["request_id"])
+    assert payload(retired)["status"] == "abandoned" and not payload(retired)["can_continue"]
+    assert len(model.contexts) == 3
 
 
 def test_rendering_does_not_block_worker_status_or_project_listing(api_flow, monkeypatch):

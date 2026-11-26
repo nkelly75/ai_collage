@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from .models import (
     EditIntent, Exchange, FreshIntent, Intent, LayoutSource, LocalEvent, NavigationEvidence,
-    PhotoName, Proposal, QuestionIntent, RetryIntent, SelectIntent,
+    LocalSelection, PhotoName, Proposal, QuestionIntent, RetryIntent, SelectIntent,
 )
 from ..engine.models import CollageError, InputLayout
 from .photo_references import (
@@ -50,13 +50,23 @@ class TaskRecord(BaseModel):
 
 
 def task_records(
-    events: dict[int, Exchange | LocalEvent], proposals: dict[str, Proposal],
+    events: dict[int, Exchange | LocalEvent | LocalSelection], proposals: dict[str, Proposal],
     initial: tuple[LayoutSource, InputLayout] | None = None,
 ) -> list[TaskRecord]:
     records: dict[int, TaskRecord] = {}
     published: dict[str, TaskRecord] = {}
     baseline = initial[0] if initial else None
     for number, event in events.items():
+        if isinstance(event, LocalSelection):
+            if (
+                event.baseline_before != baseline or event.proposal_id not in published
+                or event.abandoned_task is not None and event.abandoned_task not in records
+            ):
+                raise CollageError("Local selection has invalid navigation/task evidence.")
+            if event.abandoned_task is not None:
+                records[event.abandoned_task].outcome = "abandoned"
+            baseline = LayoutSource(proposal_id=event.proposal_id)
+            continue
         if isinstance(event, LocalEvent):
             if event.kind == "accept":
                 baseline = LayoutSource(proposal_id=event.proposal_id)
@@ -95,7 +105,9 @@ def task_records(
                 or event.receipt_event == receipt
             )
         )
-        if task.outcome in {"proposal", "selection", "acknowledgement", "inspection", "error"} and not resumable:
+        if task.outcome == "abandoned" or (
+            task.outcome in {"proposal", "selection", "acknowledgement", "inspection", "error"} and not resumable
+        ):
             raise CollageError("A completed task cannot acquire unrelated events.")
         task.events.append(number)
         task.outcome = event.outcome

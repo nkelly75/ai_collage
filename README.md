@@ -74,9 +74,14 @@ and browsing. Refresh restores saved messages/previews, but requires **Continue
 generation** for a prepared stage that has not started. See the
 [API guide](api/README.md#conversation-and-recovery) for timeout/recovery limits.
 New web data uses the separate `.collage-data-web` root; existing CLI projects
-are not listed. Acceptance, historical thumbnail navigation and download
-controls remain future work. **Demo** is a separate scripted London walkthrough,
-usable without the backend. Stop each server with Ctrl+C.
+are not listed. **Current collage** is the saved starting point for edits.
+Open an inline historical thumbnail to inspect or download it; **Edit from this
+collage** makes it current without losing later history or learned names.
+Switching can be repeated. Ending a pending question or unstarted preparation
+requires confirmation; running or uncertain work cannot be abandoned this way.
+**Download PNG** retrieves the stored full-resolution image, without acceptance
+or regeneration. These local actions also work without `-Live`; there is no
+web finalization/Accept step. Stop each server with Ctrl+C.
 
 ## CLI quick start
 

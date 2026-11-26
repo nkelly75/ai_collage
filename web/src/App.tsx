@@ -4,12 +4,10 @@ import { ApiError, listProjects, loadProject } from './api'
 import type { Summary } from './api'
 import { Link } from './Link'
 import { navigate, usePath } from './navigation'
-import { projectIdError, sampleProject } from './projects'
+import { projectIdError } from './projects'
 import type { Project } from './projects'
 import { RealWorkspace } from './RealWorkspace'
 import { Setup } from './Setup'
-import { Workspace } from './Workspace'
-import { useDemo } from './useDemo'
 
 function Projects() {
   const [items, setItems] = useState<Summary[] | null>(null)
@@ -37,7 +35,6 @@ function Projects() {
               <p>{item.photo_count} photos / {item.canvas.width} x {item.canvas.height} px</p></div>
             <Badge bg="light" text="dark">Saved locally</Badge>
           </article>)}</div>}
-    <p className="mt-3"><Link href="/demo">London demo</Link> - separate scripted walkthrough; no backend needed.</p>
   </>
 }
 
@@ -71,30 +68,24 @@ function SavedProject({ id }: { id: string }) {
 
 export default function App() {
   const path = usePath()
-  const demo = useDemo()
-  const [reset, setReset] = useState(0)
   const [uncertainId, setUncertainId] = useState('')
   const id = path.startsWith('/projects/') ? path.slice('/projects/'.length) : ''
   const isProject = Boolean(id) && !projectIdError(id)
   useEffect(() => {
-    document.title = `${isProject ? id : path === '/demo' ? 'London demo' : path === '/new' ? 'New project' : 'Projects'} - Collage studio`
+    document.title = `${isProject ? id : path === '/new' ? 'New project' : 'Projects'} - Collage studio`
   }, [id, isProject, path])
-  return <Container fluid className={`app-shell${path === '/demo' || isProject ? ' project-shell' : ''}`}>
+  return <Container fluid className={`app-shell${isProject ? ' project-shell' : ''}`}>
     <a className="visually-hidden-focusable skip-link" href="#main">Skip to content</a>
     <header className="app-header">
       <Link href="/" className="brand">Collage studio</Link>
       <nav aria-label="Main navigation">
         <Link href="/" aria-current={path === '/' ? 'page' : undefined}>Projects</Link>
         <Link href="/new" aria-current={path === '/new' ? 'page' : undefined}>New project</Link>
-        <Link href="/demo" aria-current={path === '/demo' ? 'page' : undefined}>Demo</Link>
-        {path === '/demo' && <Button variant="outline-secondary" size="sm" onClick={() => {
-          demo.reset(); setReset((value) => value + 1)
-        }}>Reset demo</Button>}
       </nav>
     </header>
-    <div className="sample-notice">{path === '/demo'
-      ? 'Scripted demo. Conversation, previews and acceptance are simulated and reset on refresh.'
-      : 'Local project storage. Conversations use the backend; original photos are rendered without AI image regeneration.'}</div>
+    <div className="storage-notice">
+      Local project storage. Conversations use the backend; original photos are rendered without AI image regeneration.
+    </div>
     <main id="main">
       {uncertainId && <Alert variant="warning" role="alert" dismissible onClose={() => setUncertainId('')}>
         Creation of {uncertainId} may have finished after you left setup.{' '}
@@ -104,9 +95,8 @@ export default function App() {
       </Alert>}
       {path === '/' ? <Projects />
         : path === '/new' ? <Setup onUncertain={setUncertainId} onCreate={(project) => navigate(`/projects/${project.id}`)} />
-          : path === '/demo' ? <Workspace project={sampleProject} demo={demo} key={reset} />
-            : isProject ? <SavedProject id={id} key={id} />
-              : <div className="page-heading not-found"><h1>Page not found</h1><Link href="/">Back to projects</Link></div>}
+          : isProject ? <SavedProject id={id} key={id} />
+            : <div className="page-heading not-found"><h1>Page not found</h1><Link href="/">Back to projects</Link></div>}
     </main>
   </Container>
 }

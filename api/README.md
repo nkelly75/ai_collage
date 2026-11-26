@@ -4,7 +4,8 @@ Loopback-only Azure Functions routes create, list and reopen local photo/canvas
 projects and expose real conversation/previews. Thin HTTP adapters call the
 project/conversation application workflows, coordinating the same engine and
 agent used by CLI/replay. No source copies, CLI subprocesses or cloud storage
-are used. Model access requires explicit `-Live`; creation and reads never
+are used. Model access requires explicit `-Live`; creation, local source
+selection and reads never
 initialize credentials or make model calls.
 The routes are anonymous development endpoints, not a deployable authentication
 or ownership boundary.
@@ -122,19 +123,64 @@ GETs validate existing records without repair or initialization.
 
 | Route | Request / result |
 |---|---|
-| `GET /api/projects/<id>/conversation` | `{project_id, revision, live_enabled, messages, baseline, pending, operation}`. Messages contain stable `id`, `role`, `text`, `kind`, nullable `proposal_id`. Baseline is null or `{proposal_id}`. Pending is null or `{kind, message}` for a question/name confirmation. Operation is the latest unresolved operation, or null. |
+| `GET /api/projects/<id>/conversation` | `{project_id, revision, live_enabled, messages, baseline, pending, operation, proposals, selection}`. Messages contain stable `id`, `role` (`user`, `assistant`, `activity`), `text`, `kind`, nullable `proposal_id`. Baseline is null or `{proposal_id}`. Pending is null or `{kind, message}` for a question/name confirmation. Operation is the latest unresolved operation, or null. Published proposals contain `{proposal_id,width,height}`; selection contains `{enabled,reason,confirmation,action}`. |
 | `POST /api/projects/<id>/conversation/requests` | Strict JSON `{request_id, prompt, revision}`; canonical UUID, nonempty prompt at most 256 KiB UTF-8, current 64-hex revision. HTTP 201 for new operation, 200 for a recognized duplicate. Interpretation only. |
 | `GET /api/projects/<id>/conversation/requests/<uuid>` | Read an existing operation, including completed/failed results. |
 | `POST /api/projects/<id>/conversation/requests/<uuid>/generate` | Strict JSON `{revision}`. Claim the server-held prepared handoff once. HTTP 200; no browser intent/recipe/limit overrides. |
 | `GET /api/projects/<id>/proposals/<proposal_id>/preview` | Verified immutable published PNG, `no-store`/`nosniff`. Does not regenerate or accept it. |
+| `POST /api/projects/<id>/conversation/selections` | Strict JSON `{action_id,proposal_id,revision,abandon_pending}`. Canonical UUID and revision, exact published proposal ID and strict boolean. Model-free local source selection; 201/new or 200/recognized duplicate. |
+| `GET /api/projects/<id>/conversation/selections/<uuid>` | Read the original local action's status/outcome, without selecting again or repairing state. |
 
 JSON bodies are at most 1 MiB, with duplicate/unknown fields and coercions
 rejected. Operation DTOs contain `request_id`, `status`, `summary`,
 `result_kind`, `message`, `proposal_id`, nullable `{code,message}` `error`,
 `can_continue` and current `revision`. Status is `interpreting`, `prepared`,
-`generating`, `completed`, `failed` or `uncertain`. Result kinds match the
+`generating`, `completed`, `failed`, `uncertain` or terminal `abandoned`. Result kinds match the
 agent's proposal/selection/question/name_confirmation/acknowledgement.
 Responses contain no handoffs, raw model JSON, reasoning, credentials or paths.
+
+### Local source selection and PNG download
+
+`baseline` is **Current collage**, not necessarily the newest proposal.
+Source selection preserves all proposals, learned names, accepted versions
+and later history. A separate canonical `local_selection` event records the
+navigation/task boundary; the projected `activity` entry is not a fabricated
+assistant response. It can be repeated to choose a different saved proposal.
+
+Selection eligibility is authoritative: `enabled`/`reason` cover busy or
+unresolved work, `confirmation` explains which pending task would end, and
+`action` identifies unresolved selection work when present. Selecting while
+a question, name receipt or valid unclaimed preparation is pending requires
+`abandon_pending: true` bound to the shown revision. A changed revision requires
+a fresh read/confirmation. Unconfirmed proposed names are not applied;
+already learned names and consumed attempts remain saved.
+
+The same OS-held project guard serializes selection against stage claims.
+Only prepared work that has never been claimed can be retired. Its original
+operation becomes `abandoned`, with `can_continue: false`; an old generation
+POST returns that terminal outcome without dispatch. Running/interrupted/
+uncertain work cannot be canceled this way. `confirmation_required`,
+`already_current`, `action_id_conflict` and `selection_unresolved` are explicit
+409 errors, alongside existing stale/busy/operation errors.
+
+Selection responses contain `{action_id,proposal_id,status,revision,message}`.
+Status is `completed`, `saving` (claimed with a guard held), or `uncertain`
+(uncompleted claim without that guard). Uncompleted reads may have a null
+revision. A completed action identifies the source it selected at that point,
+not an assertion that it is still current. Identical duplicates never append
+activity or reselect, even after later changes.
+
+Additive version-1 records under `web-selections` bind each action to its
+canonical event and any retired preparation. Persisted claims block competing
+mutations after partial publication; there is no age-based retry or repair.
+The browser reconciles a lost response with the original action GET and a
+consistent conversation read, not another POST. Invalid saved state fails
+explicitly rather than repairing it. Local selection does not require `-Live`
+or initialize a provider.
+
+Download uses the existing preview GET. The browser downloads its exact PNG
+bytes at the stored proposal dimensions with a safe project/proposal filename.
+No acceptance, thumbnail substitution, resizing or new render is involved.
 
 One Send automatically chains the two stage requests when generation is needed.
 After refresh, **Continue generation** is required for prepared work. A lost
@@ -173,7 +219,7 @@ preview while reporting uncertainty. No automatic repair, queue or retry worker
 is present. Browser status observation is bounded to 225s per session, at most
 one GET every 2s, then manual **Check status**.
 
-Conversation/operation/preview handlers execute in request-scoped executor
+Conversation/operation/selection/preview handlers execute in request-scoped executor
 threads, not on the Functions worker's shared event loop. Each stage runs its
 async model call in that thread's event loop; synchronous validation, rendering
 and storage therefore do not block the shared loop servicing other requests.

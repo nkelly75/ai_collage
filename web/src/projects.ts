@@ -1,5 +1,3 @@
-import { photos } from './demo'
-
 export interface Photo {
   number: number
   src: string
@@ -7,16 +5,8 @@ export interface Photo {
 
 export interface Project {
   id: string
-  kind: 'sample' | 'saved'
   photos: Photo[]
   canvas: { width: number; height: number }
-}
-
-export const sampleProject: Project = {
-  id: 'sample-london',
-  kind: 'sample',
-  photos,
-  canvas: { width: 1200, height: 1800 },
 }
 
 export const canvasPresets = [

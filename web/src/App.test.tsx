@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import { conversation } from './test/conversation'
+import { conversation, transcript } from './test/conversation'
 
 const canvas = { width: 2048, height: 1024 }
 const detail = {
@@ -12,17 +12,8 @@ const detail = {
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
 }
-function openSample() {
-  fireEvent.click(screen.getByRole('link', { name: 'Demo' }))
-}
 function openSetup() {
   fireEvent.click(screen.getAllByRole('link', { name: 'New project' })[0])
-}
-async function suggestedMessage() {
-  fireEvent.click(screen.getByRole('button', { name: /Use suggested message/ }))
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-  await act(async () => { await vi.advanceTimersByTimeAsync(650) })
-  await act(async () => { await vi.advanceTimersByTimeAsync(650) })
 }
 function files() {
   return [
@@ -48,15 +39,17 @@ beforeEach(() => {
 })
 
 describe('saved project flow', () => {
-  it('distinguishes loading, empty and failed lists and retries without substituting the demo', async () => {
+  it('distinguishes loading, empty and failed lists without substituting sample projects', async () => {
     let resolve!: (value: Response) => void
     vi.mocked(fetch).mockImplementationOnce(() => new Promise((done) => { resolve = done }))
     render(<App />)
     expect(screen.getByRole('status')).toHaveTextContent('Loading projects')
     await act(async () => { resolve(json({ projects: [] })) })
     expect(screen.getByText('No saved projects yet.')).toBeVisible()
-    fireEvent.click(screen.getByRole('link', { name: 'Demo' }))
-    expect(screen.getByRole('heading', { name: 'sample-london' })).toBeVisible()
+    expect(within(screen.getByRole('navigation')).getAllByRole('link').map((link) => link.textContent))
+      .toEqual(['Projects', 'New project'])
+    expect(screen.queryByRole('link', { name: /demo/i })).not.toBeInTheDocument()
+    openSetup()
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError('stopped'))
     fireEvent.click(screen.getByRole('link', { name: 'Projects' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not reach')
@@ -215,69 +208,55 @@ describe('saved project flow', () => {
   })
 })
 
-describe('independent scripted demo', () => {
-  beforeEach(() => {
+describe('navigation without the scripted prototype', () => {
+  it('treats the retired Demo URL as not found without loading a fake project or calling the API', () => {
     history.replaceState(null, '', '/demo')
-    vi.useFakeTimers()
-  })
-
-  it('walks through visible intent/layout phases, clarification and a second proposal without HTTP', async () => {
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /Use suggested message/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    expect(screen.getByText('Understanding your request (simulated)')).toBeVisible()
-    expect(screen.getByLabelText('Your message')).toBeDisabled()
-    await act(async () => { await vi.advanceTimersByTimeAsync(650) })
-    expect(screen.getByText('Creating your layout (simulated)')).toBeVisible()
-    await act(async () => { await vi.advanceTimersByTimeAsync(650) })
-    expect(screen.getByAltText('Proposal P001')).toBeVisible()
-    await suggestedMessage()
-    expect(screen.getByText(/Change just the background to charcoal/)).toBeVisible()
-    await suggestedMessage()
-    expect(screen.getByAltText('Proposal P002')).toBeVisible()
-    expect(screen.getByText('Sample walkthrough complete.')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Back to projects' })).toHaveAttribute('href', '/')
+    expect(screen.queryByRole('log')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Demo' })).not.toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('keeps acceptance independent from baseline navigation and retains later history', async () => {
+  it('opens a real project from the list with its restored collage, photos and historical modal', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ projects: [{ ...detail, photo_count: 2 }] }))
+      .mockResolvedValueOnce(json(detail))
+      .mockResolvedValueOnce(json(conversation({
+        project_id: 'sample-london', baseline: { proposal_id: 'P002' }, messages: transcript(),
+      })))
     render(<App />)
-    await suggestedMessage(); await suggestedMessage(); await suggestedMessage()
-    fireEvent.click(screen.getByRole('button', { name: 'Accept proposal' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Continue from here: P001' }))
-    expect(screen.getByText('Baseline: P001')).toBeVisible()
-    expect(screen.getByText('Accepted: P002 (this tab only)')).toBeVisible()
-    expect(screen.getByAltText('Proposal P002 thumbnail')).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Download PNG' })).toHaveAttribute('href', '/demo/london-cream.png')
-    expect(within(screen.getByRole('log')).getByText(/background is now charcoal/)).toBeVisible()
-    vi.mocked(fetch).mockResolvedValueOnce(json({ projects: [] }))
-    fireEvent.click(screen.getByRole('link', { name: 'Projects' }))
-    openSample()
-    expect(screen.getByText('Accepted: P002 (this tab only)')).toBeVisible()
+    fireEvent.click(await screen.findByRole('link', { name: 'sample-london' }))
+    await screen.findByAltText('Proposal P002')
+    expect(document.title).toBe('sample-london - Collage studio')
+    expect(screen.getByText(/2 photos.*2048 x 1024/)).toBeVisible()
+    expect(screen.getByAltText('Photo 1')).toHaveAttribute('src',
+      'http://127.0.0.1:7071/api/projects/sample-london/photos/1')
+    expect(screen.getByLabelText('Your message')).toBeEnabled()
+    expect(within(screen.getByRole('region', { name: 'Current collage' }))
+      .getByRole('button', { name: 'Download PNG' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'View collage P002' }))
+    const modal = screen.getByRole('dialog', { name: 'Collage P002' })
+    expect(within(modal).getByRole('button', { name: 'Already current' })).toBeDisabled()
+    expect(within(modal).getByRole('button', { name: 'Download PNG' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Accept proposal' })).not.toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(fetch).mock.calls.every(([, options]) => options?.method === 'GET')).toBe(true)
   })
 
-  it('rejects unsupported prompts and cancels pending work on Reset demo', async () => {
+  it('supports browser back and forward between a real saved workspace and setup', async () => {
+    history.replaceState(null, '', '/projects/sample-london')
+    const snapshot = conversation({ project_id: 'sample-london', baseline: { proposal_id: 'P002' } })
+    vi.mocked(fetch).mockResolvedValueOnce(json(detail)).mockResolvedValueOnce(json(snapshot))
+      .mockResolvedValueOnce(json(detail)).mockResolvedValueOnce(json(snapshot))
     render(<App />)
-    fireEvent.change(screen.getByLabelText('Your message'), { target: { value: 'my cat' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('Only the suggested sample message')
-    expect(within(screen.getByRole('log')).queryByText('my cat')).not.toBeInTheDocument()
-    await suggestedMessage()
-    fireEvent.click(screen.getByRole('button', { name: /Use suggested message/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Reset demo' }))
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
-    expect(location.pathname).toBe('/demo')
-    expect(screen.queryByAltText('Proposal P001 thumbnail')).not.toBeInTheDocument()
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it('supports browser back and forward between demo and setup', async () => {
-    vi.useRealTimers()
-    render(<App />)
+    await screen.findByAltText('Proposal P002')
     openSetup()
     act(() => history.back())
     await waitFor(() => expect(screen.getByRole('heading', { name: 'sample-london' })).toBeVisible())
+    await screen.findByAltText('Proposal P002')
     act(() => history.forward())
     await waitFor(() => expect(screen.getByRole('heading', { name: 'New project' })).toBeVisible())
+    expect(fetch).toHaveBeenCalledTimes(4)
   })
 })

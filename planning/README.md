@@ -135,7 +135,12 @@ The replay allowance, including unused calls, is closed.
 [018e: Real conversation and previews](018e-real-conversation-and-previews.md)
 is **successfully completed and closed with the user's manual testing and sign-off**;
 see [results and limits](018e_results.md). Its live allowance is closed.
-Later increments remain tentative and unapproved.
+[018f: Current collage, history and download](018f-current-collage-history-and-download.md)
+is **successfully completed and closed with the user's manual testing and
+sign-off**, including the requested retirement of the scripted prototype.
+Historical viewing, editing-source selection and PNG download use real saved
+projects, without web acceptance. See [018f results](018f_results.md).
+018g remains tentative and unapproved.
 
 ## Planning records
 
@@ -170,7 +175,8 @@ and record 003 spans several feature increments.
 | [015: Behaviour-preserving package restructuring](015-behaviour-preserving-package-restructure.md) | Implemented and closed offline; see [results](015_results.md). | Engine/agent/evaluation/CLI and mirrored tests; separate [01-05 replay follow-up](015_replay_results.md) also complete and closed. Checkpoint committed by the user. |
 | [016: Human-led trial 06](016-user-led-natural-language-trial.md) | User reached P009 after the repair; not an Autopilot assignment. | [Observations and separately approved offline evidence-handoff repair](016_results.md); three-task policy unchanged. Human-led continuation remains separate. |
 | [017: Conversational photo identity memory](017-conversational-photo-identity-memory.md) | Successfully completed and closed with user sign-off; replay and offline regression passed, including the numeric-mapping repair. | See [017 results](017_results.md); human-led `p17-human-07` reached P012 with the repair and memory lifecycle live-confirmed. Copilot replay allowances stay closed; subsequently merged into `main` by the user. |
-| [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Revisable umbrella; 018a-018e complete and closed with user acceptance; later stages unapproved. | See the [018 tracker](018-local-conversation-and-preview.md) for increment briefs, results and limits. |
+| [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Revisable umbrella; 018a-018f complete and closed with user acceptance; later stages unapproved. | See the [018 tracker](018-local-conversation-and-preview.md) for increment briefs, results and limits. |
+| [018f: Current collage, history and download](018f-current-collage-history-and-download.md) | Successfully completed and closed with manual sign-off and user-approved Demo retirement; [results](018f_results.md). | Simplified real-project workflow; future trials and Git writes remain separately authorized. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

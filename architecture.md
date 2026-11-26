@@ -14,12 +14,12 @@ status; the [README](README.md) is the usage entry point.
 | Area | Responsibility | Useful starting points |
 |---|---|---|
 | `ai_collage\engine` | Offline layout/project contracts, geometry, photo validation, deterministic rendering and project storage. | [Models](ai_collage/engine/models.py), [geometry](ai_collage/engine/geometry.py), [imaging](ai_collage/engine/imaging.py), [ProjectStore](ai_collage/engine/projects.py) |
-| `ai_collage\agent` | Conversation state, photo-reference memory, interpretation, proposals and acceptance; optional, bounded model requests. Uses the engine to validate and render, rather than generating replacement images. | [Conversation](ai_collage/agent/conversation.py), [requests](ai_collage/agent/requests.py), [provider](ai_collage/agent/provider.py) |
-| `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Coordinates projects, durable split-stage conversation operations, read-only transcript/preview projection and local request claims. | [ProjectFlow](ai_collage/application/projects.py), [ConversationFlow](ai_collage/application/conversation.py) |
+| `ai_collage\agent` | Conversation state, photo-reference memory, interpretation, proposals, local editing-source selection and acceptance; optional, bounded model requests. Uses the engine to validate and render, rather than generating replacement images. | [Conversation](ai_collage/agent/conversation.py), [requests](ai_collage/agent/requests.py), [provider](ai_collage/agent/provider.py) |
+| `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Coordinates projects, durable split-stage/local-selection operations, read-only transcript/preview projection and local request claims. | [ProjectFlow](ai_collage/application/projects.py), [ConversationFlow](ai_collage/application/conversation.py) |
 | `ai_collage\cli` | Command parsing and terminal presentation for engine, conversation and evaluation operations. | [Main CLI](ai_collage/cli/main.py), [chat](ai_collage/cli/chat.py) |
 | `ai_collage\evaluation` | Scripted conversation replay and offline assessment of saved evidence; tooling, not part of an ordinary web request. Live replay requires separate authorization. | [Replay](ai_collage/evaluation/replay.py), [assessment](ai_collage/evaluation/assess.py) |
 | `api` | Thin Azure Functions HTTP adapter and local host configuration/launcher. Translates requests into application calls and results/errors into HTTP responses. | [Functions](api/function_app.py), [launcher](api/start.ps1) |
-| `web` | React/TypeScript UI, temporary selection previews and API client. Also contains an isolated scripted demo, not another renderer or language interpreter. | [App](web/src/App.tsx), [API client](web/src/api.ts), [demo](web/src/useDemo.ts) |
+| `web` | React/TypeScript UI, temporary selection previews and API client for real saved projects, not another renderer or language interpreter. | [App](web/src/App.tsx), [API client](web/src/api.ts), [workspace](web/src/RealWorkspace.tsx) |
 
 ## How the entry points fit together
 
@@ -63,13 +63,16 @@ internal agent contract, not authority to trust browser-supplied intent;
 HTTP operation storage and concurrency belong to `ConversationFlow`, not the
 agent handoff or a client-supplied intent.
 
-The real web path supports create/save/list/reopen, photo serving, conversation
-and backend-rendered proposals. One Send interprets, then generates if needed
-through separate HTTP requests. Questions, naming and exact returns use the
-same agent behavior as CLI/replay. Dedicated thumbnail navigation, acceptance
-and download controls are not yet connected.
-The separate `/demo` route simulates conversation/proposals with bundled assets;
-it is not evidence that conversational API integration is implemented.
+The real web path supports create/save/list/reopen, photo serving, conversation,
+backend-rendered proposals, historical thumbnail/modal viewing, explicit local
+source selection and stored full-resolution PNG downloads. One Send interprets,
+then generates if needed through separate HTTP requests. Questions, naming and
+exact returns use the same agent behavior as CLI/replay. **Current collage**
+is the saved editing baseline; viewing/downloading an older result does not
+change it. Web acceptance/finalization is deliberately absent; existing
+CLI/replay acceptance is unchanged.
+The initial scripted prototype has been retired. Project pages load only
+real backend state; unknown routes use the ordinary not-found page.
 
 ## A web create request, end to end
 
@@ -136,6 +139,41 @@ synchronous I/O. Browser disconnection is not evidence that backend work stopped
 The [API guide](api/README.md#conversation-and-recovery) defines actual deadlines
 and recovery behavior.
 
+## A local editing-source selection
+
+1. A historical thumbnail opens a temporary React modal using the existing
+   verified proposal PNG. No mutation occurs.
+2. **Edit from this collage** sends a UUID, exact proposal ID, current revision
+   and pending-task confirmation to the selection route, without model input.
+3. `ConversationFlow` acquires the same project mutation guard, rejects stale/
+   busy/uncertain state, validates the target and persists a local action claim.
+   Confirmed unclaimed preparation is retired as `abandoned` before selection;
+   running or interrupted work is never made cancelable by age.
+4. `Conversation.select_proposal()` appends a distinct version-1
+   `local_selection` history record and updates the baseline/pending-task
+   boundary. Task/navigation and naming-history reconstruction understand this
+   local event. Existing Exchange/LocalEvent records and layout formats are
+   unchanged; no fake model response or accepted snapshot is created.
+5. The application verifies the canonical outcome and completes its action
+   record. The transcript projects a chronologically ordered user activity.
+   Only a consistent saved result closes the modal and updates Current collage.
+
+The read snapshot binds canonical history, operation and local-action records
+to one verified revision; transcript projection uses that same action set,
+not a later reread that could mix newer activity with an older baseline.
+Version-1 `web-selections` records reference canonical events rather than
+duplicating semantic history. Duplicate UUIDs return the original outcome,
+never reselect after later work. An uncompleted claim blocks further mutations;
+lost responses are reconciled using reads, not redispatch or automatic repair.
+Selection preserves learned names and later proposals/messages. A subsequent
+ordinary edit still goes through the existing interpretation/generation stages.
+
+Downloading fetches the verified saved proposal PNG through the existing
+preview route and a temporary browser object URL, then releases that URL.
+It does not regenerate, resize, accept or select. Both local actions work
+without live model access. The [API guide](api/README.md#local-source-selection-and-png-download)
+documents their DTOs and failure states.
+
 ## Boundaries to preserve
 
 - Keep layout validation, geometry and rendering in `engine`. It must not depend
@@ -157,8 +195,9 @@ Web projects default to the separate checkout-relative `.collage-data-web`
 root. The CLI selects its root through `--data-dir`; web listing does not
 discover CLI roots or archives. Both paths use the existing backend record
 formats. Web canvas settings live in conversation controls, not another
-web-specific settings file. Only web conversation submissions create additive
-application operation records; ordinary CLI/replay projects do not.
+web-specific settings file. Web conversation submissions and local selections
+create their respective additive application records; ordinary CLI/replay
+projects do not.
 
 The root `.venv` and `api\.venv` are separate dependency environments, not
 separate backends. The Functions worker uses the API environment, which adds

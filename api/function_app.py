@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from ai_collage.engine.models import MAX_JSON_BYTES, CollageError
 from ai_collage.engine.projects import parse_json
 from ai_collage.application.projects import FlowError, ProjectFlow, ProjectSetup, configured_store
-from ai_collage.application.conversation import ConversationFlow, GenerationRequest, Submission
+from ai_collage.application.conversation import ConversationFlow, GenerationRequest, SelectionSubmission, Submission
 
 
 MAX_BODY_BYTES = 160 * 1024 * 1024
@@ -121,6 +121,12 @@ def _dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpRe
         if operation == "generate":
             body = GenerationRequest.model_validate(json_body(req))
             return json_response(asyncio.run(flow.generate(project_id, req.route_params["request_id"], body)))
+        if operation == "selections":
+            body = SelectionSubmission.model_validate(json_body(req))
+            result, created = flow.select(project_id, body)
+            return json_response(result, 201 if created else 200)
+        if operation == "selection":
+            return json_response(flow.selection(project_id, req.route_params["action_id"]))
         raw = flow.preview(project_id, req.route_params["proposal_id"])
         return func.HttpResponse(raw, mimetype="image/png", headers={
             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
@@ -167,6 +173,16 @@ async def conversation_operation(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="projects/{project_id}/conversation/requests/{request_id}/generate", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 async def conversation_generate(req: func.HttpRequest) -> func.HttpResponse:
     return await dispatch_conversation(req, "generate")
+
+
+@app.route(route="projects/{project_id}/conversation/selections", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+async def conversation_selections(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "selections")
+
+
+@app.route(route="projects/{project_id}/conversation/selections/{action_id}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+async def conversation_selection(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "selection")
 
 
 @app.route(route="projects/{project_id}/proposals/{proposal_id}/preview", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)

@@ -52,6 +52,7 @@ interface RequestOptions {
   timeout?: number
   statuses?: number[]
   json?: boolean
+  binary?: boolean
 }
 
 export async function request(path: string, signal: AbortSignal, options: RequestOptions = {}): Promise<unknown> {
@@ -86,6 +87,12 @@ export async function request(path: string, signal: AbortSignal, options: Reques
         0, '', Boolean(body))
     }
     let value: unknown
+    if (options.binary && statuses.includes(response.status)) {
+      if (response.headers.get('Content-Type')?.split(';', 1)[0].trim() !== 'image/png') {
+        throw new ApiError('Backend did not return a PNG. No image was downloaded.')
+      }
+      return await response.blob()
+    }
     try {
       value = await response.json()
     } catch {
@@ -124,7 +131,7 @@ function project(value: unknown): Project {
     }
     return { number: index + 1, src: apiUrl(`api/projects/${id}/photos/${index + 1}`) }
   })
-  return { id, kind: 'saved', canvas: value.canvas, photos }
+  return { id, canvas: value.canvas, photos }
 }
 
 export async function listProjects(signal: AbortSignal): Promise<Summary[]> {

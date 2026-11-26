@@ -80,7 +80,7 @@ describe('bounded API requests', () => {
   it('validates independently loaded identity and omits credentials/storage paths', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response(detail))
     expect(await loadProject('trip', signal())).toEqual({
-      id: 'trip', kind: 'saved', canvas: size, photos: [
+      id: 'trip', canvas: size, photos: [
         { number: 1, src: 'http://127.0.0.1:7071/api/projects/trip/photos/1' },
         { number: 2, src: 'http://127.0.0.1:7071/api/projects/trip/photos/2' },
       ],

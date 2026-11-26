@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from './api'
-import { generateRequest, interpretRequest, loadConversation, loadOperation } from './conversationApi'
-import type { ConversationView, OperationView } from './conversationApi'
+import { generateRequest, interpretRequest, loadConversation, loadOperation, loadSelection, selectCollage } from './conversationApi'
+import type { ConversationView, OperationView, SelectionView } from './conversationApi'
 
 interface State {
   snapshot: ConversationView | null
   operation: OperationView | null
   submission: { requestId: string; prompt: string } | null
-  busy: 'loading' | 'checking' | 'interpreting' | 'generating' | null
+  busy: 'loading' | 'checking' | 'interpreting' | 'generating' | 'selecting' | null
   error: string
   notice: string
   failure: string
   blocked: boolean
   paused: boolean
+  selectionOutcome: SelectionView | null
+  selectionActionId: string | null
 }
 
 function running(operation: OperationView | null) {
@@ -32,14 +34,16 @@ function refreshFailure(error: unknown, operation: OperationView | null, failure
     : message(error)
 }
 
-export function useConversation(projectId: string) {
+export function useConversation(projectId: string, onSelectionSaved?: () => void) {
   const [state, setState] = useState<State>({
     snapshot: null, operation: null, submission: null, busy: 'loading', error: '', notice: '', failure: '', blocked: true, paused: false,
+    selectionOutcome: null, selectionActionId: null,
   })
   const latest = useRef(state)
   const epoch = useRef(0)
   const active = useRef<AbortController | null>(null)
   const unknownRequest = useRef<string | null>(null)
+  const unknownSelection = useRef<string | null>(null)
   const observation = useRef<{ requestId: string; start: number } | null>(null)
   const update = useCallback((patch: Partial<State>) => {
     latest.current = { ...latest.current, ...patch }
@@ -57,7 +61,7 @@ export function useConversation(projectId: string) {
 
   const applySnapshot = useCallback((snapshot: ConversationView, observed = latest.current.operation) => {
     const saved = snapshot.operation
-    const terminal = observed && ['completed', 'failed'].includes(observed.status)
+    const terminal = observed && ['completed', 'failed', 'abandoned'].includes(observed.status)
     const stages = ['interpreting', 'prepared', 'generating']
     const regressed = observed && saved?.request_id === observed.request_id &&
       (terminal || stages.includes(observed.status) && stages.includes(saved.status) &&
@@ -78,7 +82,30 @@ export function useConversation(projectId: string) {
     return true
   }, [update])
 
-  const refresh = useCallback(async (task: ReturnType<typeof begin>) => {
+  const refresh = useCallback(async (task: ReturnType<typeof begin>, confirmedSelection: SelectionView | null = null) => {
+    const actionId = unknownSelection.current
+    if (actionId) {
+      const selection = confirmedSelection ?? await loadSelection(projectId, actionId, task.signal)
+      if (!task.current()) return
+      update({ selectionOutcome: selection })
+      if (selection.status !== 'completed') {
+        update({ blocked: true, error: selection.message })
+        return
+      }
+      const snapshot = await loadConversation(projectId, task.signal)
+      if (!task.current()) return
+      if (!snapshot.messages.some((item) => item.id === `${actionId}:activity` &&
+        item.proposal_id === selection.proposal_id)) {
+        update({ blocked: true, error: 'Saved selection and conversation do not yet agree. Check status; do not repeat the action.' })
+        return
+      }
+      if (!applySnapshot(snapshot)) return
+      unknownSelection.current = null
+      update({ blocked: Boolean(snapshot.selection.action), error: '', failure: '', selectionActionId: null,
+        notice: `Collage selection saved for ${selection.proposal_id}. Current saved conversation refreshed.` })
+      onSelectionSaved?.()
+      return
+    }
     const requestId = unknownRequest.current
     let lookupError = ''
     let saved: OperationView | null = null
@@ -97,14 +124,51 @@ export function useConversation(projectId: string) {
     if (!applySnapshot(snapshot, saved ?? latest.current.operation)) return
     if (!lookupError) unknownRequest.current = null
     update({
-      error: lookupError, blocked: Boolean(lookupError),
+      error: lookupError, blocked: Boolean(lookupError || snapshot.selection.action),
       failure: lookupError ? latest.current.failure : '',
       notice: requestId && !lookupError && saved?.status === 'completed'
         ? `Original request completed${saved.proposal_id ? ` as ${saved.proposal_id}` : ''}. Saved conversation refreshed.`
         : requestId && !lookupError && saved?.status === 'failed'
           ? 'Original request failed. Saved conversation refreshed. No request was retried.' : '',
     })
-  }, [projectId, applySnapshot, update])
+  }, [projectId, applySnapshot, update, onSelectionSaved])
+
+  const select = async (proposalId: string, abandonPending = false, expectedRevision?: string) => {
+    const current = latest.current
+    if (current.busy || current.blocked || !current.snapshot?.selection.enabled) return false
+    const actionId = crypto.randomUUID()
+    const task = begin()
+    unknownSelection.current = actionId
+    update({ busy: 'selecting', selectionActionId: actionId, selectionOutcome: null, error: '', failure: '', notice: '' })
+    try {
+      const result = await selectCollage(projectId, actionId, proposalId,
+        expectedRevision ?? current.snapshot.revision, abandonPending, task.signal)
+      if (!task.current()) return false
+      update({ selectionOutcome: result, busy: 'checking' })
+      await refresh(task, result)
+      return task.current() && !unknownSelection.current
+    } catch (error) {
+      if (!task.current()) return false
+      const rejected = error instanceof ApiError && [
+        'stale_revision', 'confirmation_required', 'already_current', 'project_busy', 'operation_unresolved',
+        'action_id_conflict', 'selection_unresolved', 'stale_preparation', 'invalid_request',
+        'forbidden_host', 'forbidden_origin', 'unsupported_media', 'not_found', 'request_too_large',
+      ].includes(error.code) && [400, 403, 404, 409, 413, 415].includes(error.status)
+      if (rejected) {
+        unknownSelection.current = null
+        update({ selectionActionId: null, error: message(error) })
+        try {
+          const snapshot = await loadConversation(projectId, task.signal)
+          if (task.current() && applySnapshot(snapshot)) update({ blocked: Boolean(snapshot.selection.action) })
+        } catch (readError) {
+          if (task.current()) update({ blocked: true, error: `${message(error)} Saved conversation could not refresh. ${message(readError)}` })
+        }
+      } else update({ blocked: true, error: `${message(error)} Selection outcome not confirmed. Check status; do not repeat the action.` })
+      return false
+    } finally {
+      if (task.current()) update({ busy: null })
+    }
+  }
 
   const check = useCallback(async (initial = false) => {
     if (latest.current.busy && !initial) return
@@ -225,7 +289,10 @@ export function useConversation(projectId: string) {
 
   return {
     ...state,
-    canSend: Boolean(state.snapshot?.live_enabled && !state.busy && !state.operation && !state.blocked),
+    canSend: Boolean(state.snapshot?.live_enabled && !state.busy && !state.operation && !state.blocked &&
+      !state.snapshot.selection.action),
+    canSelect: Boolean(state.snapshot?.selection.enabled && !state.busy && !state.blocked),
+    select,
     check: () => { void check() },
     send: (prompt: string) => run(prompt),
     continueGeneration: () => { void run() },

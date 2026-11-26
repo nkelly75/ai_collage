@@ -313,7 +313,14 @@ class LocalEvent(ConversationRecord):
     accepted_version: PositiveInt | None = None
 
 
-HISTORY = TypeAdapter(Exchange | LocalEvent)
+class LocalSelection(ConversationRecord):
+    kind: Literal["local_selection"] = "local_selection"
+    proposal_id: ProposalId
+    baseline_before: LayoutSource | None
+    abandoned_task: PositiveInt | None
+
+
+HISTORY = TypeAdapter(Exchange | LocalEvent | LocalSelection)
 
 
 class AcceptanceIntent(ConversationRecord):

@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 from .models import (
     INTENT, Exchange, InspectNamesIntent, Intent, MemoryIntent, NameReceipt, NameUpdate,
-    NamesIntent, PhotoName, PhotoReference, QuestionIntent,
+    LocalSelection, NamesIntent, PhotoName, PhotoReference, QuestionIntent,
 )
 from ..engine.models import CollageError
 
@@ -142,6 +142,11 @@ def name_history(names: list[PhotoName], events: dict[int, object], photos: set[
         )
 
     for number, event in events.items():
+        if isinstance(event, LocalSelection):
+            if pending is not None and event.abandoned_task != pending[1].task_id:
+                raise CollageError("Local selection did not end the pending naming task.")
+            pending = None
+            continue
         if not isinstance(event, Exchange):
             continue
         if event.outcome == "inspection":

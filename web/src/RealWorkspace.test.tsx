@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { RealWorkspace } from './RealWorkspace'
 import type { ConversationView, OperationView } from './conversationApi'
-import { conversation, json, operation, preparedRevision, requestId, revision, savedProject, transcript } from './test/conversation'
+import { conversation, json, operation, preparedRevision, requestId, revision, savedProject, selection, transcript } from './test/conversation'
 
 function deferred() {
   let resolve!: (value: Response) => void
@@ -29,7 +29,192 @@ function done(patch: Partial<OperationView> = {}) {
 
 beforeEach(() => { vi.spyOn(crypto, 'randomUUID').mockReturnValue(requestId) })
 
+function history() {
+  return [
+    { id: 'old:user', role: 'user' as const, text: 'First layout', kind: 'prompt', proposal_id: null },
+    { id: 'old:assistant', role: 'assistant' as const, text: 'Created P001.', kind: 'proposal', proposal_id: 'P001' },
+    ...transcript(),
+  ]
+}
+
+function selectedSnapshot() {
+  return conversation({ baseline: { proposal_id: 'P001' }, messages: [...history(), {
+    id: `${requestId}:activity`, role: 'activity', kind: 'local_selection', proposal_id: 'P001',
+    text: 'You chose collage P001 as the starting point for further edits.',
+  }] })
+}
+
 describe('real conversational workspace', () => {
+  it('views historical results transiently and restores keyboard focus without changing Current collage', async () => {
+    await open(conversation({ baseline: { proposal_id: 'P002' }, messages: history() }))
+    const user = userEvent.setup()
+    const thumbnail = screen.getByRole('button', { name: 'View collage P001' })
+    await user.click(thumbnail)
+    const modal = screen.getByRole('dialog', { name: 'Collage P001' })
+    expect(within(modal).getByRole('button', { name: 'Edit from this collage' })).toHaveAccessibleDescription(
+      'Use this as the starting point for future edits. Your history stays saved.',
+    )
+    expect(within(modal).queryByText('Future changes will start from this collage. Your later history stays saved.')).not.toBeInTheDocument()
+    expect(within(modal).getByAltText('Proposal P001')).toBeVisible()
+    expect(within(screen.getByRole('region', { name: 'Current collage' })).getByAltText('Proposal P002')).toBeVisible()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(thumbnail).toHaveFocus()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('omits source-selection helper text when the modal is Already current', async () => {
+    await open(conversation({ baseline: { proposal_id: 'P002' }, messages: history() }))
+    fireEvent.click(screen.getByRole('button', { name: 'View collage P002' }))
+    const modal = screen.getByRole('dialog')
+    expect(within(modal).getByRole('button', { name: 'Already current' })).toBeDisabled()
+    expect(within(modal).queryByText('Use this as the starting point for future edits. Your history stays saved.')).not.toBeInTheDocument()
+    expect(within(modal).getByRole('button', { name: 'Download PNG' })).toBeEnabled()
+  })
+
+  it.each(['load', 'error'])('covers the saved-state handoff and incoming image until its %s event', async (event) => {
+    await open(conversation({ baseline: { proposal_id: 'P001' } }))
+    const current = screen.getByRole('region', { name: 'Current collage' })
+    const previous = within(current).getByAltText('Proposal P001')
+    fireEvent.load(previous)
+    const generation = deferred()
+    const refreshed = deferred()
+    vi.mocked(fetch).mockResolvedValueOnce(json(operation(), 201))
+      .mockReturnValueOnce(generation.promise).mockReturnValueOnce(refreshed.promise)
+    send()
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Creating your layout'))
+    expect(within(current).queryByText('Updating current collage...')).not.toBeInTheDocument()
+    await act(async () => { generation.resolve(json(done())) })
+    expect(within(current).getByText('Updating current collage...')).toBeVisible()
+    expect(previous).toBeVisible()
+    expect(previous).toHaveAttribute('aria-busy', 'true')
+    await act(async () => { refreshed.resolve(json(conversation({ baseline: { proposal_id: 'P002' }, messages: transcript() }))) })
+    const incoming = within(current).getByAltText('Proposal P002')
+    expect(within(current).getByText('Loading preview P002...')).toBeVisible()
+    expect(incoming).toHaveAttribute('aria-busy', 'true')
+    if (event === 'error') {
+      fireEvent.error(incoming)
+      expect(within(current).getByRole('alert')).toHaveTextContent('Preview P002 could not load')
+      expect(within(current).queryByText('Loading preview P002...')).not.toBeInTheDocument()
+      fireEvent.click(within(current).getByRole('button', { name: 'Reload preview' }))
+    }
+    fireEvent.load(within(current).getByAltText('Proposal P002'))
+    expect(within(current).queryByText('Loading preview P002...')).not.toBeInTheDocument()
+    expect(within(current).getByAltText('Proposal P002')).toHaveAttribute('aria-busy', 'false')
+  })
+
+  it('shows the completed first collage handoff even before a baseline can be displayed', async () => {
+    await open()
+    const refreshed = deferred()
+    vi.mocked(fetch).mockResolvedValueOnce(json(operation(), 201))
+      .mockResolvedValueOnce(json(done())).mockReturnValueOnce(refreshed.promise)
+    send()
+    const current = screen.getByRole('region', { name: 'Current collage' })
+    await waitFor(() => expect(within(current).getByText('Updating current collage...')).toBeVisible())
+    await act(async () => { refreshed.resolve(json(conversation({ baseline: { proposal_id: 'P002' }, messages: transcript() }))) })
+    fireEvent.load(within(current).getByAltText('Proposal P002'))
+    expect(within(current).queryByText('Updating current collage...')).not.toBeInTheDocument()
+  })
+
+  it('stops the updating overlay on a failed saved-state read and keeps recovery read-only', async () => {
+    await open(conversation({ baseline: { proposal_id: 'P001' } }))
+    const current = screen.getByRole('region', { name: 'Current collage' })
+    fireEvent.load(within(current).getByAltText('Proposal P001'))
+    const refreshed = deferred()
+    vi.mocked(fetch).mockResolvedValueOnce(json(operation(), 201))
+      .mockResolvedValueOnce(json(done())).mockReturnValueOnce(refreshed.promise)
+    send()
+    await waitFor(() => expect(within(current).getByText('Updating current collage...')).toBeVisible())
+    await act(async () => { refreshed.resolve(json({ error: { code: 'storage_error', message: 'Saved read failed.' } }, 500)) })
+    await screen.findByText(/Request completed as P002, but saved conversation could not refresh/)
+    expect(within(current).queryByText('Updating current collage...')).not.toBeInTheDocument()
+    expect(within(current).getByAltText('Proposal P001')).toHaveAttribute('aria-busy', 'false')
+    vi.mocked(fetch).mockResolvedValueOnce(json(done()))
+      .mockResolvedValueOnce(json(conversation({ baseline: { proposal_id: 'P002' }, messages: transcript() })))
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }))
+    await waitFor(() => expect(within(current).getByAltText('Proposal P002')).toBeInTheDocument())
+    fireEvent.load(within(current).getByAltText('Proposal P002'))
+    expect(vi.mocked(fetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2)
+  })
+
+  it('saves one explicit local selection and preserves historical thumbnails and activity', async () => {
+    await open(conversation({ baseline: { proposal_id: 'P002' }, messages: history() }))
+    vi.mocked(fetch).mockResolvedValueOnce(json(selection(), 201)).mockResolvedValueOnce(json(selectedSnapshot()))
+    fireEvent.click(screen.getByRole('button', { name: 'View collage P001' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit from this collage' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(within(screen.getByRole('region', { name: 'Current collage' })).getByAltText('Proposal P001')).toBeVisible()
+    expect(screen.getByText('You chose collage P001 as the starting point for further edits.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'View collage P002' })).toBeVisible()
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1][1]!.body as string)).toEqual({
+      action_id: requestId, proposal_id: 'P001', revision, abandon_pending: false,
+    })
+    expect(vi.mocked(fetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
+    expect(vi.mocked(fetch).mock.calls[1][0]).toContain('/conversation/selections')
+  })
+
+  it.each(['question', 'names', 'prepared'])('confirms abandoning %s and declining is read-only', async (kind) => {
+    const snapshot = conversation({ baseline: { proposal_id: 'P002' }, messages: history(),
+      revision: preparedRevision, operation: kind === 'prepared' ? operation() : null,
+      pending: kind === 'prepared' ? null : { kind: kind === 'names' ? 'name_confirmation' : 'question', message: 'Please reply.' },
+      selection: { enabled: true, reason: '', confirmation: 'End this pending request; names stay saved.', action: null },
+    })
+    await open(snapshot)
+    fireEvent.click(screen.getByRole('button', { name: 'View collage P001' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit from this collage' }))
+    expect(fetch).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Keep pending request' }))
+    expect(fetch).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit from this collage' }))
+    vi.mocked(fetch).mockResolvedValueOnce(json(selection(), 201)).mockResolvedValueOnce(json(selectedSnapshot()))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and edit from this collage' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1][1]!.body as string)).toMatchObject({
+      revision: preparedRevision, abandon_pending: true,
+    })
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/generate'))).toBe(false)
+  })
+
+  it('keeps the modal open on a lost save and reconciles with reads, not another POST', async () => {
+    await open(conversation({ baseline: { proposal_id: 'P002' }, messages: history() }))
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('response lost'))
+    fireEvent.click(screen.getByRole('button', { name: 'View collage P001' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit from this collage' }))
+    await screen.findByRole('button', { name: 'Check selection status' })
+    expect(screen.getByRole('dialog')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Edit from this collage' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    vi.mocked(fetch).mockResolvedValueOnce(json(selection())).mockResolvedValueOnce(json(selectedSnapshot()))
+    fireEvent.click(screen.getByRole('button', { name: 'Check selection status' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(vi.mocked(fetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
+    expect(vi.mocked(fetch).mock.calls[2][0]).toContain(`/selections/${requestId}`)
+  })
+
+  it('keeps rejected selection visible and refreshes the revision without optimistic switching', async () => {
+    const snapshot = conversation({ baseline: { proposal_id: 'P002' }, messages: history() })
+    await open(snapshot)
+    vi.mocked(fetch).mockResolvedValueOnce(json({ error: { code: 'stale_revision', message: 'Conversation changed.' } }, 409))
+      .mockResolvedValueOnce(json({ ...snapshot, revision: preparedRevision }))
+    fireEvent.click(screen.getByRole('button', { name: 'View collage P001' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit from this collage' }))
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByText('Conversation changed.')).toBeVisible())
+    expect(within(screen.getByRole('region', { name: 'Current collage' })).getByAltText('Proposal P002')).toBeVisible()
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('allows model-free viewing but blocks selection while an existing request is uncertain', async () => {
+    await open(conversation({ baseline: { proposal_id: 'P002' }, messages: history(), live_enabled: false,
+      operation: operation({ status: 'uncertain', can_continue: false }),
+      selection: { enabled: false, reason: 'Existing request is uncertain.', confirmation: null, action: null },
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'View collage P001' }))
+    expect(screen.getByRole('button', { name: 'Edit from this collage' })).toBeDisabled()
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Download PNG' })).toBeEnabled()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('loads real photos/canvas without generating, keeps the composer accessible and has no future controls', async () => {
     await open()
     expect(screen.getByRole('heading', { name: 'trip' })).toBeVisible()

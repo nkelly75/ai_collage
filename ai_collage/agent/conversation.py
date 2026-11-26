@@ -13,7 +13,7 @@ from .requests import RequestLog, StageTimeout
 from .files import canonical, child, digest, save
 from .models import (
     HISTORY, INTENT, AcceptanceIntent, Controls, ConversationState, EditIntent, Exchange,
-    FreshIntent, InspectNamesIntent, Intent, LayoutSource, LocalEvent, MemoryIntent,
+    FreshIntent, InspectNamesIntent, Intent, LayoutSource, LocalEvent, LocalSelection, MemoryIntent,
     NameReceipt, NameUpdate, NamesIntent, PhotoName, Preferences, PreparedGeneration,
     Proposal, QuestionIntent, RequestResult,
     ReceiptPointer, ResolvedIntent, ResumeIntent, RetryIntent, SelectIntent,
@@ -134,10 +134,14 @@ class Conversation:
                 if isinstance(event, Exchange) and (
                     event.name_receipt is not None or event.receipt_event is not None
                     or event.name_updates
-                ):
-                    raise CollageError("Interrupted naming write; inspect its preserved event/state before continuing.")
+                ) or isinstance(event, LocalSelection):
+                    raise CollageError(
+                        "Interrupted local-selection write; inspect its preserved event/state before continuing."
+                        if isinstance(event, LocalSelection) else
+                        "Interrupted naming write; inspect its preserved event/state before continuing."
+                    )
 
-    def history(self) -> list[Exchange | LocalEvent]:
+    def history(self) -> list[Exchange | LocalEvent | LocalSelection]:
         return [
             HISTORY.validate_python(read_json(child(self.root, "events", f"{number:06d}.json")))
             for number in self.state.history
@@ -151,7 +155,7 @@ class Conversation:
         ]
         return max(numbers, default=0) + 1
 
-    def _append(self, event: Exchange | LocalEvent, **updates: object) -> int:
+    def _append(self, event: Exchange | LocalEvent | LocalSelection, **updates: object) -> int:
         if ConversationState.model_validate(read_json(self.state_path)) != self.state:
             raise CollageError("Conversation changed; restart before making further changes.")
         number = self._next_event()
@@ -179,7 +183,7 @@ class Conversation:
         return child(self.root, "proposals", proposal_id, "preview.png")
 
     def proposal(
-        self, proposal_id: str, *, _events: dict[int, Exchange | LocalEvent] | None = None,
+        self, proposal_id: str, *, _events: dict[int, Exchange | LocalEvent | LocalSelection] | None = None,
     ) -> Proposal:
         preview = self.preview_path(proposal_id)
         history = _events if _events is not None else dict(zip(
@@ -199,7 +203,7 @@ class Conversation:
 
     def _validate_proposal(
         self, proposal: Proposal, proposal_id: str, number: int, event: Exchange,
-        history: dict[int, Exchange | LocalEvent], preview: Path,
+        history: dict[int, Exchange | LocalEvent | LocalSelection], preview: Path,
     ) -> None:
         committed = {
             entry.proposal_id: turn for turn, entry in history.items()
@@ -333,6 +337,10 @@ class Conversation:
             }
             for group in recent
         ]
+        abandoned = {record.task_id for record in records if record.outcome == "abandoned"}
+        for item in history:
+            if item["task_id"] in abandoned:
+                item.update(outcome="abandoned", response=None)
         published = [event.proposal_id for _, event in exchanges if event.outcome == "proposal"]
         compact = retrieve(prior_records, prompt, self._current_source(), self.state.photo_names)
         lookup = None
@@ -542,6 +550,7 @@ class Conversation:
             if (
                 isinstance(event, Exchange) and event.outcome in {"proposal", "selection"}
                 or isinstance(event, LocalEvent) and event.kind == "accept"
+                or isinstance(event, LocalSelection)
             ):
                 expected = LayoutSource(proposal_id=event.proposal_id)
         if expected != self._current_source():
@@ -553,6 +562,8 @@ class Conversation:
             return None
         task_id = None
         for event in reversed(self.history()):
+            if isinstance(event, LocalSelection):
+                break
             if not isinstance(event, Exchange) or event.outcome == "inspection":
                 continue
             if task_id is None:
@@ -589,6 +600,8 @@ class Conversation:
         if getattr(self, "_independent_task", False):
             return None
         for number, event in reversed(list(zip(self.state.history, self.history(), strict=True))):
+            if isinstance(event, LocalSelection):
+                return None
             if not isinstance(event, Exchange) or event.outcome == "inspection":
                 continue
             if event.outcome in {"invalid", "error"} and event.stage == "interpretation":
@@ -699,6 +712,33 @@ class Conversation:
             name_updates=updates or [], receipt_event=receipt_event,
         ), baseline=proposal_id, photo_names=names if names is not None else self.state.photo_names)
         return RequestResult(kind="selection", event_id=number, proposal_id=proposal_id)
+
+    def selection_task(self) -> int | None:
+        """Identify unfinished semantic work, without claiming HTTP preparation."""
+        receipt = self._pending_names()
+        question = self._pending_question()
+        failure = self._pending_failure()
+        if receipt or question:
+            return (receipt or question)[1].task_id
+        if failure is not None:
+            return failure.task_id
+        records = self.tasks()
+        return records[-1].task_id if records and records[-1].outcome in {
+            "intent", "invalid", "name_confirmation",
+        } else None
+
+    def select_proposal(self, proposal_id: str, *, abandon_pending: bool = False) -> int:
+        """Record explicit local navigation, without interpreting or accepting."""
+        self._fresh()
+        self.proposal(proposal_id)
+        task = self.selection_task()
+        if task is not None and not abandon_pending:
+            raise CollageError("Confirm ending the pending request before selecting a collage.")
+        number = self._append(LocalSelection(
+            proposal_id=proposal_id, baseline_before=self._current_source(), abandoned_task=task,
+        ), baseline=proposal_id, pending_names=None)
+        self.tasks()
+        return number
 
     def _resolve_intent(self, reply: Intent, prompt: str) -> ResolvedIntent:
         failure = self._pending_failure()

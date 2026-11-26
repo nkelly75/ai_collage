@@ -11,7 +11,11 @@ user's manual testing and explicit sign-off; see [results and limits](018c_resul
 the user's acceptance; see [results and limits](018d_results.md).
 [018e](018e-real-conversation-and-previews.md) is complete and closed following
 the user's manual testing and explicit sign-off; see [results and limits](018e_results.md).
-Its live allowance is closed. Later increments remain unapproved.
+Its live allowance is closed.
+[018f](018f-current-collage-history-and-download.md) is complete and closed
+following the user's manual sign-off and requested retirement of the original
+scripted Demo; see [results and limits](018f_results.md).
+Later increments remain unapproved.
 The subphase boundaries and sequence below may change as we learn; they are
 not a fixed delivery plan or authorization to implement all stages.
 
@@ -30,18 +34,28 @@ the fixed development-user identity; keep CLI and replay workflows useful.
 Cloud deployment, end-user authentication, Blob implementation, vision, and
 graphical layout editing are outside the initial local experience.
 
-## Initial UI direction
+## Agreed UI direction
 
 - **Project setup:** Select photos, show their stable numbers, and choose the
   canvas shape.
-- **Workspace:** Conversation on the left and a larger active preview on the
-  right, with prompt entry beneath the conversation.
+- **Workspace:** Conversation on the left and **Current collage** on the
+  right, with prompt entry beneath the conversation. Edits start from that
+  saved collage, which need not be the latest generated result.
 - **History and navigation:** Show messages, clarification questions, and
-  proposal thumbnails inline. "Continue from here" selects an editing baseline
-  without deleting later history or rolling back photo-name memory.
-- **Actions and feedback:** Keep acceptance/download controls distinct from
-  baseline selection, identify the active proposal, and show understanding
-  versus layout-generation progress along with busy/error/recovery states.
+  proposal thumbnails inline. A thumbnail opens a temporary modal without
+  changing Current collage. **Edit from this collage** explicitly saves the
+  starting point for further edits, with a timeline activity entry, without
+  deleting later history or rolling back photo-name memory.
+- **Actions and feedback:** Download the existing full-resolution PNG from the
+  historical modal or Current collage, without acceptance or regeneration.
+  No web Accept/finalization controls are planned. Identify the current
+  proposal and show understanding versus layout-generation progress along
+  with busy/error/recovery states.
+
+The simplified history/source/download direction supersedes the earlier
+Select/Accept UI distinction; existing CLI/replay acceptance stays intact.
+Detailed confirmation, persistence and verification rules belong in the
+[018f brief](018f-current-collage-history-and-download.md).
 
 This is enough shared design direction to produce a rough version for user
 feedback; no pixel-level design exercise is required. Styling/component tooling
@@ -58,8 +72,8 @@ project.
 | [018c: Persistent project flow](018c-persistent-project-flow.md) | Connect UI project creation, listing and reopening to local persistence for selected photos and canvas settings, without model calls. | Complete and closed following manual testing and user sign-off; [results and limits](018c_results.md). |
 | [018d: Behavior-preserving stage extraction](018d-behavior-preserving-stage-extraction.md) | Extract shared interpretation and generation capabilities within the existing Python agent, with an explicit typed handoff. Preserve CLI/replay's composed request experience and establish a verified backend baseline before further web integration. | Complete and closed with user acceptance; [results and limits](018d_results.md). |
 | [018e: Real conversation and previews](018e-real-conversation-and-previews.md) | Build on the extracted stages to connect prompts, clarification/name-confirmation replies, generation and ordinary follow-up edits through Functions/UI. Display backend-rendered proposals and restore the transcript/current preview after refresh. Include split HTTP requests and meaningful progress. | Complete and closed following manual testing and user sign-off. Live allowance closed; [results and limits](018e_results.md). |
-| 018f: Complete the design workflow | Add proposal thumbnails/navigation, "Continue from here", explicit acceptance and PNG download. Distinguish the editing baseline from the accepted version, and complete recovery UX for interrupted requests and pending questions. | Tentative; detailed brief not yet written. |
-| 018g: End-to-end trial and focused refinement | Exercise create/converse/refine/revisit/accept/download/reopen with the user's photos, including backend restart. Address observed correctness/usability issues and obtain user sign-off, rather than add another feature tranche. | Tentative; detailed brief not yet written. |
+| [018f: Current collage, history and download](018f-current-collage-history-and-download.md) | Add historical thumbnails/modal, explicit **Edit from this collage** with saved activity, and full-resolution PNG download. Confirm abandonment of pending clarification or unclaimed preparation; retain busy/uncertain safeguards without web acceptance or automatic repair. | Complete and closed following manual sign-off and user-approved Demo retirement; [results and limits](018f_results.md). |
+| 018g: End-to-end trial and focused refinement | Exercise create/converse/refine/revisit/choose an editing source/download/reopen with the user's photos, including backend restart. Address observed correctness/usability issues and obtain user sign-off, rather than add another feature tranche. | Tentative; detailed brief not yet written. |
 
 018d deliberately establishes the backend baseline before resuming Functions/UI
 work. Keep `Conversation.request()` as the ordinary composed operation over the
@@ -82,7 +96,8 @@ than postponing UI wiring to a final integration phase. The intended milestones
 are a prompt-to-preview experience with newly created projects after 018e, the
 complete basic design workflow after 018f, and a user-accepted local experience
 after 018g. Basic saved transcript/preview restoration belongs in 018e; richer
-history navigation and explicit acceptance belong in 018f.
+history navigation, explicit editing-source selection and PNG download belong
+in 018f. Web acceptance/finalization is excluded from the simplified workflow.
 
 Only detail the next increment when ready. Add stable links to its brief and
 results as they are created; do not create placeholder briefs for later stages.

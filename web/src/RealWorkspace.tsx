@@ -1,30 +1,84 @@
-import { useEffect, useRef, useState } from 'react'
-import { Alert, Badge, Button, Form, Spinner } from 'react-bootstrap'
-import { previewUrl } from './conversationApi'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, Badge, Button, Form, Modal, Spinner } from 'react-bootstrap'
+import { downloadCollage, previewUrl } from './conversationApi'
 import { PhotoStrip } from './PhotoStrip'
 import type { Project } from './projects'
 import { useConversation } from './useConversation'
 
-function Preview({ projectId, proposalId }: { projectId: string; proposalId: string }) {
+function PreviewLoading({ message, overlay = false }: { message: string; overlay?: boolean }) {
+  return <p className={overlay ? 'preview-update' : 'preview-loading empty-note'} aria-live="polite">
+    <Spinner as="span" size="sm" animation="border" aria-hidden="true" /> {message}
+  </p>
+}
+
+function Preview({ projectId, proposalId, current = false, updating = false }: {
+  projectId: string; proposalId: string; current?: boolean; updating?: boolean
+}) {
   const [failed, setFailed] = useState(false)
   const [loaded, setLoaded] = useState(false)
   return failed ? <p role="alert">Preview {proposalId} could not load. The saved proposal may be unavailable.
     {' '}<Button size="sm" variant="outline-secondary" onClick={() => setFailed(false)}>Reload preview</Button></p>
     : <>
-      {!loaded && <p className="preview-loading empty-note" aria-live="polite"><Spinner as="span" size="sm" animation="border" aria-hidden="true" />
-        {' '}Loading preview {proposalId}...</p>}
+      {(!loaded || updating) && <PreviewLoading overlay={current}
+        message={updating ? 'Updating current collage...' : `Loading preview ${proposalId}...`} />}
       <img className="active-preview" crossOrigin="anonymous" src={previewUrl(projectId, proposalId)}
-        alt={`Proposal ${proposalId}`} aria-busy={!loaded} onLoad={() => setLoaded(true)}
+        alt={`Proposal ${proposalId}`} aria-busy={!loaded || updating} onLoad={() => setLoaded(true)}
         onError={() => { setLoaded(false); setFailed(true) }} />
     </>
 }
 
+function Download({ projectId, proposalId }: { projectId: string; proposalId: string }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const active = useRef<AbortController | null>(null)
+  useEffect(() => () => active.current?.abort(), [])
+  const download = async () => {
+    if (active.current && !active.current.signal.aborted) return
+    const controller = new AbortController()
+    active.current = controller
+    setBusy(true)
+    setError('')
+    try { await downloadCollage(projectId, proposalId, controller.signal) }
+    catch (error) {
+      if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'PNG download failed.')
+    } finally {
+      if (!controller.signal.aborted) {
+        active.current = null
+        setBusy(false)
+      }
+    }
+  }
+  return <div className="collage-download">
+    <Button size="sm" variant="outline-primary" onClick={() => { void download() }} disabled={busy}>
+      {busy ? 'Downloading PNG...' : 'Download PNG'}
+    </Button>
+    {error && <p role="alert">{error} Try downloading again.</p>}
+  </div>
+}
+
+function Thumbnail({ projectId, proposalId, onOpen }: { projectId: string; proposalId: string; onOpen: () => void }) {
+  const [failed, setFailed] = useState(false)
+  return <Button variant="link" className="history-thumbnail" aria-label={`View collage ${proposalId}`} onClick={onOpen}>
+    {failed ? <span>Thumbnail unavailable; open saved preview.</span>
+      : <img loading="lazy" crossOrigin="anonymous" src={previewUrl(projectId, proposalId)}
+        alt={`Collage ${proposalId} thumbnail`} onError={() => setFailed(true)} />}
+    <span>Collage {proposalId}</span>
+  </Button>
+}
+
 export function RealWorkspace({ project }: { project: Project }) {
-  const conversation = useConversation(project.id)
   const [draft, setDraft] = useState('')
+  const [viewed, setViewed] = useState<string | null>(null)
+  const [confirmation, setConfirmation] = useState<{ revision: string; text: string } | null>(null)
+  const [attempted, setAttempted] = useState(false)
+  const selectionSaved = useCallback(() => { setViewed(null); setAttempted(false) }, [])
+  const conversation = useConversation(project.id, selectionSaved)
   const end = useRef<HTMLDivElement>(null)
   const { snapshot, operation, busy, blocked } = conversation
   const baseline = snapshot?.baseline?.proposal_id
+  const completedProposal = conversation.selectionActionId && conversation.selectionOutcome?.status === 'completed'
+    ? conversation.selectionOutcome.proposal_id : operation?.status === 'completed' ? operation.proposal_id : null
+  const updating = busy === 'checking' && Boolean(completedProposal && completedProposal !== baseline)
   const understanding = busy === 'interpreting' || operation?.status === 'interpreting'
   const creating = busy === 'generating' || operation?.status === 'generating'
   const failed = Boolean(conversation.failure) || operation?.status === 'failed'
@@ -33,6 +87,22 @@ export function RealWorkspace({ project }: { project: Project }) {
   const working = understanding || creating
   const pending = !conversation.submission && !operation && !working ? snapshot?.pending : null
   const recovery = blocked || conversation.paused || Boolean(operation) || snapshot?.live_enabled === false
+  const displayed = snapshot?.proposals.find((item) => item.proposal_id === viewed)
+  const currentProposal = snapshot?.proposals.find((item) => item.proposal_id === baseline)
+  const redundant = viewed === baseline && !snapshot?.selection.confirmation
+  const showHistory = (id: string) => { setViewed(id); setConfirmation(null); setAttempted(false) }
+  const choose = async (confirmed = false) => {
+    if (!viewed || !snapshot || !conversation.canSelect) return
+    if (!confirmed && snapshot.selection.confirmation) {
+      setConfirmation({ revision: snapshot.revision, text: snapshot.selection.confirmation })
+      return
+    }
+    setAttempted(true)
+    const saved = await conversation.select(viewed, confirmed, confirmed ? confirmation?.revision : snapshot.revision)
+    setConfirmation(null)
+    if (saved) { setViewed(null); setAttempted(false) }
+  }
+
   const submit = () => {
     if (conversation.send(draft)) setDraft('')
   }
@@ -59,9 +129,10 @@ export function RealWorkspace({ project }: { project: Project }) {
         </div>
         <div className="message-list" role="log" aria-label="Conversation" aria-live="polite">
           {snapshot?.messages.map((item) => <article className={`message message-${item.role}`} key={item.id}>
-            <p className="message-author">{item.role === 'user' ? 'You' : 'Assistant'}</p>
+            <p className="message-author">{item.role === 'user' ? 'You' : item.role === 'activity' ? 'Activity' : 'Assistant'}</p>
             <p className="message-text">{item.text}</p>
-            {item.proposal_id && <span className="message-proposal">Proposal {item.proposal_id}</span>}
+            {item.proposal_id && <Thumbnail projectId={project.id} proposalId={item.proposal_id}
+              onOpen={() => { if (item.proposal_id) showHistory(item.proposal_id) }} />}
           </article>)}
           {conversation.submission && <article className="message message-user">
             <p className="message-author">You</p><p className="message-text">{conversation.submission.prompt}</p>
@@ -74,6 +145,7 @@ export function RealWorkspace({ project }: { project: Project }) {
           <div role="status" className="progress-line">
             {busy === 'loading' ? 'Loading conversation...'
               : busy === 'checking' ? 'Checking saved status...'
+                : busy === 'selecting' ? 'Saving your collage starting point...'
                 : unknown ? 'Outcome unknown. New requests are blocked until saved status is confirmed.'
                   : blocked && confirmed ? `Request ${failed ? 'failed' : 'completed'}. Saved conversation still needs refreshing.`
                   : working ? <><Spinner size="sm" animation="border" aria-hidden="true" />
@@ -132,16 +204,55 @@ export function RealWorkspace({ project }: { project: Project }) {
         </div>
       </section>
       <section className="surface preview-panel" aria-labelledby="preview-title">
-        <div className="panel-heading"><h2 id="preview-title">Preview</h2>
-          {baseline && <span>Baseline: {baseline}</span>}</div>
+        <div className="panel-heading"><h2 id="preview-title">Current collage</h2>
+          {baseline && <span>Collage {baseline}</span>}</div>
+        <p className="empty-note">Edits start from this collage.</p>
         <div className="preview-stage">
-          {baseline ? <Preview key={`${project.id}:${baseline}`} projectId={project.id} proposalId={baseline} />
+          {baseline ? <Preview key={`${project.id}:${baseline}`} projectId={project.id} proposalId={baseline} current updating={updating} />
             : <p className="empty-note">{!snapshot ? 'Preview status is not available until the conversation loads.'
               : snapshot.messages.some((item) => item.proposal_id) ? 'No current preview is available.'
                 : 'No collage yet. Send a message to create your first proposal.'}</p>}
+          {!baseline && updating && <PreviewLoading overlay message="Updating current collage..." />}
         </div>
+        {baseline && <div className="current-collage-actions">
+          {currentProposal && <span>{currentProposal.width} x {currentProposal.height} px</span>}
+          <Download key={`${project.id}:${baseline}`} projectId={project.id} proposalId={baseline} />
+        </div>}
         <div className="preview-details"><PhotoStrip items={project.photos} /></div>
       </section>
     </div>
+    <Modal show={Boolean(viewed)} onHide={() => { if (busy !== 'selecting') setViewed(null) }} size="lg"
+      aria-labelledby="historical-collage-title">
+      <Modal.Header closeButton><Modal.Title id="historical-collage-title">Collage {viewed}</Modal.Title></Modal.Header>
+      <Modal.Body>
+        {viewed && <div className="preview-stage historical-preview">
+          <Preview key={`${project.id}:${viewed}`} projectId={project.id} proposalId={viewed} />
+        </div>}
+        {displayed && <p>{displayed.width} x {displayed.height} px</p>}
+        {!conversation.canSelect && snapshot?.selection.reason && <p role="status">{snapshot.selection.reason}</p>}
+        {attempted && conversation.error && <Alert variant="warning">{conversation.error}</Alert>}
+        {confirmation && <Alert variant="warning">
+          <p>{confirmation.text}</p>
+          <Button onClick={() => { void choose(true) }} disabled={!conversation.canSelect}>
+            Confirm and edit from this collage
+          </Button>{' '}
+          <Button variant="outline-secondary" onClick={() => setConfirmation(null)} disabled={Boolean(busy)}>Keep pending request</Button>
+        </Alert>}
+        {attempted && conversation.selectionActionId && !busy &&
+          <Button variant="outline-secondary" onClick={conversation.check}>Check selection status</Button>}
+      </Modal.Body>
+      <Modal.Footer className="historical-collage-actions">
+        {viewed && <Download key={`${project.id}:${viewed}`} projectId={project.id} proposalId={viewed} />}
+        {!confirmation && <div className="collage-selection-action">
+          <Button size="sm" onClick={() => { void choose() }} disabled={!conversation.canSelect || redundant}
+            aria-describedby={redundant ? undefined : 'collage-selection-help'}>
+            {redundant ? 'Already current' : 'Edit from this collage'}
+          </Button>
+          {!redundant && <p id="collage-selection-help">
+            Use this as the starting point for future edits. Your history stays saved.
+          </p>}
+        </div>}
+      </Modal.Footer>
+    </Modal>
   </div>
 }

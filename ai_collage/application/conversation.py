@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from ..agent.conversation import Conversation, ModelClient, RequestRejected
 from ..agent.files import canonical, child, digest, save
 from ..agent.models import (
-    INTENT, Digest, Exchange, PreparedGeneration, QuestionIntent, Record,
+    INTENT, Digest, Exchange, LocalSelection, PreparedGeneration, ProposalId, QuestionIntent, Record,
     RequestResult,
 )
 from ..agent.photo_references import receipt_question
@@ -26,7 +26,7 @@ from .projects import FlowError, ProjectFlow, project_guard, project_is_busy
 
 
 RequestId = Annotated[str, Field(pattern=r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$")]
-Status = Literal["interpreting", "prepared", "generating", "completed", "failed", "uncertain"]
+Status = Literal["interpreting", "prepared", "generating", "completed", "failed", "uncertain", "abandoned"]
 UNRESOLVED = {"interpreting", "prepared", "generating", "uncertain"}
 
 
@@ -59,6 +59,27 @@ class GenerationRequest(BaseModel):
 class SafeError(Record):
     code: str
     message: str
+
+
+class SelectionSubmission(BaseModel):
+    model_config = Record.model_config
+    action_id: RequestId
+    proposal_id: ProposalId
+    revision: Digest
+    abandon_pending: bool
+
+    @field_validator("action_id")
+    @classmethod
+    def valid_uuid(cls, value: str) -> str:
+        return Submission.valid_uuid(value)
+
+
+class SelectionAction(Record):
+    project_id: str
+    submission: SelectionSubmission
+    event_id: Annotated[int, Field(ge=1)]
+    abandoned_request: RequestId | None
+    status: Literal["claimed", "completed"]
 
 
 class Operation(Record):
@@ -166,6 +187,42 @@ class ConversationFlow:
         Submission.valid_uuid(request_id)
         return child(self._directory(project_id), f"{request_id}.json")
 
+    def _selection_path(self, project_id: str, action_id: str) -> Path:
+        Submission.valid_uuid(action_id)
+        return child(self.store.project_dir(project_id), "web-selections", f"{action_id}.json")
+
+    def _selections(self, project_id: str) -> list[SelectionAction]:
+        directory = child(self.store.project_dir(project_id), "web-selections")
+        actions = []
+        for path in directory.glob("*.json"):
+            action = SelectionAction.model_validate(read_json(child(directory, path.name)))
+            if action.project_id != project_id or path.name != f"{action.submission.action_id}.json":
+                raise CollageError("Local selection identity mismatch.")
+            actions.append(action)
+        actions.sort(key=lambda action: action.event_id)
+        if len({action.event_id for action in actions}) != len(actions):
+            raise CollageError("Local selections have duplicate event identities.")
+        return actions
+
+    def _save_selection(self, action: SelectionAction) -> None:
+        save(self._selection_path(action.project_id, action.submission.action_id), action)
+
+    @staticmethod
+    def _validate_selection(conversation: Conversation, operations: list[Operation], action: SelectionAction) -> None:
+        events = dict(zip(conversation.state.history, conversation.history(), strict=True))
+        event = events.get(action.event_id)
+        if not isinstance(event, LocalSelection) or event.proposal_id != action.submission.proposal_id:
+            raise CollageError("Local selection does not match its canonical event.")
+        if event.abandoned_task is not None and not action.submission.abandon_pending:
+            raise CollageError("Local selection abandoned work without confirmation.")
+        if action.abandoned_request is not None:
+            operation = next((op for op in operations
+                              if op.submission.request_id == action.abandoned_request), None)
+            if operation is None or operation.status != "abandoned" or operation.prepared is None:
+                raise CollageError("Selected source conflicts with preparation retirement.")
+            if event.abandoned_task != operation.prepared.active_task:
+                raise CollageError("Selection retired a different logical task.")
+
     def _operations(self, project_id: str) -> list[Operation]:
         operations = []
         for path in self._directory(project_id).glob("*.json"):
@@ -187,19 +244,31 @@ class ConversationFlow:
         ProjectFlow(self.store)._load(project_id)
         return Conversation(self.store, project_id, read_only=True)
 
-    def _snapshot(self, project_id: str) -> tuple[Conversation, list[Operation], str]:
+    def _snapshot(self, project_id: str) -> tuple[Conversation, list[Operation], list[SelectionAction], str]:
         for _ in range(3):
             try:
                 conversation = self._conversation(project_id)
                 operations = self._operations(project_id)
+                actions = self._selections(project_id)
+                for action in actions:
+                    if action.status == "completed":
+                        self._validate_selection(conversation, operations, action)
+                for operation in operations:
+                    if operation.status == "abandoned" and not any(
+                        action.abandoned_request == operation.submission.request_id for action in actions
+                    ):
+                        raise CollageError("Abandoned preparation has no selection claim.")
                 core = self._core_bytes(conversation)
-                op_bytes = b"".join(canonical(op) for op in operations)
+                op_bytes = b"".join(canonical(op) for op in operations) + b"".join(canonical(a) for a in actions)
                 if (
                     core == self._core_bytes(conversation)
-                    and op_bytes == b"".join(canonical(op) for op in self._operations(project_id))
+                    and op_bytes == (
+                        b"".join(canonical(op) for op in self._operations(project_id))
+                        + b"".join(canonical(a) for a in self._selections(project_id))
+                    )
                 ):
                     conversation._fresh()
-                    return conversation, operations, digest(core + op_bytes)
+                    return conversation, operations, actions, digest(core + op_bytes)
             except (CollageError, ValidationError, FileNotFoundError) as exc:
                 logging.info("Conversation snapshot unavailable: %s", type(exc).__name__)
         raise FlowError("invalid_conversation_state", "Saved conversation is changing or invalid; check its preserved state.", 409)
@@ -244,29 +313,41 @@ class ConversationFlow:
             "request_id": operation.submission.request_id, "status": status,
             "summary": operation.summary,
             "result_kind": operation.result.kind if operation.result else None,
-            "message": result_message(operation.result) if operation.result else None,
+            "message": result_message(operation.result) if operation.result else
+                "Request abandoned before generation. No generation was started."
+                if status == "abandoned" else None,
             "proposal_id": operation.result.proposal_id if operation.result else None,
             "error": {"code": error.code, "message": error.message} if error else None,
             "can_continue": status == "prepared", "revision": revision,
         }
 
     def detail(self, project_id: str) -> dict:
-        conversation, operations, revision = self._snapshot(project_id)
-        messages = []
+        conversation, operations, actions, revision = self._snapshot(project_id)
+        ordered = []
         for operation in operations:
             self._validate_result(conversation, operation)
             identity = operation.submission.request_id
-            messages.append({
+            ordered.append((operation.request_start, 0, {
                 "id": f"{identity}:user", "role": "user", "text": operation.submission.prompt,
                 "kind": "prompt", "proposal_id": None,
-            })
-            if operation.result is not None or operation.error is not None:
-                messages.append({
+            }))
+            if operation.result is not None or operation.error is not None or operation.status == "abandoned":
+                ordered.append((operation.result.event_id if operation.result else operation.request_start, 1, {
                     "id": f"{identity}:assistant", "role": "assistant",
-                    "text": result_message(operation.result) if operation.result else operation.error.message,
+                    "text": result_message(operation.result) if operation.result else
+                        operation.error.message if operation.error else
+                        "Request abandoned before generation. No generation was started.",
                     "kind": operation.result.kind if operation.result else operation.status,
                     "proposal_id": operation.result.proposal_id if operation.result else None,
-                })
+                }))
+        for action in actions:
+            if action.status == "completed":
+                ordered.append((action.event_id, 2, {
+                    "id": f"{action.submission.action_id}:activity", "role": "activity",
+                    "text": f"You chose collage {action.submission.proposal_id} as the starting point for further edits.",
+                    "kind": "local_selection", "proposal_id": action.submission.proposal_id,
+                }))
+        messages = [item for _, _, item in sorted(ordered, key=lambda item: item[:2])]
         pending = None
         receipt = conversation._pending_names()
         question = conversation._pending_question()
@@ -287,11 +368,113 @@ class ConversationFlow:
             "pending": pending,
             "operation": self._operation_view(operations[-1], revision)
             if operations and operations[-1].status in UNRESOLVED else None,
+            "proposals": [
+                {"proposal_id": event.proposal_id,
+                 "width": conversation.proposal(event.proposal_id).recipe.canvas.width,
+                 "height": conversation.proposal(event.proposal_id).recipe.canvas.height}
+                for event in conversation.history()
+                if isinstance(event, Exchange) and event.outcome == "proposal"
+            ],
+            "selection": self._selection_eligibility(conversation, operations, actions, revision),
         }
+
+    def _selection_eligibility(
+        self, conversation: Conversation, operations: list[Operation],
+        actions: list[SelectionAction], revision: str,
+    ) -> dict:
+        unresolved = next((action for action in actions if action.status != "completed"), None)
+        operation = operations[-1] if operations else None
+        reason = ""
+        if unresolved is not None:
+            reason = "A collage selection is unresolved. Check its saved status; do not repeat it."
+        elif project_is_busy(self.store, conversation.project_id):
+            reason = "Another project change is in progress."
+        elif operation and operation.status in UNRESOLVED and operation.status != "prepared":
+            reason = "An existing request is running or uncertain. Check saved status first."
+        confirmation = None
+        if conversation.state.pending_names:
+            confirmation = "This ends the pending name confirmation and associated edit without applying the proposed names. Already learned names stay saved."
+        elif conversation._pending_question():
+            confirmation = "This ends the unanswered request. Your history and learned names stay saved."
+        elif operation and operation.status == "prepared":
+            confirmation = "This abandons the prepared request before generation. Already learned names and consumed model attempts stay recorded."
+        elif conversation.selection_task() is not None:
+            confirmation = "This ends the unfinished request. Your history and learned names stay saved."
+        return {
+            "enabled": not reason, "reason": reason, "confirmation": confirmation,
+            "action": self._selection_view(unresolved, revision) if unresolved else None,
+        }
+
+    def _selection_view(self, action: SelectionAction, revision: str | None) -> dict:
+        status = "completed" if action.status == "completed" else (
+            "saving" if project_is_busy(self.store, action.project_id) else "uncertain"
+        )
+        return {
+            "action_id": action.submission.action_id, "proposal_id": action.submission.proposal_id,
+            "status": status, "revision": revision,
+            "message": "Collage selection saved." if status == "completed" else
+                "Collage selection is not confirmed. Inspect saved status; do not repeat the action.",
+        }
+
+    def selection(self, project_id: str, action_id: str) -> dict:
+        path = self._selection_path(project_id, action_id)
+        if not path.exists():
+            raise FlowError("not_found", "Collage selection not found.", 404)
+        action = SelectionAction.model_validate(read_json(path))
+        if action.project_id != project_id or action.submission.action_id != action_id:
+            raise CollageError("Local selection identity mismatch.")
+        if action.status != "completed":
+            return self._selection_view(action, None)
+        conversation, operations, _, revision = self._snapshot(project_id)
+        self._validate_selection(conversation, operations, action)
+        return self._selection_view(action, revision)
+
+    def select(self, project_id: str, submission: SelectionSubmission) -> tuple[dict, bool]:
+        with project_guard(self.store, project_id):
+            actions = self._selections(project_id)
+            existing = next((a for a in actions if a.submission.action_id == submission.action_id), None)
+            if existing is not None:
+                if existing.submission != submission:
+                    raise FlowError("action_id_conflict", "That action ID already has a different selection.", 409)
+                return self.selection(project_id, submission.action_id), False
+            if any(action.status != "completed" for action in actions):
+                raise FlowError("selection_unresolved", "Check the unresolved collage selection before another change.", 409)
+            conversation, operations, _, revision = self._snapshot(project_id)
+            if submission.revision != revision:
+                raise FlowError("stale_revision", "Conversation changed; refresh before choosing a collage.", 409)
+            conversation.proposal(submission.proposal_id)
+            operation = operations[-1] if operations else None
+            if operation and operation.status in UNRESOLVED and operation.status != "prepared":
+                raise FlowError("operation_unresolved", "An existing request is running or uncertain; selection is blocked.", 409)
+            pending = conversation.selection_task()
+            prepared = operation if operation and operation.status == "prepared" else None
+            if (pending is not None or prepared) and not submission.abandon_pending:
+                raise FlowError("confirmation_required", "Confirm ending the pending request before choosing a collage.", 409)
+            if prepared and (
+                prepared.prepared.state_digest != conversation._generation_digest(prepared.prepared.intent)
+                or prepared.prepared.active_task != pending
+            ):
+                raise FlowError("stale_preparation", "Prepared work conflicts with saved state; inspect it before changing source.", 409)
+            if submission.proposal_id == conversation.state.baseline and pending is None and prepared is None:
+                raise FlowError("already_current", "This collage is already current.", 409)
+            action = SelectionAction(
+                project_id=project_id, submission=submission, event_id=conversation._next_event(),
+                abandoned_request=prepared.submission.request_id if prepared else None, status="claimed",
+            )
+            self._save_selection(action)
+            if prepared:
+                self._save(prepared.model_copy(update={"status": "abandoned"}))
+            event_id = conversation.select_proposal(submission.proposal_id, abandon_pending=submission.abandon_pending)
+            if event_id != action.event_id:
+                raise CollageError("Collage selection event identity changed during publication.")
+            action = action.model_copy(update={"status": "completed"})
+            self._validate_selection(conversation, self._operations(project_id), action)
+            self._save_selection(action)
+            return self.selection(project_id, submission.action_id), True
 
     def operation(self, project_id: str, request_id: str) -> dict:
         self._path(project_id, request_id)
-        conversation, operations, revision = self._snapshot(project_id)
+        conversation, operations, _, revision = self._snapshot(project_id)
         for operation in operations:
             if operation.submission.request_id == request_id:
                 self._validate_result(conversation, operation)
@@ -299,7 +482,7 @@ class ConversationFlow:
         raise FlowError("not_found", "Conversation request not found.", 404)
 
     def preview(self, project_id: str, proposal_id: str) -> bytes:
-        conversation, _, _ = self._snapshot(project_id)
+        conversation, _, _, _ = self._snapshot(project_id)
         proposal = conversation.proposal(proposal_id)
         raw = conversation.preview_path(proposal_id).read_bytes()
         if digest(raw) != proposal.preview_digest:
@@ -308,7 +491,9 @@ class ConversationFlow:
 
     async def interpret(self, project_id: str, submission: Submission) -> tuple[dict, bool]:
         with project_guard(self.store, project_id):
-            conversation, operations, revision = self._snapshot(project_id)
+            if any(action.status != "completed" for action in self._selections(project_id)):
+                raise FlowError("selection_unresolved", "Check the unresolved collage selection before another Send.", 409)
+            conversation, operations, _, revision = self._snapshot(project_id)
             for existing in operations:
                 if existing.submission.request_id == submission.request_id:
                     if existing.submission != submission:
@@ -331,7 +516,9 @@ class ConversationFlow:
     async def generate(self, project_id: str, request_id: str, request: GenerationRequest) -> dict:
         self._path(project_id, request_id)
         with project_guard(self.store, project_id):
-            conversation, operations, revision = self._snapshot(project_id)
+            if any(action.status != "completed" for action in self._selections(project_id)):
+                raise FlowError("selection_unresolved", "Check the unresolved collage selection before generation.", 409)
+            conversation, operations, _, revision = self._snapshot(project_id)
             operation = next((op for op in operations if op.submission.request_id == request_id), None)
             if operation is None:
                 raise FlowError("not_found", "Conversation request not found.", 404)
