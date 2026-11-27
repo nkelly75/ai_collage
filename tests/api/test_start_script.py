@@ -11,7 +11,7 @@ import pytest
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows launcher")
 
 ENV_NAMES = (
-    "PATH", "VIRTUAL_ENV", "FUNCTIONS_WORKER_RUNTIME",
+    "PATH", "VIRTUAL_ENV", "FUNCTIONS_WORKER_RUNTIME", "PYTHON_SCRIPT_FILE_NAME",
     "FUNCTIONS_CORE_TOOLS_TELEMETRY_OPTOUT", "AzureWebJobsSecretStorageType",
     "AzureWebJobsStorage", "AzureWebJobsDashboard",
     "APPLICATIONINSIGHTS_CONNECTION_STRING", "APPINSIGHTS_INSTRUMENTATIONKEY",
@@ -132,6 +132,7 @@ def test_launcher_configures_only_child_host_and_restores_caller(shell, launcher
     assert child_path[0] == str(api / ".venv" / "Scripts")
     assert str(tools) in child_path[1:]
     assert child["env"]["FUNCTIONS_WORKER_RUNTIME"] == "python"
+    assert child["env"]["PYTHON_SCRIPT_FILE_NAME"] == "function_app.py"
     assert child["env"]["FUNCTIONS_CORE_TOOLS_TELEMETRY_OPTOUT"] == "1"
     assert child["env"]["AzureWebJobsSecretStorageType"] == "files"
     assert child["env"]["PYTHONPATH"].split(";")[0] == str(api.parent)
@@ -239,7 +240,6 @@ def test_blob_launcher_forwards_only_explicit_target_and_disables_inherited_live
 
 
 @pytest.mark.parametrize("overrides,arguments", [
-    ({}, {"Live": True}),
     ({}, {"TrialProject": "trip"}),
     ({"AI_COLLAGE_BLOB_CONTAINER": "other"}, {}),
     ({"AI_COLLAGE_BLOB_NAMESPACE": "../escape"}, {}),
@@ -252,3 +252,18 @@ def test_blob_launcher_rejects_unsafe_target_or_live_settings(shell, launcher, o
     )
     assert code == 1 and error
     assert not launcher[2].exists()
+
+
+def test_blob_launcher_explicit_live_and_trial_keep_the_normal_entrypoint(shell, launcher):
+    code, error = run_launcher(
+        shell, launcher, arguments={
+            "StorageBackend": "Blob", "Live": True, "TrialProject": "trip",
+            "CallBudgetPath": str(launcher[0].parent / "budget.json"), "MaxCalls": 4,
+        },
+        unset=("AI_COLLAGE_BLOB_PROOF_LEDGER",), **blob_environment(),
+    )
+    assert (code, error) == (0, None)
+    child = json.loads(launcher[2].read_text())["env"]
+    assert child["AI_COLLAGE_LIVE"] == "1"
+    assert child["AI_COLLAGE_MAX_CALLS"] == "4"
+    assert child["PYTHON_SCRIPT_FILE_NAME"] == "function_app.py"

@@ -55,7 +55,10 @@ not as a production server.
    success are fabricated.
 4. **Saved project** (`/projects/<id>`) independently reloads photos/settings on
    refresh/direct visits, including after backend restart. Default data is in
-   `.collage-data-web`, separate from CLI stores. Missing/invalid state and
+   `.collage-data-web` in default Local mode, separate from CLI stores.
+   Explicit [Blob mode](../api/README.md#development-blob-mode) instead restores
+   the same experience from the API's Blob namespace; Vite needs no storage
+   credentials or separate backend selector. Missing/invalid state and
    photo-load failures are visible. With live requests enabled, describe a
    layout using numbered photos or saved names, then **Send**. The UI shows
    **Understanding your request**, then the saved action/source/photo summary
@@ -81,7 +84,8 @@ not as a production server.
    attached to that button, not a statement about viewing/downloading, and
    is hidden for **Already current**. **Download PNG** in the
    modal or current panel downloads the exact stored full-resolution image.
-   These local actions work without live access and require no Accept step.
+   These model-free actions need no `-Live` and require no Accept step;
+   Blob mode still accesses Azure storage.
    There are no photo/canvas editing, delete/rename or finalization controls
    in the real workspace.
 

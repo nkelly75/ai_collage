@@ -15,8 +15,8 @@ status; the [README](README.md) is the usage entry point.
 |---|---|---|
 | `ai_collage\engine` | Offline layout/project contracts, geometry, photo validation, deterministic rendering and project storage. | [Models](ai_collage/engine/models.py), [geometry](ai_collage/engine/geometry.py), [imaging](ai_collage/engine/imaging.py), [ProjectStore](ai_collage/engine/projects.py) |
 | `ai_collage\agent` | Conversation state, photo-reference memory, interpretation, proposals, local editing-source selection and acceptance; optional, bounded model requests. Uses the engine to validate and render, rather than generating replacement images. | [Conversation](ai_collage/agent/conversation.py), [requests](ai_collage/agent/requests.py), [provider](ai_collage/agent/provider.py) |
-| `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Coordinates projects, durable split-stage/local-selection operations, read-only transcript/preview projection and local request claims. | [ProjectFlow](ai_collage/application/projects.py), [ConversationFlow](ai_collage/application/conversation.py) |
-| `ai_collage\storage` | Narrow initialized-project persistence contract, Local adapter and opt-in immutable Blob adapter. Handles publication, enumeration, record reads and original-photo delivery, not conversation mutations. Azure SDK imports stay in the Blob module. | [Contracts](ai_collage/storage/contracts.py), [LocalProjectStorage](ai_collage/storage/local.py), [BlobProjectStorage](ai_collage/storage/blob.py) |
+| `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Coordinates projects, durable split-stage/selection operations, read-only transcript/preview projection and backend-owned request claims. | [ProjectFlow](ai_collage/application/projects.py), [ConversationFlow](ai_collage/application/conversation.py) |
+| `ai_collage\storage` | Typed project/conversation persistence, logical record identities, proposal packages and backend-owned mutation guards. Local retains existing paths; Blob publishes immutable records through a leased head. Azure SDK imports stay in the Blob module. | [Contracts](ai_collage/storage/contracts.py), [LocalProjectStorage](ai_collage/storage/local.py), [BlobProjectStorage](ai_collage/storage/blob.py) |
 | `ai_collage\cli` | Command parsing and terminal presentation for engine, conversation and evaluation operations. | [Main CLI](ai_collage/cli/main.py), [chat](ai_collage/cli/chat.py) |
 | `ai_collage\evaluation` | Scripted conversation replay and offline assessment of saved evidence; tooling, not part of an ordinary web request. Live replay requires separate authorization. | [Replay](ai_collage/evaluation/replay.py), [assessment](ai_collage/evaluation/assess.py) |
 | `api` | Thin Azure Functions HTTP adapter and local host configuration/launcher. Selects Local/default or API-only development Blob storage and translates application results/errors into HTTP responses. | [Functions](api/function_app.py), [storage selection](api/storage_config.py), [launcher](api/start.ps1) |
@@ -88,7 +88,7 @@ real backend state; unknown routes use the ordinary not-found page.
 4. It constructs the existing `Conversation` to initialize normal conversation
    state, including canvas controls. This does not make a model request.
 5. It passes the prepared project/state models and open original-photo streams
-   to `LocalProjectStorage.publish`. The local implementation stages the
+   to the selected `ProjectStorage.publish`. The local implementation stages the
    ordinary records and bounded photo copies on the destination filesystem,
    links assets without replacement and publishes the completed project
    directory last, with rollback for handled pre-publication failures.
@@ -115,11 +115,12 @@ preparation and publication; it is not a distributed lock. Temporary preparation
 can be on another volume because publication copies streams into destination-local
 staging before linking.
 
-This boundary is deliberately partial. Conversation reads use its project
-validation through `ProjectFlow._load`, but history/proposal writes, request
-records, web operations/selections and CLI/replay persistence retain their
-existing local paths. The engine does not import the storage module or acquire
-agent/application dependencies.
+`ConversationStorage` extends this boundary to state/events, attempts, proposals/
+PNGs and web operations/selections. `Conversation`, `RequestLog` and
+`ConversationFlow` share one request-scoped session, using logical record IDs
+rather than arbitrary paths. Local preserves existing files and acceptance;
+Blob never reads local conversation records. The engine does not import storage
+or acquire agent/application dependencies.
 
 The API's request-scoped storage factory defaults to Local and imports no Azure
 storage implementation or credentials on that path. Explicit Blob mode uses
@@ -128,29 +129,48 @@ subscription-scoped `AzureCliCredential` and the fixed development container.
 SDK retries are disabled, with finite token/connection/read timeouts.
 CLI/replay do not use this API-side selection.
 
-Blob publication uploads original photos and the normal project/initial-state
-records under a unique candidate attempt. A strict version-1 completion envelope
-is conditionally created last under `published`; all referenced keys derive from
-validated logical identities, not imported local paths. Independent local guards
-are not the cross-host guarantee: Azure create-if-absent publication prevents
-replacement. Definite losing/pre-publication attempts remove only confirmed-owned
-objects using ETags. An ambiguous completion preserves candidates and reports
-`outcome_unknown`; operational failures report `storage_unavailable`, with no
-local fallback. Bounded reads validate published records and original photos
-without repair. Durable state remains in Blob, not local project/photo copies.
+Blob publication initially uploads original photos and normal project/state
+records under a unique candidate attempt, then conditionally creates one strict
+**version-2 storage head** under `published`. The head references immutable
+project/photos, state/events, attempts, operations/selections and proposal/PNG
+packages with digests and byte sizes. Keys derive from logical identities inside
+the selected owner/project namespace. Version 1 is rejected; old evidence stays
+untouched. Project/layout format 3 and conversation record version 8 are unchanged.
 
-This opt-in mode is API-only: conversation/request/status/generation/selection/
-preview routes reject with `blob_slice_only` before accessing local conversation
-state or a model provider. The full browser workflow remains Local-only.
-There is no cloud deployment, production authentication or automatic orphan
-cleanup. The separately opt-in [proof runner](api/verify_blob_storage.py) starts
-owned local hosts with a cross-restart request ledger; it is not an ordinary
-application persistence or budget service.
+Each conversation mutation acquires a finite 60s lease on that head, with a
+bounded renewal helper while the request owns it. Every head update carries
+both lease ID and expected ETag. Claims and attempt reservations are published
+before dispatch, not deferred until request end. Event/state, proposal/PNG/event/
+baseline and completed selection/abandonment checkpoints advance atomically.
+Unchanged originals and committed historical objects are retained.
+
+Readers bind one head and validate only its immutable references. Canonical
+browser revisions still exclude internal lease/ETag/attempt diagnostics.
+Validated bytes are reused in a request-local cache capped at 128 MiB; no
+persistent local cache is authoritative. Rendering uses owned temporary photo
+paths and the unchanged renderer, then removes scratch files.
+JSON/head IO is capped at 1 MiB, originals at 25 MiB and encoded previews at
+128 MiB; canvas axes remain at most 4096.
+
+Losing writers cannot publish or dispatch again; expired ownership does not
+reset paid claims. An ambiguous head response preserves potentially referenced
+candidates and reports `outcome_unknown`. Definite never-published candidates
+are cleaned only with confirmed ETags; cleanup/release errors are logged.
+Service failures report `storage_unavailable`, without Local fallback.
+No online orphan collector, migration or automatic paid retry is provided.
+
+All existing web routes use the selected backend; `-Live` still explicitly gates
+model calls. The dedicated [proof entrypoint](api/proof_function_app.py) injects
+only four scripted replies through normal handlers/accounting/rendering.
+The ordinary launcher pins `function_app.py`, never that entrypoint.
+The separately authorized [proof runner](api/verify_blob_storage.py) owns its
+hosts, explicit cross-restart send caps and exact successful-upload inventory.
+It is not an application budget service or evidence of user acceptance.
 
 ## A conversation request, end to end
 
 1. The browser sends text, one UUID and its last known revision to Functions.
-   The application takes the existing cross-process per-project guard and
+   The application takes the selected backend's per-project mutation guard and
    persists a claim before calling `Conversation.interpret()`.
 2. Interpretation either produces a final question/acknowledgement/selection,
    or saves a strict server-owned handoff. The browser shows a deterministic
@@ -178,7 +198,8 @@ conversational mutation guard.
 
 Reload observes an existing operation, never resubmits its prompt. Prepared
 work requires explicit Continue generation. A running claim without its OS-held
-guard is uncertain, not an expired lease. Publication/result-recording ambiguity
+guard (Local) or confirmed live lease (Blob) is uncertain. Neither loss nor age
+permits replay. Publication/result-recording ambiguity
 blocks new paid work for inspection. No queue, background worker, automatic
 paid retry or general crash-repair UI is present.
 
@@ -265,7 +286,7 @@ in the [CLI guide](docs/cli-guide.md#verification) and [API README](api/README.m
 
 The current host and default storage are local development facilities. Anonymous
 Functions routes and local-origin restrictions are not production
-authentication. Opt-in Blob storage covers only initialized projects.
-Deployment packaging, authenticated cloud hosting and complete web Blob
-persistence remain future work; see the [API](api/README.md) and
+authentication. Opt-in Blob storage supports the complete existing web workflow.
+Deployment packaging and authenticated cloud hosting remain future work;
+see the [API](api/README.md) and
 [UI](web/README.md) guides for current setup and limits.

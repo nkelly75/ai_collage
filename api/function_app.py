@@ -11,7 +11,7 @@ from ai_collage.engine.projects import parse_json
 from ai_collage.application.projects import FlowError, ProjectFlow, ProjectSetup, configured_store
 from ai_collage.application.conversation import ConversationFlow, GenerationRequest, SelectionSubmission, Submission
 from ai_collage.storage.contracts import StorageOutcomeUnknown, StorageUnavailable
-from storage_config import project_flow, reject_blob_conversation
+from storage_config import conversation_flow, project_flow
 
 
 MAX_BODY_BYTES = 160 * 1024 * 1024
@@ -89,7 +89,7 @@ def request_error(exc: Exception) -> func.HttpResponse:
     if isinstance(exc, StorageOutcomeUnknown):
         logging.exception("Blob publication outcome is unknown")
         return json_response({"error": {
-            "code": "outcome_unknown", "message": "Publication may have completed; look up the project before creating again.",
+            "code": "outcome_unknown", "message": "Publication may have completed; inspect saved project/request/action state before any retry.",
         }}, 500)
     if isinstance(exc, StorageUnavailable):
         logging.exception("Blob storage operation failed")
@@ -120,30 +120,29 @@ def json_body(req: func.HttpRequest) -> object:
 def _dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpResponse:
     try:
         check_request(req)
-        reject_blob_conversation()
-        flow = ConversationFlow(configured_store())
-        project_id = req.route_params["project_id"]
-        if operation == "conversation":
-            return json_response(flow.detail(project_id))
-        if operation == "requests":
-            submission = Submission.model_validate(json_body(req))
-            result, created = asyncio.run(flow.interpret(project_id, submission))
-            return json_response(result, 201 if created else 200)
-        if operation == "operation":
-            return json_response(flow.operation(project_id, req.route_params["request_id"]))
-        if operation == "generate":
-            body = GenerationRequest.model_validate(json_body(req))
-            return json_response(asyncio.run(flow.generate(project_id, req.route_params["request_id"], body)))
-        if operation == "selections":
-            body = SelectionSubmission.model_validate(json_body(req))
-            result, created = flow.select(project_id, body)
-            return json_response(result, 201 if created else 200)
-        if operation == "selection":
-            return json_response(flow.selection(project_id, req.route_params["action_id"]))
-        raw = flow.preview(project_id, req.route_params["proposal_id"])
-        return func.HttpResponse(raw, mimetype="image/png", headers={
-            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-        })
+        with conversation_flow() as flow:
+            project_id = req.route_params["project_id"]
+            if operation == "conversation":
+                return json_response(flow.detail(project_id))
+            if operation == "requests":
+                submission = Submission.model_validate(json_body(req))
+                result, created = asyncio.run(flow.interpret(project_id, submission))
+                return json_response(result, 201 if created else 200)
+            if operation == "operation":
+                return json_response(flow.operation(project_id, req.route_params["request_id"]))
+            if operation == "generate":
+                body = GenerationRequest.model_validate(json_body(req))
+                return json_response(asyncio.run(flow.generate(project_id, req.route_params["request_id"], body)))
+            if operation == "selections":
+                body = SelectionSubmission.model_validate(json_body(req))
+                result, created = flow.select(project_id, body)
+                return json_response(result, 201 if created else 200)
+            if operation == "selection":
+                return json_response(flow.selection(project_id, req.route_params["action_id"]))
+            raw = flow.preview(project_id, req.route_params["proposal_id"])
+            return func.HttpResponse(raw, mimetype="image/png", headers={
+                "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+            })
     except Exception as exc:
         return request_error(exc)
 

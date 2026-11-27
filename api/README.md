@@ -4,8 +4,9 @@ Loopback-only Azure Functions routes create, list and reopen local photo/canvas
 projects and expose real conversation/previews. Thin HTTP adapters call the
 project/conversation application workflows, coordinating the same engine and
 agent used by CLI/replay. No source copies or CLI subprocesses are used.
-**Local storage is the default** for the complete web workflow. An opt-in,
-API-only Blob mode supports initialized projects, not conversations.
+**Local storage is the default** for the complete web workflow. Explicit
+development Blob mode supports that same workflow, including conversations,
+history, source selection and stored PNGs, while the API/UI still run locally.
 Model access requires explicit `-Live`. In Local mode, creation, source
 selection and reads never initialize credentials or make model calls.
 The routes are anonymous development endpoints, not a deployable authentication
@@ -246,7 +247,7 @@ that project. The existing `call_budget` guard reserves actual attempts in
 by reopening. Keep trials single-writer and do not share their ledger with
 another host/store. This example does not authorize any trial or extra calls.
 
-### Manual test-project cleanup
+### Manual Local test-project cleanup
 
 Stop the backend before deleting an entire selected
 `users\local-dev\projects\<project-id>` directory under the configured data root.
@@ -257,13 +258,16 @@ Leave those copies alone unless their references have been checked; deleting a
 project directory is not complete disk cleanup. Original source photos are
 untouched. No deletion UI/API or garbage collector is provided.
 
-## API-only development Blob mode
+<a id="api-only-development-blob-mode"></a>
 
-This mode supports only the four project routes in the storage-contract table.
-It is **not a Blob-backed web UI**. Conversation, request/status, generation,
-selection and preview routes return 501 `blob_slice_only`, after Host/Origin
-checks but before local conversation access or provider initialization.
-CLI/replay and ordinary `.\api\start.ps1` launches remain local.
+## Development Blob mode
+
+All existing project/conversation/request/status/generation/selection/preview
+routes use authoritative Blob persistence. The existing web UI needs no separate
+storage setting. CLI/replay and ordinary `.\api\start.ps1` launches remain Local.
+Use a fresh namespace; there is no import or migration of prior local projects.
+019c is complete after offline verification, its separately approved real-account
+proof and explicit user acceptance; see [results](../planning/019c_results.md).
 
 Use the existing development target from the
 [infrastructure record](../planning/019b-initial-blob-integration.md), with
@@ -274,9 +278,11 @@ resources or changes CLI defaults. Set backend-only variables before launch:
 $env:AI_COLLAGE_BLOB_ACCOUNT_URL = '<development Blob endpoint from the infrastructure record>'
 $env:AI_COLLAGE_BLOB_CONTAINER = 'collage'
 $env:AI_COLLAGE_BLOB_SUBSCRIPTION_ID = '<development subscription from the infrastructure record>'
-$env:AI_COLLAGE_BLOB_NAMESPACE = 'smoke-019b-' + [guid]::NewGuid().ToString('N')
-$env:AI_COLLAGE_DATA_DIR = Join-Path $env:TEMP ('collage-019b-' + [guid]::NewGuid().ToString('N'))
+$env:AI_COLLAGE_BLOB_NAMESPACE = 'web-019c-' + [guid]::NewGuid().ToString('N')
+$env:AI_COLLAGE_DATA_DIR = Join-Path $env:TEMP ('collage-019c-' + [guid]::NewGuid().ToString('N'))
 .\api\start.ps1 -StorageBackend Blob
+# For an explicitly authorized model-backed trial:
+# .\api\start.ps1 -StorageBackend Blob -Live
 ```
 
 The endpoint, container and subscription must match that development target.
@@ -285,9 +291,13 @@ ending with an alphanumeric character. Missing/invalid settings fail explicitly;
 there is no Local fallback. Direct workers select
 `AI_COLLAGE_STORAGE_BACKEND=Blob`; missing means Local, blank/unknown fails.
 Local launches clear inherited Blob configuration only in the worker and restore
-the caller's environment on exit. Blob plus `-Live`/trial settings is rejected.
-`AI_COLLAGE_DATA_DIR` is only a disposable local guard root in this mode, not the
-authority for saved project data. Temporary import/validation files are removed.
+the caller's environment on exit. Blob accepts the existing explicit `-Live`
+and optional trial flags. Without `-Live`, model dispatch stays disabled, but
+Blob reads/writes still access Azure. Model authentication remains separate
+from storage authentication. Keep a trial's same external budget ledger and
+single-writer restriction across restarts; a different root never renews calls.
+`AI_COLLAGE_DATA_DIR` is not the authority for saved Blob projects. Import,
+decoding and rendering use owned temporary files, not a durable local project copy.
 
 Authentication uses subscription-scoped `AzureCliCredential` only: no credential
 chain, account key, SAS or browser credential. CLI-token process timeout is 10s;
@@ -295,19 +305,30 @@ Blob connection/read timeouts are 10s/30s. SDK retries are disabled. This does
 not guarantee cancellation of a timed-out in-flight upload.
 Application Blob configuration never supplies Functions host storage.
 
-Original photos and existing project/state records are uploaded under a unique
-candidate attempt. A strict version-1 completion document, conditionally created
-last, is the visibility and duplicate-conflict boundary. Competing creates cannot
-replace a published ID, even with separate local roots. Reads list published
-projects only, validate existing records/assets and never initialize or repair.
-They retain the existing record, byte, pixel and HTTP limits.
-There are no durable local project/photo copies or automatic migrations.
+One strict **version-2 storage head** references immutable project/photos,
+conversation state/events, attempts, operations/selections and proposals/PNGs.
+Initial create is conditional; mutations hold a finite renewable 60s lease on
+the head and publish with lease ID plus expected ETag. Claims/reservations
+precede dispatch. Event/state, complete proposals and selection/abandonment
+advance through coherent checkpoints. Different projects have independent
+guards; competing writers receive 409. Lease expiry never authorizes paid replay.
+
+Reads bind one committed head, validate digests/identities and never initialize
+or repair. Historical committed objects remain so an older reader can finish.
+Canonical browser revisions do not include lease renewals or attempt diagnostics.
+Validated bytes are cached only within a request, up to 128 MiB.
+JSON records and the head are capped at 1 MiB, originals at 25 MiB each, and
+encoded PNG previews at 128 MiB. Canvas axes remain at most 4096.
+Version-1 Blob envelopes are rejected; use a fresh 019c namespace and preserve
+019b evidence. Project/layout format 3 and conversation record version 8 are unchanged.
 
 Known service/authentication/permission/container failures return
 `storage_unavailable`/503, not an empty list or a project 404. Invalid published
-state returns 409. An ambiguous completion write returns `outcome_unknown`/500
-and preserves its candidate objects; reconcile with GET, never automatic POST
-retry. Not-found while a create might still be running is not proof of rollback.
+state returns 409. An ambiguous head write returns `outcome_unknown`/500
+and preserves its candidate objects and prior durable claims. Inspect project,
+request or selection status with GET, never automatic POST retry.
+An interpreting/generating claim without live ownership is uncertain and blocks
+new paid work; not-found while a create might still run is not proof of rollback.
 Definite pre-publication failures clean only confirmed-owned objects using their
 ETags. Cleanup failures are logged without masking the original failure.
 There is no general Blob deletion API or orphan collector.
@@ -316,24 +337,37 @@ There is no general Blob deletion API or orphan collector.
 
 Ordinary pytest never runs this proof. After **separate explicit live approval**,
 from the repository root, choose a new absolute evidence directory whose parent
-already exists:
+already exists. Set `$approvedHttpCap` and `$approvedBlobCap` to the separately
+agreed integer ceilings first; there are deliberately no default live allowances:
 
 ```powershell
-.\api\.venv\Scripts\python.exe -m api.verify_blob_storage --allow-azure --output-dir C:\absolute\new-proof-directory
+.\api\.venv\Scripts\python.exe -m api.verify_blob_storage --allow-azure --output-dir C:\absolute\new-proof-directory `
+  --max-http-requests $approvedHttpCap --max-blob-requests $approvedBlobCap
 ```
 
 Use the module invocation, not the script path. This starts its own loopback
-Functions hosts, verifies listener ownership, generates two tiny JPEG/PNG photos
-(at most 1 MiB together), and exercises create/list/detail/originals, duplicate
-409 and unsupported-route 501. It restarts with a different empty local root and
-checks identical metadata and original bytes again, without model access.
+Functions hosts and verifies listener ownership. A dedicated entrypoint uses
+four tiny generated 3:4 PNGs (at most 1 MiB together) and exactly four scripted
+interpretation/generation replies for P001/P002. The small recipe subset comes
+from archived `project-02`; its originals and persisted records are not uploaded
+or changed. Normal handlers, validation, attempt reservation and renderer still
+run. No Foundry/model credentials or model HTTP calls occur; scripted usage
+remains unknown rather than fabricated billing.
 
-The fresh `proof-019b-<uuid>` namespace is limited to one project, **30 local HTTP
-requests and 200 Blob HTTP sends**, including readback and cleanup. An opt-in
-`AI_COLLAGE_BLOB_PROOF_LEDGER` absolute existing JSONL file counts SDK sends across
-worker restarts and cleanup; normal operation does not use it. The transport
-rejects other targets and blocks before send 201. The report, downloaded
-originals, request ledger and host logs remain in the evidence directory.
+The journey checks create/list/detail/originals/duplicate 409, two proposals,
+history/Current collage selection and full PNG downloads. After an owned host
+restart with another empty root, it compares the entire conversation, request/
+action statuses, previews and original bytes again. Ordinary launches pin
+`function_app.py`, not the proof entrypoint; no production fake-provider flag exists.
+
+The fresh `proof-019c-<uuid>` namespace contains only project `proof`.
+`requests.jsonl` counts every Blob send across hosts, lease calls and cleanup;
+its `.limits.json` sidecar binds explicit caps to that namespace.
+The transport rejects other accounts, namespaces, project keys and container
+deletion before sending. Successful PUTs record key/ETag ownership in
+`.objects.jsonl`, including replaced head references and retained historical
+objects. Report, generated downloads/previews, ledgers and host logs stay in
+the evidence directory. Ordinary operation does not use these proof ledgers.
 
 On success, cleanup first validates an exact run-owned inventory, then deletes
 the completion document before its referenced objects using captured ETags.
@@ -341,45 +375,23 @@ On uncertainty/failure, preserve the namespace and evidence; an incomplete
 inventory is **not** evidence that no objects exist. Do not clear the container,
 guess at cleanup or rerun without renewed approval.
 
-### User API smoke check
+### User-led web acceptance
 
-019b is closed on explicit user acceptance of the real-account proof, with this
-manual repetition waived. The procedure remains a reference, not an outstanding
-acceptance requirement or authorization for another agent-run test.
+019b is closed with its duplicate manual API test waived; see its
+[historical closeout](../planning/019b_results.md#user-acceptance-and-closeout).
+Its consumed allowance is not authorization for this new proof or a web trial.
 
-For a separately authorized manual check, use a **separate** `smoke-019b-...` namespace and disposable
-root as above. These checks access Azure and are not offline tests. In a second
-**PowerShell 7** terminal, use the two generated downloads from the proof:
-
-```powershell
-$base = 'http://127.0.0.1:7071/api/projects'
-$evidence = '<absolute evidence directory reported by the successful proof>'
-$form = @{
-    metadata = '{"project_id":"smoke","canvas":{"width":900,"height":1600}}'
-    photo_1 = Get-Item (Join-Path $evidence 'download-1.jpg')
-    photo_2 = Get-Item (Join-Path $evidence 'download-2.png')
-}
-Invoke-WebRequest -Method Post -Uri $base -Form $form
-Invoke-RestMethod $base
-Invoke-RestMethod "$base/smoke"
-Invoke-WebRequest "$base/smoke/photos/1" -OutFile "$env:TEMP\collage-019b-original.jpg"
-Get-FileHash $form.photo_1.FullName,"$env:TEMP\collage-019b-original.jpg"
-Invoke-WebRequest "$base/smoke/photos/2" -OutFile "$env:TEMP\collage-019b-original.png"
-Get-FileHash $form.photo_2.FullName,"$env:TEMP\collage-019b-original.png"
-Invoke-WebRequest -Method Post -Uri $base -Form $form -SkipHttpErrorCheck
-Invoke-WebRequest "$base/smoke/conversation" -SkipHttpErrorCheck
-```
-
-Expect create 201/Location, one listed project, canvas 900x1600 and photo
-dimensions 10x20/12x24, matching hash pairs, duplicate 409 and conversation 501.
-Stop the host, change only `AI_COLLAGE_DATA_DIR` to another fresh absolute root
-in its terminal, retain the same Blob namespace, and relaunch Blob mode.
-Repeat the list/detail/download/hash checks. There must be no local
-`users\local-dev\projects` tree in either root. Leave the separate smoke namespace
-for explicitly scoped cleanup; the automated proof does not own it.
-See [implementation results](../planning/019b_results.md#user-acceptance-and-closeout)
-for the actual verification and explicit acceptance. Offline or agent-run success
-alone is not user sign-off.
+019c is accepted and closed following successful user-led testing; see
+[closeout](../planning/019c_results.md#user-led-web-acceptance-and-closeout).
+The acceptance procedure was to exercise the actual local API/Vite UI with
+Blob and explicitly authorized live models, in a separate fresh namespace:
+empty Projects, upload/create, a short conversation, history/Current collage
+selection and PNG download. Refresh, then restart with another empty local root,
+keeping the same Blob namespace and any single-writer trial budget ledger.
+Restore photos/messages/names/current source/history/previews and continue a
+normal conversation step. Do not copy old local projects or regenerate previews
+on reopen. Any future trial still needs agreed procedure/model limits; completed
+acceptance does not authorize further service calls.
 
 ## Offline tests
 
@@ -397,8 +409,9 @@ repository root, select the environment and suite explicitly:
 Tests use generated photos/temp roots and block unmocked external services.
 They cover multipart/JSON validation, original bytes/orientation, read-only
 reopening, split stages, durable claims, failure windows, limits and
-cross-process guards. Blob tests use SDK-boundary mocks and one real-SDK upload
-contract check with its HTTP transport replaced; no Azure account or emulator.
+cross-process guards. Blob tests use SDK-boundary mocks, the full scripted
+HTTP journey and real-SDK create/lease/ETag serialization checks with HTTP
+transport replaced; no Azure account or emulator.
 Proof lifecycle tests use only disposable owned loopback listeners/processes.
 Launcher tests use fake Core
 Tools in installed Windows PowerShell/PowerShell 7 hosts. The default root
@@ -414,8 +427,9 @@ needed for this organization.
 
 Future deployment must package the entry point, host config, requirements and
 shared `ai_collage` source, with target-platform dependencies, not Windows
-venvs or reliance on this PowerShell import-path convenience. Deployment,
-complete web Blob persistence and authentication remain separately scoped.
+venvs or reliance on this PowerShell import-path convenience. Deployment and authentication remain separately scoped; completed web Blob
+persistence has completed its separately approved live proof and user acceptance;
+see [019c results](../planning/019c_results.md).
 
 ## Runtime storage-probe warning
 

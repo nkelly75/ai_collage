@@ -13,6 +13,7 @@ from .files import child, save
 from .models import Attempt, Limits, Reasoning, Record
 from ..engine.models import CollageError
 from ..engine.projects import ProjectStore, read_json
+from ..storage.contracts import ConversationStorage
 
 
 class CallBudget(Record):
@@ -68,12 +69,18 @@ class RequestLog:
     def __init__(
         self, store: ProjectStore, project_id: str, *, generation_reasoning: Reasoning = "low",
         interpretation_reasoning: Reasoning = "high",
+        persistence: ConversationStorage | None = None,
     ):
+        from ..storage.local import LocalConversationStorage
+
         if generation_reasoning not in {"high", "low"}:
             raise CollageError("Generation reasoning must be high or low.")
         if interpretation_reasoning not in {"high", "low"}:
             raise CollageError("Interpretation reasoning must be high or low.")
         self.root = child(store.project_dir(project_id), "conversation", "requests")
+        self.persistence = persistence if persistence is not None else LocalConversationStorage(store, project_id)
+        if self.persistence.project_id != project_id:
+            raise CollageError("Request accounting belongs to a different project.")
         self.limits = Limits()
         self.generation_reasoning = generation_reasoning
         self.interpretation_reasoning = interpretation_reasoning
@@ -112,18 +119,18 @@ class RequestLog:
         )
 
     def attempts(self) -> list[Attempt]:
-        paths = sorted(self.root.glob("attempt-*.json"), key=lambda path: (len(path.name), path.name))
         records = []
-        for number, path in enumerate(paths, 1):
-            if path.name != f"attempt-{number:04d}.json":
+        for number, identity in enumerate(self.persistence.identities("attempt"), 1):
+            if identity != f"{number:04d}":
                 raise CollageError("Request log has an inconsistent attempt sequence.")
-            record = Attempt.model_validate(read_json(child(self.root, path.name)))
+            record = Attempt.model_validate(self.persistence.read("attempt", identity))
             if record.number != number:
                 raise CollageError("Request attempt identity mismatch.")
             records.append(record)
         return records
 
     def reserve(self, purpose: str, input_bound: int) -> Attempt:
+        self.persistence.check_write()
         if input_bound > self.limits.input_tokens:
             raise CollageError(
                 f"Input exceeds the conservative token bound ({input_bound:,} > "
@@ -138,15 +145,17 @@ class RequestLog:
             timeout_seconds=self.remaining_seconds(),
         )
         _reserve_budget()
-        save(child(self.root, f"attempt-{attempt.number:04d}.json"), attempt)
+        self.persistence.write("attempt", f"{attempt.number:04d}", attempt)
+        self.persistence.check_write()
+        self.remaining_seconds()
         return attempt
 
     def finish(self, attempt: Attempt) -> None:
-        path = child(self.root, f"attempt-{attempt.number:04d}.json")
-        previous = Attempt.model_validate(read_json(path))
+        identity = f"{attempt.number:04d}"
+        previous = Attempt.model_validate(self.persistence.read("attempt", identity))
         if previous.status != "pending" or previous.number != attempt.number:
             raise CollageError("Attempt is not an outstanding reservation.")
-        save(path, attempt)
+        self.persistence.write("attempt", identity, attempt)
         limits = self.limits
         if (
             (attempt.input_tokens is not None and attempt.input_tokens > limits.input_tokens)

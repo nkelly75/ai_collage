@@ -22,6 +22,7 @@ from ..engine.geometry import LayoutBoundsError, resolve_layout
 from ..engine.imaging import render_layout
 from ..engine.models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
 from ..engine.projects import ProjectStore, parse_json, read_json
+from ..storage.contracts import ConversationStorage
 from .photo_references import (
     PhotoReferenceError, active_names, check_forgotten, conflicting_names, ground_references, memory_changes,
     memory_message, name_history, names_digest, names_message, receipt_question,
@@ -51,19 +52,24 @@ class Conversation:
     def __init__(
         self, store: ProjectStore, project_id: str, *,
         canvas: tuple[int, int] | None = None, preferences: Path | None = None,
-        read_only: bool = False,
+        read_only: bool = False, persistence: ConversationStorage | None = None,
     ):
+        from ..storage.local import LocalConversationStorage
+
         self.store = store
         self.project_id = project_id
-        project = store.load(project_id)
+        self.persistence = persistence if persistence is not None else LocalConversationStorage(store, project_id)
+        if self.persistence.project_id != project_id:
+            raise CollageError("Conversation storage belongs to another project.")
+        project = self.persistence.project()
         self.root = child(store.project_dir(project_id), "conversation")
         self.state_path = child(self.root, "state.json")
         self.intent_path = child(self.root, "acceptance.json")
         self.photo_digest = digest(
             json.dumps([p.model_dump() for p in project.photos], sort_keys=True).encode()
         )
-        if self.state_path.exists():
-            stored = read_json(self.state_path)
+        stored = self.persistence.read("state", "state")
+        if stored is not None:
             if not isinstance(stored, dict) or stored.get("record_version") != ConversationState.model_fields["record_version"].default:
                 raise CollageError("Unsupported conversation version; use a fresh project. Existing data is unchanged.")
             self.state = ConversationState.model_validate(stored)
@@ -75,10 +81,10 @@ class Conversation:
                 raise CollageError("Resume canvas differs; use /canvas explicitly.")
             if read_only:
                 self._fresh()
-            else:
+            elif self.persistence.supports_acceptance:
                 self._recover()
         else:
-            if read_only:
+            if read_only or not self.persistence.supports_acceptance:
                 raise CollageError("Saved conversation is missing; read-only access cannot initialize it.")
             if canvas is None:
                 raise CollageError("A new conversation requires --canvas WIDTH HEIGHT.")
@@ -100,7 +106,7 @@ class Conversation:
             )
             if self.root.exists() and any(self.root.iterdir()):
                 raise CollageError("Incomplete conversation initialization; inspect local state.")
-            save(self.state_path, self.state)
+            self.persistence.write("state", "state", self.state)
         pending = name_history(
             self.state.photo_names, dict(zip(self.state.history, self.history(), strict=True)),
             {photo.photo_id for photo in project.photos},
@@ -113,24 +119,24 @@ class Conversation:
         self.tasks()
 
     def _commit(self, state: ConversationState) -> None:
-        save(self.state_path, state)
+        self.persistence.write("state", "state", state)
         self.state = state
 
     def _fresh(self) -> None:
-        current = ConversationState.model_validate(read_json(self.state_path))
+        current = ConversationState.model_validate(self.persistence.read("state", "state"))
         if current != self.state:
             raise CollageError("Conversation changed; restart before making further changes.")
-        if self.store.load(self.project_id).current_version != self.state.expected_version:
+        if self.persistence.project().current_version != self.state.expected_version:
             raise CollageError("Accepted project changed outside this conversation; inspect local state.")
-        if self.intent_path.exists():
+        if self.persistence.supports_acceptance and self.intent_path.exists():
             raise CollageError("Acceptance needs reconciliation; restart the conversation.")
         self._check_name_writes()
 
     def _check_name_writes(self) -> None:
         referenced = set(self.state.history)
-        for path in child(self.root, "events").glob("*.json"):
-            if re.fullmatch(r"[0-9]{6,}", path.stem) and int(path.stem) not in referenced:
-                event = HISTORY.validate_python(read_json(path))
+        for identity in self.persistence.identities("event"):
+            if int(identity) not in referenced:
+                event = HISTORY.validate_python(self.persistence.read("event", identity))
                 if isinstance(event, Exchange) and (
                     event.name_receipt is not None or event.receipt_event is not None
                     or event.name_updates
@@ -143,20 +149,16 @@ class Conversation:
 
     def history(self) -> list[Exchange | LocalEvent | LocalSelection]:
         return [
-            HISTORY.validate_python(read_json(child(self.root, "events", f"{number:06d}.json")))
+            HISTORY.validate_python(self.persistence.read("event", f"{number:06d}"))
             for number in self.state.history
         ]
 
     def _next_event(self) -> int:
-        directory = child(self.root, "events")
-        numbers = [
-            int(path.stem) for path in directory.glob("*.json")
-            if re.fullmatch(r"[0-9]{6,}", path.stem)
-        ]
+        numbers = [int(identity) for identity in self.persistence.identities("event")]
         return max(numbers, default=0) + 1
 
     def _append(self, event: Exchange | LocalEvent | LocalSelection, **updates: object) -> int:
-        if ConversationState.model_validate(read_json(self.state_path)) != self.state:
+        if ConversationState.model_validate(self.persistence.read("state", "state")) != self.state:
             raise CollageError("Conversation changed; restart before making further changes.")
         number = self._next_event()
         if isinstance(event, Exchange):
@@ -170,14 +172,17 @@ class Conversation:
                 event.task_id == number and event.outcome not in {"invalid", "error"}
             )):
                 updates["pending_names"] = None
-        save(child(self.root, "events", f"{number:06d}.json"), event)
         state = self.state.model_copy(update={
             **updates, "history": [*self.state.history, number],
         })
-        self._commit(ConversationState.model_validate(state.model_dump()))
+        with self.persistence.checkpoint():
+            self.persistence.write("event", f"{number:06d}", event)
+            self._commit(ConversationState.model_validate(state.model_dump()))
         return number
 
     def preview_path(self, proposal_id: str) -> Path:
+        if not self.persistence.supports_acceptance:
+            raise CollageError("Blob previews are bytes, not durable local paths.")
         if not re.fullmatch(r"P[0-9]{3,}", proposal_id):
             raise CollageError("Invalid proposal ID.")
         return child(self.root, "proposals", proposal_id, "preview.png")
@@ -185,7 +190,6 @@ class Conversation:
     def proposal(
         self, proposal_id: str, *, _events: dict[int, Exchange | LocalEvent | LocalSelection] | None = None,
     ) -> Proposal:
-        preview = self.preview_path(proposal_id)
         history = _events if _events is not None else dict(zip(
             self.state.history, self.history(), strict=True,
         ))
@@ -196,20 +200,21 @@ class Conversation:
         }
         if proposal_id not in committed:
             raise CollageError("Unknown or unpublished proposal ID.")
-        proposal = Proposal.model_validate(read_json(child(preview.parent, "proposal.json")))
+        proposal = Proposal.model_validate(self.persistence.read("proposal", proposal_id))
+        preview = self.persistence.preview(proposal_id)
         number, event = committed[proposal_id]
         self._validate_proposal(proposal, proposal_id, number, event, history, preview)
         return proposal
 
     def _validate_proposal(
         self, proposal: Proposal, proposal_id: str, number: int, event: Exchange,
-        history: dict[int, Exchange | LocalEvent | LocalSelection], preview: Path,
+        history: dict[int, Exchange | LocalEvent | LocalSelection], preview: Path | bytes,
     ) -> None:
         committed = {
             entry.proposal_id: turn for turn, entry in history.items()
             if isinstance(entry, Exchange) and entry.outcome == "proposal"
         }
-        project = self.store.load(self.project_id)
+        project = self.persistence.project()
         expected = resolve_layout(proposal.recipe, project.photos, 1)
         task = history.get(proposal.intent.task_turn)
         # A logical task can start with an invalid attempt, then a validated correction.
@@ -239,7 +244,7 @@ class Conversation:
             or proposal.parent != event.parent
             or proposal.geometry != expected.geometry
             or proposal.recipe_digest != digest(canonical(proposal.recipe))
-            or proposal.preview_digest != digest(preview.read_bytes())
+            or proposal.preview_digest != digest(preview.read_bytes() if isinstance(preview, Path) else preview)
             or proposal.parent != (
                 proposal.intent.source.proposal_id if proposal.intent.source else None
             )
@@ -267,7 +272,7 @@ class Conversation:
             return self.proposal(self.state.baseline).recipe
         if self.state.initial_version is not None:
             return self.store.load_layout(
-                self.store.load(self.project_id), self.state.initial_version
+                self.persistence.project(), self.state.initial_version
             ).recipe
         return None
 
@@ -277,7 +282,7 @@ class Conversation:
             raise CollageError("Recipe must use the current canvas dimensions.")
         if not controls.cropping and any(layer.mode != "whole" for layer in recipe.layers):
             raise CollageError("Cropping is forbidden; every layer must use whole mode.")
-        return resolve_layout(recipe, self.store.load(self.project_id).photos, 1)
+        return resolve_layout(recipe, self.persistence.project().photos, 1)
 
     def source_recipe(self, source: LayoutSource | None) -> InputLayout | None:
         if source is None:
@@ -286,7 +291,7 @@ class Conversation:
             return self.proposal(source.proposal_id).recipe
         assert source.accepted_version is not None
         return self.store.load_layout(
-            self.store.load(self.project_id), source.accepted_version,
+            self.persistence.project(), source.accepted_version,
         ).recipe
 
     def _current_source(self) -> LayoutSource | None:
@@ -302,7 +307,7 @@ class Conversation:
         request_start: int | None = None,
     ) -> dict[str, object]:
         self._fresh()
-        project = self.store.load(self.project_id)
+        project = self.persistence.project()
         exchanges = [
             (number, event)
             for number, event in zip(self.state.history, self.history(), strict=True)
@@ -615,9 +620,7 @@ class Conversation:
             return None
         if pointer.event_id not in self.state.history:
             raise CollageError("Pending naming receipt is outside recorded history.")
-        event = HISTORY.validate_python(read_json(child(
-            self.root, "events", f"{pointer.event_id:06d}.json",
-        )))
+        event = HISTORY.validate_python(self.persistence.read("event", f"{pointer.event_id:06d}"))
         if (
             not isinstance(event, Exchange) or event.name_receipt is None
             or digest(canonical(event)) != pointer.sha256
@@ -812,7 +815,9 @@ class Conversation:
         self, prompt: str, client: ModelClient, requests: RequestLog | None = None,
         *, progress: Progress | None = None,
     ) -> RequestResult:
-        requests = requests if requests is not None else RequestLog(self.store, self.project_id)
+        requests = requests if requests is not None else RequestLog(
+            self.store, self.project_id, persistence=self.persistence,
+        )
         result = await self.interpret(prompt, client, requests, progress=progress)
         if isinstance(result, PreparedGeneration):
             return await self.generate(result, client, requests, progress=progress)
@@ -829,7 +834,7 @@ class Conversation:
         sources = (self._current_source(), intent.source, intent.reference)
         recipes = [self.source_recipe(source) for source in sources if source is not None]
         return digest(
-            canonical(self.store.load(self.project_id)) + canonical(self.state)
+            canonical(self.persistence.project()) + canonical(self.state)
             + b"".join(canonical(event) for event in self.history())
             + b"".join(canonical(recipe) for recipe in recipes if recipe is not None)
         )
@@ -875,6 +880,7 @@ class Conversation:
         if requests is None:
             requests = RequestLog(
                 self.store, self.project_id,
+                persistence=self.persistence,
                 generation_reasoning=prepared.generation_reasoning,
                 interpretation_reasoning=prepared.interpretation_reasoning,
             )
@@ -897,8 +903,12 @@ class Conversation:
     ) -> RequestResult | PreparedGeneration:
         if not prompt.strip() or len(prompt.encode("utf-8")) > MAX_JSON_BYTES // 4:
             raise CollageError("Prompt must be nonempty and at most 256 KiB UTF-8.")
-        requests = requests if requests is not None else RequestLog(self.store, self.project_id)
-        if requests.root != child(self.root, "requests"):
+        requests = requests if requests is not None else RequestLog(
+            self.store, self.project_id, persistence=self.persistence,
+        )
+        if requests.root != child(self.root, "requests") or (
+            not self.persistence.supports_acceptance and requests.persistence is not self.persistence
+        ):
             raise CollageError("Request accounting belongs to a different project.")
         feedback = None
         intent = prepared.intent if prepared is not None else None
@@ -1015,7 +1025,7 @@ class Conversation:
                     visible_ids = {item["event_id"] for item in visible}
                     updates = [] if isinstance(reply, ResumeIntent) else ground_references(
                         reply, prompt,
-                        photos={photo.photo_id for photo in self.store.load(self.project_id).photos},
+                        photos={photo.photo_id for photo in self.persistence.project().photos},
                         names=self.state.photo_names,
                         task_request=request_origin if reply.continues_task else prompt,
                         reference_history={
@@ -1142,15 +1152,10 @@ class Conversation:
     ) -> RequestResult:
         requests.check_work_deadline()
         self._fresh()
-        proposals = child(self.root, "proposals")
-        proposals.mkdir(parents=True, exist_ok=True)
-        numbers = [
-            int(p.name[1:]) for p in proposals.iterdir()
-            if re.fullmatch(r"P[0-9]{3,}", p.name)
-        ]
+        numbers = [int(identity[1:]) for identity in self.persistence.identities("proposal")]
         proposal_id = f"P{max(numbers, default=0) + 1:03d}"
         event_id = self._next_event()
-        project = self.store.load(self.project_id)
+        project = self.persistence.project()
         event = Exchange(
             prompt=prompt, response=raw, outcome="proposal",
             parent=intent.source.proposal_id if intent.source else None,
@@ -1159,10 +1164,13 @@ class Conversation:
             run_id=None, attempt=len(requests.attempts()), proposal_id=proposal_id,
             references=intent.references,
         )
-        with tempfile.TemporaryDirectory(dir=self.root, prefix=".proposal-") as directory:
+        with tempfile.TemporaryDirectory(
+            dir=self.root if self.persistence.supports_acceptance else None, prefix=".proposal-",
+        ) as directory:
             staging = Path(directory)
             preview = staging / "preview.png"
-            render_layout(resolved, project.photos, self.store.photo_paths(project), preview)
+            with self.persistence.photo_paths() as paths:
+                render_layout(resolved, project.photos, paths, preview)
             requests.check_work_deadline()
             proposal = Proposal(
                 proposal_id=proposal_id, turn_id=event_id,
@@ -1180,8 +1188,11 @@ class Conversation:
             )
             self._fresh()
             requests.check_work_deadline()
-            staging.rename(child(proposals, proposal_id))
-        self._append(event, baseline=proposal_id)
+            with self.persistence.checkpoint():
+                self.persistence.publish_proposal(proposal, preview)
+                requests.check_work_deadline()
+                self._append(event, baseline=proposal_id)
+                requests.check_work_deadline()
         return RequestResult(kind="proposal", proposal_id=proposal_id, event_id=event_id)
 
     def controls(self, controls: Controls) -> None:
@@ -1198,6 +1209,8 @@ class Conversation:
         self._append(event)
 
     def accept(self, proposal_id: str) -> int:
+        if not self.persistence.supports_acceptance:
+            raise CollageError("Acceptance remains a Local CLI operation.")
         self._fresh()
         if self._pending_names() is not None:
             raise CollageError("Resolve the pending naming receipt before changing the accepted source.")

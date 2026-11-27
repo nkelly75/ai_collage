@@ -33,6 +33,11 @@ use a **fresh `.collage-data-v3` root** to avoid touching archived projects.
 Both roots are ignored by Git. Put the global `--data-dir` option before the
 command and use the same root for every command in a workflow.
 
+CLI/chat/replay always use local persistence. The API's optional
+[development Blob mode](../api/README.md#development-blob-mode) serves the
+complete web workflow, not a new CLI backend or archive migration.
+Selecting Blob for Functions does not change these commands or their data roots.
+
 ## Render the supplied photos
 
 ```powershell
@@ -585,7 +590,7 @@ for the rationale behind the feature increments.
 | `ai_collage\evaluation` | Callable replay execution and offline evidence assessment | `tests\evaluation` |
 | `ai_collage\cli` | Argument parsing and terminal chat/presentation | `tests\cli` |
 | `ai_collage\application` | Application workflows coordinating existing engine and agent capabilities | `tests\application` |
-| `ai_collage\storage` | Initialized-project persistence contracts and Local/Blob adapters | `tests\storage` |
+| `ai_collage\storage` | Project/conversation persistence, logical records, artifacts and Local/Blob mutation guards | `tests\storage` |
 | `api` | Functions HTTP adapters and local host launcher | `tests\api` |
 
 The agent depends on the engine; evaluation uses both, and CLI modules expose

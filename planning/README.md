@@ -156,7 +156,10 @@ is optional measured performance work. Initial development
 019b's API-only implementation is separately approved and implemented;
 see [results](019b_results.md) for offline and successful real-account proof.
 019b is complete and closed with explicit user acceptance; the manual repetition
-was waived. 019c is next to specify, not yet approved for implementation.
+was waived. [019c](019c-complete-web-persistence.md) is complete and closed
+following offline verification, its separately approved model-free real-account
+proof and successful user-led web testing with explicit acceptance.
+See [019c results](019c_results.md). Optional 019d remains deferred and unapproved.
 
 ## Planning records
 
@@ -197,7 +200,7 @@ and record 003 spans several feature increments.
 | [019: Storage abstraction and Blob persistence](019-storage-abstraction-and-blob-persistence.md) | High-level direction: 019a local extraction, 019b initial Blob integration, 019c complete web persistence and optional 019d performance. | Detailed briefs and implementation approval remain separate. |
 | [019a: Initial local storage extraction](019a-initial-local-storage-extraction.md) | Complete and closed following offline verification and user acceptance. | See [results](019a_results.md); real Blob proof follows separately in 019b. |
 | [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Complete and closed with explicit user acceptance; manual API repetition waived. | [Results](019b_results.md) record successful offline and separately approved real-account proof and closeout. [Infrastructure record](019b-initial-blob-integration.md) retains deployment facts. |
-| [019c: Complete web persistence](019-storage-abstraction-and-blob-persistence.md#sequence-and-status) | Next phase to specify; no detailed brief or implementation approval yet. | Extend persistence across today's full web workflow; deployment and new features remain separately scoped. |
+| [019c: Complete web persistence](019c-complete-web-persistence.md) | Implemented and verified offline; not closed. | [Results](019c_results.md); full existing web workflow, fresh projects only. Real-account approval/proof and user-driven acceptance separately gated. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

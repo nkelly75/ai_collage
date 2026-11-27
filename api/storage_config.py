@@ -1,4 +1,4 @@
-"""Explicit local/API-only Blob selection; no Azure imports in the Local path."""
+"""Explicit Local/Blob factories; no Azure imports in the Local path."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from ai_collage.application.projects import FlowError, ProjectFlow, configured_store
+from ai_collage.application.conversation import ConversationFlow, ConversationSettings
 
 
 DEV_ACCOUNT_URL = "https://stclgdevbik2twby4e2zu.blob.core.windows.net"
@@ -43,26 +44,27 @@ def blob_settings() -> BlobSettings:
     namespace = os.environ.get("AI_COLLAGE_BLOB_NAMESPACE", "")
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", namespace):
         raise FlowError("configuration_error", "Supply a valid isolated Blob namespace.", 500)
-    if os.environ.get("AI_COLLAGE_LIVE") not in {None, "0"} or any(
-        os.environ.get(name) for name in (
-            "AI_COLLAGE_CALL_BUDGET_PATH", "AI_COLLAGE_MAX_CALLS", "AI_COLLAGE_TRIAL_PROJECT",
-        )
-    ):
-        raise FlowError("configuration_error", "Blob slice mode cannot enable model/trial work.", 500)
+    ConversationSettings.configured()
     value = os.environ.get("AI_COLLAGE_BLOB_PROOF_LEDGER")
     ledger = None if value is None else Path(value)
     if ledger is not None and (
         not value or not ledger.is_absolute() or not ledger.is_file()
-        or not namespace.startswith("proof-019b-")
+        or not namespace.startswith("proof-019c-")
     ):
         raise FlowError("configuration_error", "Invalid opt-in Blob proof ledger.", 500)
+    if ledger is not None:
+        from blob_proof import ProofLimits, limits_path
+        from ai_collage.engine.projects import read_json
+        from ai_collage.engine.models import CollageError
+        from pydantic import ValidationError
+
+        try:
+            limits = ProofLimits.model_validate(read_json(limits_path(ledger)))
+        except (CollageError, ValidationError, OSError) as exc:
+            raise FlowError("configuration_error", "Proof ledger requires explicit bounded limits.", 500) from exc
+        if limits.namespace != namespace:
+            raise FlowError("configuration_error", "Proof ledger namespace does not match.", 500)
     return BlobSettings(namespace, ledger)
-
-
-def reject_blob_conversation() -> None:
-    if backend() == "blob":
-        blob_settings()
-        raise FlowError("blob_slice_only", "Conversation and proposal operations are not supported in Blob mode yet.", 501)
 
 
 @contextmanager
@@ -85,3 +87,9 @@ def project_flow():
             connection_timeout=10, read_timeout=30, **options,
         ) as container:
             yield ProjectFlow(configured_store(), BlobProjectStorage(container, settings.namespace))
+
+
+@contextmanager
+def conversation_flow():
+    with project_flow() as projects:
+        yield ConversationFlow(projects.store, storage=projects.storage)

@@ -28,10 +28,13 @@ can create and reopen saved projects, converse through the shared Python agent
 and display saved previews. Image understanding and cloud hosting remain future
 work.
 
-The full web workflow still uses local storage. A separately selected
-[API-only Blob mode](api/README.md#api-only-development-blob-mode) supports
-project creation, listing, reopening and original-photo retrieval, not
-conversation editing or cloud hosting.
+The complete web workflow supports Local storage by default or explicitly
+selected [development Blob storage](api/README.md#development-blob-mode),
+including conversations, history, Current collage and saved PNG downloads.
+Blob mode keeps authoritative data in Azure while the API/UI run locally.
+CLI/replay remain local; cloud hosting and authentication are not implemented.
+019c is complete following real-account verification and user acceptance;
+see [results](planning/019c_results.md).
 
 **Layout format 3** uses centre-anchored `center_x`/`center_y` positions,
 explicit whole/cover modes, stable `photo_id` values, and a back-to-front
@@ -86,7 +89,9 @@ Switching can be repeated. Ending a pending question or unstarted preparation
 requires confirmation; running or uncertain work cannot be abandoned this way.
 **Download PNG** retrieves the stored full-resolution image, without acceptance
 or regeneration. These local actions also work without `-Live`; there is no
-web finalization/Accept step. Stop each server with Ctrl+C.
+web finalization/Accept step. For Blob configuration and fresh-root restart
+behavior, see the [API guide](api/README.md#development-blob-mode).
+Stop each server with Ctrl+C.
 
 ## CLI quick start
 

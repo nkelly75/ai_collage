@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
+from contextvars import ContextVar
 import logging
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from ..agent.conversation import Conversation, ModelClient, RequestRejected
-from ..agent.files import canonical, child, digest, save
+from ..agent.files import canonical, child, digest
 from ..agent.models import (
     INTENT, Digest, Exchange, LocalSelection, PreparedGeneration, ProposalId, QuestionIntent, Record,
     RequestResult,
@@ -21,8 +22,13 @@ from ..agent.models import (
 from ..agent.photo_references import receipt_question
 from ..agent.requests import RequestLog, StageTimeout, WorkTimeout, call_budget
 from ..engine.models import MAX_JSON_BYTES, CollageError, validate_project_id
-from ..engine.projects import ProjectStore, read_json
-from .projects import FlowError, ProjectFlow, project_guard, project_is_busy
+from ..engine.projects import ProjectStore
+from ..storage.contracts import (
+    ConversationStorage, ProjectNotFound, ProjectStorage, StorageBusy,
+    StorageOutcomeUnknown, StorageUnavailable,
+)
+from ..storage.local import LocalProjectStorage
+from .projects import FlowError, ProjectFlow
 
 
 RequestId = Annotated[str, Field(pattern=r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$")]
@@ -175,10 +181,42 @@ class ConversationFlow:
     def __init__(
         self, store: ProjectStore, settings: ConversationSettings | None = None,
         client: ModelClient | None = None,
+        storage: ProjectStorage | None = None,
     ):
         self.store = store
         self.settings = settings if settings is not None else ConversationSettings.configured()
         self.client = client
+        self.storage = LocalProjectStorage(store) if storage is None else storage
+        self._session: ContextVar[ConversationStorage | None] = ContextVar("conversation_storage", default=None)
+
+    @contextmanager
+    def _access(self, project_id: str, *, write: bool = False):
+        active = self._session.get()
+        if active is not None:
+            if active.project_id != project_id:
+                raise CollageError("Storage session belongs to another project.")
+            yield active
+            return
+        self._directory(project_id)
+        with ExitStack() as stack:
+            try:
+                context = self.storage.mutation(project_id) if write else nullcontext(self.storage.conversation(project_id))
+                session = stack.enter_context(context)
+            except StorageBusy as exc:
+                raise FlowError("project_busy", str(exc), 409) from exc
+            except ProjectNotFound as exc:
+                raise FlowError("not_found", "Project not found.", 404) from exc
+            except (CollageError, ValidationError) as exc:
+                logging.info("Conversation storage snapshot unavailable: %s", type(exc).__name__)
+                raise FlowError("invalid_conversation_state", "Saved conversation is invalid; check its preserved state.", 409) from exc
+            token = self._session.set(session)
+            try:
+                yield session
+            finally:
+                self._session.reset(token)
+
+    def _records(self, project_id: str) -> ConversationStorage:
+        return self._session.get() or self.storage.conversation(project_id)
 
     def _directory(self, project_id: str) -> Path:
         return child(self.store.project_dir(project_id), "web-operations")
@@ -192,11 +230,11 @@ class ConversationFlow:
         return child(self.store.project_dir(project_id), "web-selections", f"{action_id}.json")
 
     def _selections(self, project_id: str) -> list[SelectionAction]:
-        directory = child(self.store.project_dir(project_id), "web-selections")
+        records = self._records(project_id)
         actions = []
-        for path in directory.glob("*.json"):
-            action = SelectionAction.model_validate(read_json(child(directory, path.name)))
-            if action.project_id != project_id or path.name != f"{action.submission.action_id}.json":
+        for identity in records.identities("selection"):
+            action = SelectionAction.model_validate(records.read("selection", identity))
+            if action.project_id != project_id or identity != action.submission.action_id:
                 raise CollageError("Local selection identity mismatch.")
             actions.append(action)
         actions.sort(key=lambda action: action.event_id)
@@ -205,7 +243,7 @@ class ConversationFlow:
         return actions
 
     def _save_selection(self, action: SelectionAction) -> None:
-        save(self._selection_path(action.project_id, action.submission.action_id), action)
+        self._records(action.project_id).write("selection", action.submission.action_id, action)
 
     @staticmethod
     def _validate_selection(conversation: Conversation, operations: list[Operation], action: SelectionAction) -> None:
@@ -224,10 +262,11 @@ class ConversationFlow:
                 raise CollageError("Selection retired a different logical task.")
 
     def _operations(self, project_id: str) -> list[Operation]:
+        records = self._records(project_id)
         operations = []
-        for path in self._directory(project_id).glob("*.json"):
-            operation = Operation.model_validate(read_json(child(path.parent, path.name)))
-            if operation.project_id != project_id or path.name != f"{operation.submission.request_id}.json":
+        for identity in records.identities("operation"):
+            operation = Operation.model_validate(records.read("operation", identity))
+            if operation.project_id != project_id or identity != operation.submission.request_id:
                 raise CollageError("Web operation identity mismatch.")
             operations.append(operation)
         operations.sort(key=lambda operation: operation.sequence)
@@ -238,13 +277,18 @@ class ConversationFlow:
         return operations
 
     def _save(self, operation: Operation) -> None:
-        save(self._path(operation.project_id, operation.submission.request_id), operation)
+        self._records(operation.project_id).write("operation", operation.submission.request_id, operation)
 
     def _conversation(self, project_id: str) -> Conversation:
-        ProjectFlow(self.store)._load(project_id)
-        return Conversation(self.store, project_id, read_only=True)
+        records = self._records(project_id)
+        if records.supports_acceptance:
+            ProjectFlow(self.store, self.storage)._load(project_id)
+        return Conversation(self.store, project_id, read_only=True, persistence=records)
 
     def _snapshot(self, project_id: str) -> tuple[Conversation, list[Operation], list[SelectionAction], str]:
+        if self._session.get() is None:
+            with self._access(project_id):
+                return self._snapshot(project_id)
         for _ in range(3):
             try:
                 conversation = self._conversation(project_id)
@@ -276,7 +320,7 @@ class ConversationFlow:
     def _core_bytes(self, conversation: Conversation) -> bytes:
         history = conversation.history()
         return (
-            canonical(self.store.load(conversation.project_id)) + canonical(conversation.state)
+            canonical(conversation.persistence.project()) + canonical(conversation.state)
             + b"".join(canonical(event) for event in history)
             + b"".join(canonical(conversation.proposal(event.proposal_id))
                        for event in history
@@ -305,7 +349,7 @@ class ConversationFlow:
         status = operation.status
         error = operation.error
         if status in {"interpreting", "generating"} and (
-            owns_guard or not project_is_busy(self.store, operation.project_id)
+            owns_guard or not self.storage.busy(operation.project_id)
         ):
             status = "uncertain"
             error = SafeError(code="outcome_unknown", message="Execution was interrupted. Outcome unknown; inspect saved state before another paid request.")
@@ -387,7 +431,7 @@ class ConversationFlow:
         reason = ""
         if unresolved is not None:
             reason = "A collage selection is unresolved. Check its saved status; do not repeat it."
-        elif project_is_busy(self.store, conversation.project_id):
+        elif self.storage.busy(conversation.project_id):
             reason = "Another project change is in progress."
         elif operation and operation.status in UNRESOLVED and operation.status != "prepared":
             reason = "An existing request is running or uncertain. Check saved status first."
@@ -407,7 +451,7 @@ class ConversationFlow:
 
     def _selection_view(self, action: SelectionAction, revision: str | None) -> dict:
         status = "completed" if action.status == "completed" else (
-            "saving" if project_is_busy(self.store, action.project_id) else "uncertain"
+            "saving" if self.storage.busy(action.project_id) else "uncertain"
         )
         return {
             "action_id": action.submission.action_id, "proposal_id": action.submission.proposal_id,
@@ -417,20 +461,22 @@ class ConversationFlow:
         }
 
     def selection(self, project_id: str, action_id: str) -> dict:
-        path = self._selection_path(project_id, action_id)
-        if not path.exists():
-            raise FlowError("not_found", "Collage selection not found.", 404)
-        action = SelectionAction.model_validate(read_json(path))
-        if action.project_id != project_id or action.submission.action_id != action_id:
-            raise CollageError("Local selection identity mismatch.")
-        if action.status != "completed":
-            return self._selection_view(action, None)
-        conversation, operations, _, revision = self._snapshot(project_id)
-        self._validate_selection(conversation, operations, action)
-        return self._selection_view(action, revision)
+        Submission.valid_uuid(action_id)
+        with self._access(project_id) as records:
+            raw = records.read("selection", action_id)
+            if raw is None:
+                raise FlowError("not_found", "Collage selection not found.", 404)
+            action = SelectionAction.model_validate(raw)
+            if action.project_id != project_id or action.submission.action_id != action_id:
+                raise CollageError("Local selection identity mismatch.")
+            if action.status != "completed":
+                return self._selection_view(action, None)
+            conversation, operations, _, revision = self._snapshot(project_id)
+            self._validate_selection(conversation, operations, action)
+            return self._selection_view(action, revision)
 
     def select(self, project_id: str, submission: SelectionSubmission) -> tuple[dict, bool]:
-        with project_guard(self.store, project_id):
+        with self._access(project_id, write=True) as records:
             actions = self._selections(project_id)
             existing = next((a for a in actions if a.submission.action_id == submission.action_id), None)
             if existing is not None:
@@ -462,14 +508,15 @@ class ConversationFlow:
                 abandoned_request=prepared.submission.request_id if prepared else None, status="claimed",
             )
             self._save_selection(action)
-            if prepared:
-                self._save(prepared.model_copy(update={"status": "abandoned"}))
-            event_id = conversation.select_proposal(submission.proposal_id, abandon_pending=submission.abandon_pending)
-            if event_id != action.event_id:
-                raise CollageError("Collage selection event identity changed during publication.")
-            action = action.model_copy(update={"status": "completed"})
-            self._validate_selection(conversation, self._operations(project_id), action)
-            self._save_selection(action)
+            with records.checkpoint():
+                if prepared:
+                    self._save(prepared.model_copy(update={"status": "abandoned"}))
+                event_id = conversation.select_proposal(submission.proposal_id, abandon_pending=submission.abandon_pending)
+                if event_id != action.event_id:
+                    raise CollageError("Collage selection event identity changed during publication.")
+                action = action.model_copy(update={"status": "completed"})
+                self._validate_selection(conversation, self._operations(project_id), action)
+                self._save_selection(action)
             return self.selection(project_id, submission.action_id), True
 
     def operation(self, project_id: str, request_id: str) -> dict:
@@ -484,13 +531,13 @@ class ConversationFlow:
     def preview(self, project_id: str, proposal_id: str) -> bytes:
         conversation, _, _, _ = self._snapshot(project_id)
         proposal = conversation.proposal(proposal_id)
-        raw = conversation.preview_path(proposal_id).read_bytes()
+        raw = conversation.persistence.preview(proposal_id)
         if digest(raw) != proposal.preview_digest:
             raise FlowError("invalid_preview", "Published preview changed; no image was returned.", 409)
         return raw
 
     async def interpret(self, project_id: str, submission: Submission) -> tuple[dict, bool]:
-        with project_guard(self.store, project_id):
+        with self._access(project_id, write=True):
             if any(action.status != "completed" for action in self._selections(project_id)):
                 raise FlowError("selection_unresolved", "Check the unresolved collage selection before another Send.", 409)
             conversation, operations, _, revision = self._snapshot(project_id)
@@ -515,7 +562,7 @@ class ConversationFlow:
 
     async def generate(self, project_id: str, request_id: str, request: GenerationRequest) -> dict:
         self._path(project_id, request_id)
-        with project_guard(self.store, project_id):
+        with self._access(project_id, write=True):
             if any(action.status != "completed" for action in self._selections(project_id)):
                 raise FlowError("selection_unresolved", "Check the unresolved collage selection before generation.", 409)
             conversation, operations, _, revision = self._snapshot(project_id)
@@ -539,7 +586,7 @@ class ConversationFlow:
     async def _execute(self, conversation: Conversation, operation: Operation) -> None:
         from ..agent.provider import FoundryModel
 
-        log = RequestLog(self.store, operation.project_id)
+        log = RequestLog(self.store, operation.project_id, persistence=conversation.persistence)
         if operation.prepared is not None:
             log.limits = operation.prepared.limits
             log.generation_reasoning = operation.prepared.generation_reasoning
@@ -551,6 +598,9 @@ class ConversationFlow:
                 result = await conversation.interpret(operation.submission.prompt, self.client or FoundryModel(), log)
             else:
                 result = await conversation.generate(operation.prepared, self.client or FoundryModel(), log)
+        except (StorageUnavailable, StorageOutcomeUnknown):
+            logging.exception("Storage stopped the stage; its durable claim is preserved.")
+            raise
         except (CollageError, OSError, ValidationError) as exc:
             known = isinstance(exc, (StageTimeout, WorkTimeout, RequestRejected))
             try:

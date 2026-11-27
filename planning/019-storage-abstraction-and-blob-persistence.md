@@ -8,8 +8,10 @@ see [results](019a_results.md). Initial development
 019b's separately approved API-only implementation has offline evidence in
 [results](019b_results.md), including its successful separately approved live
 application proof and explicit user acceptance. 019b is complete and closed;
-the user waived the manual repetition. 019c is next to specify, not yet approved
-for implementation.
+the user waived the manual repetition. [019c](019c-complete-web-persistence.md)
+is complete and closed after offline verification, its separately approved
+model-free real-account proof and successful user-led web testing with explicit
+acceptance; see [019c results](019c_results.md).
 
 ## Goal and boundaries
 
@@ -45,7 +47,7 @@ Azurite is not a prerequisite.
 |---|---|---|
 | [019a: Initial local extraction](019a-initial-local-storage-extraction.md) | Extract create/list/reopen/photo persistence behind a narrow storage boundary. Entirely offline. | Complete and closed following offline verification and the user's successful local smoke check. |
 | [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Implement and verify that same slice against the development Azure storage account through an opt-in API-only mode, using Azure CLI authentication. Do not extend into conversation editing yet. | Complete and closed after offline/real-account verification and explicit user acceptance, with the manual repeat waived. See [results](019b_results.md). The full conversational workflow is not yet cloud-ready. |
-| 019c: Complete web persistence | Extend the boundary and Blob implementation together across conversation state/history, proposals/previews, request records and source selections, including required concurrency safeguards. | Next to specify; implementation is unapproved. Target: today's complete web functionality works with Blob-backed persistence. |
+| [019c: Complete web persistence](019c-complete-web-persistence.md) | Extend the boundary and Blob implementation together across conversation state/history, proposals/previews, request records and source selections, including required concurrency safeguards. | Complete and closed after offline/real-account verification and successful user-led web testing with explicit acceptance; [results](019c_results.md). |
 | 019d: Optional performance work | Measure the complete Blob-backed workflow and fix demonstrated bottlenecks. | Deferred and unapproved. Target: measured improvements without expanding product scope. |
 
 The sequence is small local extraction, real Blob proof, then extension of both

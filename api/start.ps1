@@ -16,9 +16,6 @@ $blobNames = @(
     'AI_COLLAGE_BLOB_PROOF_LEDGER'
 )
 if ($StorageBackend -eq 'Blob') {
-    if ($Live -or $CallBudgetPath -or $TrialProject -or $PSBoundParameters.ContainsKey('MaxCalls')) {
-        throw 'Blob slice mode cannot enable model/trial work.'
-    }
     $target = @{
         AI_COLLAGE_BLOB_ACCOUNT_URL = 'https://stclgdevbik2twby4e2zu.blob.core.windows.net'
         AI_COLLAGE_BLOB_CONTAINER = 'collage'
@@ -35,7 +32,7 @@ if ($StorageBackend -eq 'Blob') {
     $ledger = $env:AI_COLLAGE_BLOB_PROOF_LEDGER
     if ($null -ne $ledger -and (
         -not $ledger -or -not [IO.Path]::IsPathRooted($ledger) -or -not (Test-Path -LiteralPath $ledger -PathType Leaf) -or
-        -not $env:AI_COLLAGE_BLOB_NAMESPACE.StartsWith('proof-019b-')
+        -not $env:AI_COLLAGE_BLOB_NAMESPACE.StartsWith('proof-019c-')
     )) { throw 'Invalid opt-in Blob proof ledger.' }
 }
 if ($CallBudgetPath -or $TrialProject -or $PSBoundParameters.ContainsKey('MaxCalls')) {
@@ -70,6 +67,7 @@ $settings = @{
     VIRTUAL_ENV = $venv
     PATH = "$(Join-Path $venv 'Scripts');$env:PATH"
     FUNCTIONS_WORKER_RUNTIME = 'python'
+    PYTHON_SCRIPT_FILE_NAME = 'function_app.py'
     FUNCTIONS_CORE_TOOLS_TELEMETRY_OPTOUT = '1'
     AzureWebJobsSecretStorageType = 'files'
     AzureWebJobsStorage = $null

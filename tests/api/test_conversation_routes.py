@@ -7,6 +7,7 @@ import azure.functions as func
 import pytest
 
 import function_app
+import storage_config
 from ai_collage.application.conversation import ConversationFlow, ConversationSettings
 from ai_collage.application.projects import ProjectFlow, ProjectSetup, configured_store
 from ..agent.test_agent import FakeModel, asyncio_wakeup_pair, intent, reply
@@ -23,7 +24,8 @@ def api_flow(monkeypatch):
     )
     model = FakeModel(intent("fresh"), reply())
     settings = ConversationSettings(live=True)
-    monkeypatch.setattr(function_app, "ConversationFlow", lambda source: ConversationFlow(source, settings, model))
+    monkeypatch.setattr(storage_config, "ConversationFlow",
+                        lambda source, *, storage: ConversationFlow(source, settings, model, storage=storage))
     return store, settings, model
 
 

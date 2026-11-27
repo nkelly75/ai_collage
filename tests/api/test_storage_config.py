@@ -9,7 +9,7 @@ import pytest
 
 import function_app
 import storage_config
-from blob_proof import ProofTransport
+from blob_proof import ProofLimits, ProofTransport, limits_path
 from ai_collage.application.projects import FlowError
 from ai_collage.storage.contracts import StorageOutcomeUnknown, StorageUnavailable
 
@@ -37,7 +37,7 @@ def blob_environment(monkeypatch):
     ("AI_COLLAGE_BLOB_CONTAINER", "other"),
     ("AI_COLLAGE_BLOB_SUBSCRIPTION_ID", ""),
     ("AI_COLLAGE_BLOB_NAMESPACE", "../escape"),
-    ("AI_COLLAGE_LIVE", "1"),
+    ("AI_COLLAGE_LIVE", "invalid"),
     ("AI_COLLAGE_TRIAL_PROJECT", "trip"),
 ])
 def test_invalid_blob_configuration_never_constructs_credentials(blob_environment, monkeypatch, name, value):
@@ -74,21 +74,25 @@ def test_blob_factory_scopes_cli_identity_and_disables_retries(blob_environment,
     assert container.call_args.kwargs["read_timeout"] == 30
 
 
-@pytest.mark.parametrize("operation", [
-    "conversation", "requests", "operation", "generate", "selections", "selection", "preview",
-])
-def test_all_unsupported_blob_routes_reject_before_local_or_model_access(
-    blob_environment, monkeypatch, operation,
+def test_blob_conversation_routes_use_selected_backend(
+    blob_environment, monkeypatch,
 ):
-    forbidden = Mock(side_effect=AssertionError("must not access conversation/local state"))
-    monkeypatch.setattr(function_app, "ConversationFlow", forbidden)
-    monkeypatch.setattr(function_app, "configured_store", forbidden)
+    flow = Mock()
+    flow.detail.return_value = {"project_id": "trip"}
+    @contextmanager
+    def selected():
+        yield flow
+    monkeypatch.setattr(function_app, "conversation_flow", selected)
     req = func.HttpRequest("GET", "http://127.0.0.1:7071/api/projects/trip/conversation",
                            headers={"Host": "127.0.0.1:7071"}, body=b"", route_params={"project_id": "trip"})
-    response = function_app._dispatch_conversation(req, operation)
-    assert response.status_code == 501
-    assert json.loads(response.get_body())["error"]["code"] == "blob_slice_only"
-    forbidden.assert_not_called()
+    response = function_app._dispatch_conversation(req, "conversation")
+    assert response.status_code == 200
+    flow.detail.assert_called_once_with("trip")
+
+
+def test_blob_explicit_live_keeps_storage_identity_separate(blob_environment, monkeypatch):
+    monkeypatch.setenv("AI_COLLAGE_LIVE", "1")
+    assert storage_config.blob_settings().namespace == "test-019b"
 
 
 @pytest.mark.parametrize("failure,status,code", [
@@ -112,13 +116,17 @@ def test_blob_operational_errors_have_safe_explicit_http_outcomes(monkeypatch, f
 def test_proof_transport_counts_before_send_and_stops_at_cap(tmp_path, monkeypatch):
     ledger = tmp_path / "requests.jsonl"
     ledger.write_text("")
+    namespace = "proof-019c-" + "a" * 32
+    limits_path(ledger).write_text(ProofLimits(
+        namespace=namespace, http_requests=40, blob_requests=2,
+    ).model_dump_json())
     send = Mock(return_value=object())
     monkeypatch.setattr(RequestsTransport, "send", send)
     transport = ProofTransport(ledger)
-    request = HttpRequest("GET", storage_config.DEV_ACCOUNT_URL + "/collage/blob")
+    request = HttpRequest("GET", storage_config.DEV_ACCOUNT_URL + f"/collage/{namespace}/users/local-dev/published/proof.json")
     transport.send(request)
     assert len(ledger.read_text().splitlines()) == 1
-    ledger.write_text("{}\n" * 200)
+    ledger.write_text("{}\n" * 2)
     with pytest.raises(StorageUnavailable, match="allowance is exhausted"):
         transport.send(request)
     assert send.call_count == 1
