@@ -3,7 +3,8 @@
 **Status:** Successfully completed and closed on 2026-11-26 with the user's
 manual sign-off and requested Demo retirement. Final smoke testing and commit
 remain user-managed. No Copilot model calls were made; earlier live allowances
-remain closed. 018g remains separate and unapproved.
+remain closed. The subsequent [018g closeout](018g_results.md) records acceptance
+of the accumulated validation without another trial.
 
 Scope and stop rules: [018f brief](018f-current-collage-history-and-download.md).
 On 2026-11-26 the user authorized: "Go ahead with the scope agreed in
@@ -218,7 +219,8 @@ User staging remained at `15f0584a7b28d72f04120a05e528b50deb6c6670`.
 No Git writes, model calls, user-project changes or new installations.
 Owned verification services were stopped. This completes the user-approved
 closeout; 018f is closed, not a general quality certification or authorization
-for 018g. The user's final smoke test and commit are not performed by Copilot.
+for new trials. The user's final smoke test and commit were user-managed; the
+subsequent 018g closeout above records acceptance of the accumulated validation.
 
 ## Guardrails and manual-review gate
 
@@ -239,5 +241,5 @@ Any future live human trial remains the user's explicitly chosen activity,
 not a renewed Copilot allowance.
 
 Offline evidence alone does not establish real-photo/model quality or user
-acceptance. The recorded user sign-off closes this bounded phase; 018g and
-further features/model calls still require separate approval.
+acceptance. The recorded user sign-off closes this bounded phase; further
+implementation, trials and model calls still require separate approval.

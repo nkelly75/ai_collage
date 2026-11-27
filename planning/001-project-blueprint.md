@@ -46,7 +46,7 @@ The **AI Collage Builder** solves this by adopting a **hybrid architecture**:
    - Defer drop shadows and localized text captions.
 5. **Conversational Refinement:**
    - Maintain layout state across turns to handle incremental tweaks (e.g., *"Space them out more"*, *"Tilt image 3 to the left"*, *"Make image 2 the largest"*).
-   - Reuse clarification, remembered photo names, proposal navigation, and explicit acceptance rather than designing a separate web conversation model.
+   - Reuse clarification, remembered photo names, and proposal navigation rather than designing a separate web conversation model. Web edits use the selected current collage; explicit acceptance remains a CLI/replay capability, not a web action.
 6. **Pan & Zoom:**
    - Existing cover-mode recipes support cropping, panning, and zooming. These are not dependent on a graphical editor.
    - Dedicated graphical controls remain deferred; the first UI focuses on prompts and previews.
@@ -55,9 +55,9 @@ The **AI Collage Builder** solves this by adopting a **hybrid architecture**:
 
 - **Stack:** React + TypeScript + Vite. Next.js is not needed for the initial client-rendered application; Azure Functions supplies the target backend.
 - **Initial controls:** Photo uploads with stable numbered thumbnails, canvas aspect-ratio selection, natural-language prompt entry, a rendered preview, and follow-up prompts against the current layout.
-- **Conversation history:** Show messages, clarification questions, and proposal thumbnails. A "Continue from here" action selects a proposal as the editing baseline without deleting later history; explicit acceptance remains a separate action. Selecting an older proposal does not roll back remembered names.
+- **Conversation history:** Show messages, clarification questions, and proposal thumbnails. Open a historical collage in a modal for viewing, downloading, or choosing **Edit from this collage**. That action updates **Current collage** and records the selection in the timeline without deleting later history or rolling back remembered names. Viewing or downloading alone does not change the editing baseline; there is no web acceptance/finalization action.
 - **Progress:** Distinguish understanding the request from creating the layout, with clear busy, error, and recovery states.
-- **Preview:** Display the backend-rendered image rather than implementing a second layout renderer in the browser.
+- **Current collage:** Display the backend-rendered image rather than implementing a second layout renderer in the browser, with loading feedback while the current result updates and full-resolution PNG download.
 - **Deferred:** Drag handles, crop/pan/zoom controls, layer panels, and a polished visual editor.
 - **Tooling:** Start with the frontend and Functions development tools needed for the slice. Aspire is optional, not an initial dependency; reconsider orchestration if managing local services becomes troublesome.
 
@@ -255,7 +255,7 @@ updates for each step.
 
 - Add the React + TypeScript + Vite interface: numbered uploads, canvas-shape selection, prompt entry, backend-rendered previews, and follow-up prompts.
 - Reuse the local layout/rendering logic; introduce the local Functions wrapper without requiring cloud deployment.
-- Show conversation history and proposal thumbnails, with "Continue from here" distinct from acceptance, under the fixed development-user identity.
+- Show conversation history and proposal thumbnails, with **Current collage**, historical viewing/download, and explicit **Edit from this collage** selection under the fixed development-user identity. Keep acceptance/finalization out of the web workflow.
 - Split interpretation and generation with server-held validated intent and visible stage progress. Include the small backend mutation guard and enough local persistence work to support the slice.
 - Deliver bite-sized increments rather than build the whole API first. A frontend skeleton with controlled responses and a tooling check is a possible first increment; the implementation brief will select the breakdown.
 - Keep visual editing and polished UI work out of this phase.

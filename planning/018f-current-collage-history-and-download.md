@@ -30,8 +30,8 @@ graphical layout editing, photo/canvas changes, adding/removing photos, deletion
 draft autosave, automatic repair or retry, stopping running model work, agent
 prompt/reasoning tuning, new evaluation scenarios, vision, authentication,
 cloud/Blob, queues and broad end-to-end trials. Existing CLI/replay acceptance
-and natural-language return behavior remain intact. 018g stays separate and
-unapproved.
+and natural-language return behavior remain intact. The subsequent
+[018g validation closeout](018g_results.md) is recorded separately.
 
 ### User-approved closeout cleanup
 
@@ -43,7 +43,7 @@ workspace and retired route before closing 018f.
 
 That cleanup is complete and supersedes the original Demo-retention requirement.
 The user's further smoke test and commit remain user-managed; this closeout
-does not authorize Git writes, 018g or additional model calls.
+does not authorize Git writes, fresh trials or additional model calls.
 
 ## User-visible interactions
 

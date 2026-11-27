@@ -1,6 +1,7 @@
 # 018: Local conversation-and-preview experience
 
-**Status:** Tentative umbrella tracker, approved for capturing direction only.
+**Status:** Complete and closed for the agreed local conversation-and-preview
+experience. Future storage/cloud work requires a separately approved scope.
 018a is complete and closed with the user's acceptance as a starting prototype;
 see [018a results](018a_results.md). Separately authorized 018b is complete and
 closed following the user's manual connectivity verification;
@@ -15,9 +16,10 @@ Its live allowance is closed.
 [018f](018f-current-collage-history-and-download.md) is complete and closed
 following the user's manual sign-off and requested retirement of the original
 scripted Demo; see [results and limits](018f_results.md).
-Later increments remain unapproved.
-The subphase boundaries and sequence below may change as we learn; they are
-not a fixed delivery plan or authorization to implement all stages.
+[018g](018g_results.md) is satisfied and closed using the accumulated manual
+testing, focused fixes and user's acceptance, without another trial.
+This closes 018, not cloud readiness or general model reliability. Historical
+subphase plans and service allowances do not authorize new work.
 
 ## Purpose and boundaries
 
@@ -63,7 +65,7 @@ is open: Bootstrap is acceptable, as is a suitable React alternative. Choose a
 simple approach when specifying the skeleton, not a separate design-system
 project.
 
-## Tentative subphases
+## Subphases and outcomes
 
 | Increment | Intended outcome | Status |
 |---|---|---|
@@ -73,7 +75,7 @@ project.
 | [018d: Behavior-preserving stage extraction](018d-behavior-preserving-stage-extraction.md) | Extract shared interpretation and generation capabilities within the existing Python agent, with an explicit typed handoff. Preserve CLI/replay's composed request experience and establish a verified backend baseline before further web integration. | Complete and closed with user acceptance; [results and limits](018d_results.md). |
 | [018e: Real conversation and previews](018e-real-conversation-and-previews.md) | Build on the extracted stages to connect prompts, clarification/name-confirmation replies, generation and ordinary follow-up edits through Functions/UI. Display backend-rendered proposals and restore the transcript/current preview after refresh. Include split HTTP requests and meaningful progress. | Complete and closed following manual testing and user sign-off. Live allowance closed; [results and limits](018e_results.md). |
 | [018f: Current collage, history and download](018f-current-collage-history-and-download.md) | Add historical thumbnails/modal, explicit **Edit from this collage** with saved activity, and full-resolution PNG download. Confirm abandonment of pending clarification or unclaimed preparation; retain busy/uncertain safeguards without web acceptance or automatic repair. | Complete and closed following manual sign-off and user-approved Demo retirement; [results and limits](018f_results.md). |
-| 018g: End-to-end trial and focused refinement | Exercise create/converse/refine/revisit/choose an editing source/download/reopen with the user's photos, including backend restart. Address observed correctness/usability issues and obtain user sign-off, rather than add another feature tranche. | Tentative; detailed brief not yet written. |
+| [018g: End-to-end trial and focused refinement](018g_results.md) | Exercise create/converse/refine/revisit/choose an editing source/download/reopen with the user's photos, including backend restart. Address observed correctness/usability issues and obtain user sign-off, rather than add another feature tranche. | Satisfied and closed by accumulated 018e/018f testing and user acceptance; no additional trial or model allowance. |
 
 018d deliberately establishes the backend baseline before resuming Functions/UI
 work. Keep `Conversation.request()` as the ordinary composed operation over the
@@ -91,11 +93,12 @@ browser changes, durable web-operation records and HTTP-specific deadline policy
 are outside 018d. The [detailed extraction brief](018d-behavior-preserving-stage-extraction.md)
 defines the approved scope, call caps and stop rules.
 
-The following increments each include their usable UI/API connection rather
-than postponing UI wiring to a final integration phase. The intended milestones
-are a prompt-to-preview experience with newly created projects after 018e, the
+The increments included their usable UI/API connections rather than
+postponing UI wiring to a final integration phase. The intended milestones
+were a prompt-to-preview experience with newly created projects after 018e, the
 complete basic design workflow after 018f, and a user-accepted local experience
-after 018g. Basic saved transcript/preview restoration belongs in 018e; richer
+after 018g. These local milestones are now satisfied. Basic saved
+transcript/preview restoration belongs in 018e; richer
 history navigation, explicit editing-source selection and PNG download belong
 in 018f. Web acceptance/finalization is excluded from the simplified workflow.
 
