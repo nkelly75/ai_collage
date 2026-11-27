@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import errno
 import json
 import os
@@ -16,12 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ..agent.conversation import Conversation
 from ..agent.files import child, digest
 from ..agent.models import ConversationState
-from ..engine.imaging import load_photo
 from ..engine.models import (
     MAX_CANVAS_AXIS, MAX_FILE_BYTES, CollageError, PhotoMediaError, PhotoSizeError,
     Project, validate_project_id,
 )
-from ..engine.projects import ProjectStore, read_json
+from ..engine.projects import ProjectStore
+from ..storage import (
+    LocalProjectStorage, PhotoNotFound, ProjectExists, ProjectNotFound, ProjectStorage,
+)
 
 
 class FlowError(Exception):
@@ -106,29 +108,23 @@ def project_is_busy(store: ProjectStore, project_id: str) -> bool:
 
 
 class ProjectFlow:
-    def __init__(self, store: ProjectStore):
+    def __init__(self, store: ProjectStore, storage: ProjectStorage | None = None):
         self.store = store
+        self.storage = LocalProjectStorage(store) if storage is None else storage
 
     def _load(self, project_id: str) -> tuple[Project, ConversationState]:
-        directory = self.store.project_dir(project_id)
-        if not directory.exists():
-            raise FlowError("not_found", "Project not found.", 404)
+        validate_project_id(project_id)
         try:
-            if not directory.is_dir():
-                raise CollageError("Project entry is not a directory.")
-            project = self.store.load(project_id)
-            state = ConversationState.model_validate(
-                read_json(child(directory, "conversation", "state.json"))
-            )
+            project, state = self.storage.load(project_id)
             photo_digest = digest(json.dumps(
                 [photo.model_dump() for photo in project.photos], sort_keys=True,
             ).encode())
             if state.project_id != project_id or state.photo_digest != photo_digest:
                 raise CollageError("Project/photo identity mismatch.")
-            if any(not path.is_file() for path in self.store.photo_paths(project).values()):
-                raise CollageError("Missing imported photo.")
             CanvasSize(width=state.controls.width, height=state.controls.height)
             return project, state
+        except ProjectNotFound as exc:
+            raise FlowError("not_found", "Project not found.", 404) from exc
         except (CollageError, ValidationError, FileNotFoundError, IsADirectoryError, NotADirectoryError) as exc:
             raise FlowError(
                 "invalid_project_state", f"Saved project {project_id} is incomplete or invalid; it was not changed.", 409,
@@ -151,17 +147,13 @@ class ProjectFlow:
 
     def list(self) -> list[dict]:
         try:
-            directories = sorted(self.store.projects_dir.iterdir())
-        except FileNotFoundError:
-            return []
+            project_ids = self.storage.project_ids()
+        except CollageError as exc:
+            raise FlowError("invalid_project_state", "Unexpected entry in the project store.", 409) from exc
         results = []
-        for directory in directories:
-            if directory.name.startswith("."):
-                continue
-            if not directory.is_dir():
-                raise FlowError("invalid_project_state", "Unexpected entry in the project store.", 409)
+        for project_id in project_ids:
             try:
-                detail = self.detail(directory.name)
+                detail = self.detail(project_id)
             except CollageError as exc:
                 raise FlowError("invalid_project_state", "Invalid saved project ID; store unchanged.", 409) from exc
             results.append({
@@ -172,34 +164,21 @@ class ProjectFlow:
 
     def photo(self, project_id: str, photo_id: int) -> tuple[bytes, str]:
         project, _ = self._load(project_id)
-        paths = self.store.photo_paths(project)
-        if photo_id not in paths:
-            raise FlowError("not_found", "Photo not found.", 404)
-        path = paths[photo_id]
         try:
-            image, extension = load_photo(path)
-            with image:
-                photo = project.photos[photo_id - 1]
-                if image.size != (photo.width, photo.height):
-                    raise CollageError("Photo dimensions changed.")
-            with path.open("rb") as stream:
-                raw = stream.read(MAX_FILE_BYTES + 1)
-            if len(raw) > MAX_FILE_BYTES:
-                raise CollageError("Photo exceeds its size limit.")
+            return self.storage.photo(project, photo_id)
+        except PhotoNotFound as exc:
+            raise FlowError("not_found", "Photo not found.", 404) from exc
         except (CollageError, FileNotFoundError) as exc:
             raise FlowError("invalid_project_state", "Saved photo is missing or invalid; project unchanged.", 409) from exc
-        return raw, "image/jpeg" if extension == ".jpg" else "image/png"
 
     def create(self, setup: ProjectSetup, images: list[BinaryIO]) -> dict:
         if not 2 <= len(images) <= 6:
             raise FlowError("invalid_request", "Choose between 2 and 6 photos.")
         store = self.store
         with project_guard(store, setup.project_id):
-            destination = store.project_dir(setup.project_id)
-            if destination.exists():
+            if self.storage.exists(setup.project_id):
                 raise FlowError("project_exists", "That project ID is already saved.", 409)
-            store.projects_dir.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix=".create-web-", dir=store.projects_dir) as temporary:
+            with tempfile.TemporaryDirectory(prefix="collage-prepare-") as temporary:
                 root = Path(temporary)
                 sources = []
                 for number, stream in enumerate(images, start=1):
@@ -226,19 +205,13 @@ class ProjectFlow:
                     canvas=(setup.canvas.width, setup.canvas.height),
                 )
                 result = self._detail(project, conversation.state)
-                store.uploads_dir.mkdir(parents=True, exist_ok=True)
-                published = []
-                committed = False
-                try:
-                    paths = store.photo_paths(project)
-                    for number, source in staging.photo_paths(project).items():
-                        # Link without replacement; staging and destination share a filesystem.
-                        os.link(source, paths[number])
-                        published.append(paths[number])
-                    staging.project_dir(setup.project_id).rename(destination)
-                    committed = True
-                finally:
-                    if not committed:
-                        for path in published:
-                            path.unlink()
+                with ExitStack() as stack:
+                    photos = {
+                        number: stack.enter_context(path.open("rb"))
+                        for number, path in staging.photo_paths(project).items()
+                    }
+                    try:
+                        self.storage.publish(project, conversation.state, photos)
+                    except ProjectExists as exc:
+                        raise FlowError("project_exists", "That project ID is already saved.", 409) from exc
                 return result

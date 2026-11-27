@@ -16,6 +16,7 @@ status; the [README](README.md) is the usage entry point.
 | `ai_collage\engine` | Offline layout/project contracts, geometry, photo validation, deterministic rendering and project storage. | [Models](ai_collage/engine/models.py), [geometry](ai_collage/engine/geometry.py), [imaging](ai_collage/engine/imaging.py), [ProjectStore](ai_collage/engine/projects.py) |
 | `ai_collage\agent` | Conversation state, photo-reference memory, interpretation, proposals, local editing-source selection and acceptance; optional, bounded model requests. Uses the engine to validate and render, rather than generating replacement images. | [Conversation](ai_collage/agent/conversation.py), [requests](ai_collage/agent/requests.py), [provider](ai_collage/agent/provider.py) |
 | `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Coordinates projects, durable split-stage/local-selection operations, read-only transcript/preview projection and local request claims. | [ProjectFlow](ai_collage/application/projects.py), [ConversationFlow](ai_collage/application/conversation.py) |
+| `ai_collage\storage.py` | Narrow initialized-project persistence contract and local implementation for publication, enumeration, project/state reads and original-photo delivery. Reuses engine/agent record helpers; does not implement conversation mutations. | [ProjectStorage / LocalProjectStorage](ai_collage/storage.py) |
 | `ai_collage\cli` | Command parsing and terminal presentation for engine, conversation and evaluation operations. | [Main CLI](ai_collage/cli/main.py), [chat](ai_collage/cli/chat.py) |
 | `ai_collage\evaluation` | Scripted conversation replay and offline assessment of saved evidence; tooling, not part of an ordinary web request. Live replay requires separate authorization. | [Replay](ai_collage/evaluation/replay.py), [assessment](ai_collage/evaluation/assess.py) |
 | `api` | Thin Azure Functions HTTP adapter and local host configuration/launcher. Translates requests into application calls and results/errors into HTTP responses. | [Functions](api/function_app.py), [launcher](api/start.ps1) |
@@ -80,23 +81,46 @@ real backend state; unknown routes use the ordinary not-found page.
    multipart HTTP request.
 2. `api\function_app.py` checks the HTTP envelope, local Host/Origin and request
    limits, parses metadata/file fields, then calls `ProjectFlow.create`.
-3. `ai_collage\application\projects.py` locks the project ID and stages the
-   uploaded streams as temporary files. It calls the existing
+3. `ai_collage\application\projects.py` locks the project ID, checks existence
+   through `ProjectStorage` and stages uploaded streams in private temporary
+   storage. It calls the existing
    `ProjectStore.create` to import photos and create normal project records.
 4. It constructs the existing `Conversation` to initialize normal conversation
    state, including canvas controls. This does not make a model request.
-5. It publishes the completed project last, with rollback for handled failures.
-   The Functions adapter returns the result as HTTP 201; the UI navigates only
-   after confirmed success.
+5. It passes the prepared project/state models and open original-photo streams
+   to `LocalProjectStorage.publish`. The local implementation stages the
+   ordinary records and bounded photo copies on the destination filesystem,
+   links assets without replacement and publishes the completed project
+   directory last, with rollback for handled pre-publication failures.
+   The Functions adapter returns HTTP 201; the UI navigates only after confirmed
+   success.
 
-The additional application-level staging makes project creation and initial
-conversation setup one published operation. It does not replace the engine's
-photo importer, project models or storage format. There are no CLI subprocesses,
-copied backend sources or second web-only project/conversation implementations.
+Private preparation followed by storage-owned publication makes project
+creation and initial conversation setup one published operation. It does not
+replace the engine's photo importer, project models or storage format. There
+are no CLI subprocesses, copied backend sources or second web-only
+project/conversation implementations.
 
-Reopening uses `ProjectFlow` to validate the existing project, conversation and
-photo identity without initializing or repairing saved state. Photo responses
-serve the imported original bytes; image validation still uses the engine.
+Reopening uses `ProjectStorage.load` for strict record reads and asset-presence
+checks; `ProjectFlow` validates project/conversation/photo identity and canvas
+without initializing or repairing saved state. Listing and photo delivery also
+use the boundary. Photo responses serve imported original bytes; the local
+implementation reuses engine image validation.
+
+`ProjectStorage` uses logical project/photo IDs, existing record models and
+streams, not durable directory traversal. `ProjectFlow` accepts an injected
+implementation and defaults to `LocalProjectStorage` over the configured
+`ProjectStore`. The existing local OS-held guard still covers existence checks,
+preparation and publication; it is not a distributed lock. Temporary preparation
+can be on another volume because publication copies streams into destination-local
+staging before linking.
+
+This boundary is deliberately partial. Conversation reads use its project
+validation through `ProjectFlow._load`, but history/proposal writes, request
+records, web operations/selections and CLI/replay persistence retain their
+existing local paths. The engine does not import the storage module or acquire
+agent/application dependencies. There is no Blob implementation, provider
+configuration switch or cloud credential initialization.
 
 ## A conversation request, end to end
 

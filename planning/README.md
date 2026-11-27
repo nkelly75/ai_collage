@@ -144,6 +144,17 @@ projects, without web acceptance. See [018f results](018f_results.md).
 and user's acceptance**, without an additional trial. This closes the bounded
 018 local experience; storage/cloud work requires a separate scope and approval.
 
+[019: Storage abstraction and Blob persistence](019-storage-abstraction-and-blob-persistence.md)
+captures the next high-level direction and tentative increments; it is not an
+implementation specification or authorization. The
+[019a brief](019a-initial-local-storage-extraction.md) bounds an offline
+create/list/reopen/photo extraction, now complete and closed following offline
+verification and user acceptance; see [results](019a_results.md).
+019b proves that slice against Blob, 019c completes web persistence and 019d
+is optional measured performance work. Initial development
+[infrastructure](../infra/README.md) has been deployed with separate approval;
+application implementation of those later increments remains unapproved.
+
 ## Planning records
 
 Numbering is reading order, not phase numbering. These records are snapshots
@@ -180,6 +191,9 @@ and record 003 spans several feature increments.
 | [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Complete and closed for the agreed local workflow; 018g satisfied by accumulated testing and user acceptance. | See the [018 tracker](018-local-conversation-and-preview.md); storage/cloud readiness remains separately scoped. |
 | [018f: Current collage, history and download](018f-current-collage-history-and-download.md) | Successfully completed and closed with manual sign-off and user-approved Demo retirement; [results](018f_results.md). | Simplified real-project workflow; future trials and Git writes remain separately authorized. |
 | [018g: Accumulated end-to-end validation](018g_results.md) | Satisfied and closed by existing user testing, focused fixes and acceptance; no repeated trial. | Closeout record, not a new implementation brief or model allowance. |
+| [019: Storage abstraction and Blob persistence](019-storage-abstraction-and-blob-persistence.md) | High-level direction: 019a local extraction, 019b initial Blob integration, 019c complete web persistence and optional 019d performance. | Detailed briefs and implementation approval remain separate. |
+| [019a: Initial local storage extraction](019a-initial-local-storage-extraction.md) | Complete and closed following offline verification and user acceptance. | See [results](019a_results.md); real Blob proof follows separately in unapproved 019b. |
+| [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Separate draft code specification: opt-in API-only proof using Azure CLI authentication. | [Infrastructure record](019b-initial-blob-integration.md) is verified; implementation, Python installation and live application tests remain separately gated. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,
