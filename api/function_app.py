@@ -10,6 +10,8 @@ from ai_collage.engine.models import MAX_JSON_BYTES, CollageError
 from ai_collage.engine.projects import parse_json
 from ai_collage.application.projects import FlowError, ProjectFlow, ProjectSetup, configured_store
 from ai_collage.application.conversation import ConversationFlow, GenerationRequest, SelectionSubmission, Submission
+from ai_collage.storage.contracts import StorageOutcomeUnknown, StorageUnavailable
+from storage_config import project_flow, reject_blob_conversation
 
 
 MAX_BODY_BYTES = 160 * 1024 * 1024
@@ -61,22 +63,22 @@ def create_project(req: func.HttpRequest, flow: ProjectFlow) -> dict:
 def dispatch(req: func.HttpRequest, operation: str) -> func.HttpResponse:
     try:
         check_request(req)
-        flow = ProjectFlow(configured_store())
-        if operation == "collection":
-            if req.method == "POST":
-                result = create_project(req, flow)
-                return json_response(result, 201, Location=f"/api/projects/{result['project_id']}")
-            return json_response({"projects": flow.list()})
-        project_id = req.route_params["project_id"]
-        if operation == "detail":
-            return json_response(flow.detail(project_id))
-        number = req.route_params["photo_id"]
-        if not number.isascii() or not number.isdecimal() or len(number) > 2:
-            raise FlowError("not_found", "Photo not found.", 404)
-        raw, content_type = flow.photo(project_id, int(number))
-        return func.HttpResponse(raw, mimetype=content_type, headers={
-            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-        })
+        with project_flow() as flow:
+            if operation == "collection":
+                if req.method == "POST":
+                    result = create_project(req, flow)
+                    return json_response(result, 201, Location=f"/api/projects/{result['project_id']}")
+                return json_response({"projects": flow.list()})
+            project_id = req.route_params["project_id"]
+            if operation == "detail":
+                return json_response(flow.detail(project_id))
+            number = req.route_params["photo_id"]
+            if not number.isascii() or not number.isdecimal() or len(number) > 2:
+                raise FlowError("not_found", "Photo not found.", 404)
+            raw, content_type = flow.photo(project_id, int(number))
+            return func.HttpResponse(raw, mimetype=content_type, headers={
+                "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+            })
     except Exception as exc:
         return request_error(exc)
 
@@ -84,6 +86,16 @@ def dispatch(req: func.HttpRequest, operation: str) -> func.HttpResponse:
 def request_error(exc: Exception) -> func.HttpResponse:
     if isinstance(exc, FlowError):
         return json_response({"error": {"code": exc.code, "message": str(exc)}}, exc.status)
+    if isinstance(exc, StorageOutcomeUnknown):
+        logging.exception("Blob publication outcome is unknown")
+        return json_response({"error": {
+            "code": "outcome_unknown", "message": "Publication may have completed; look up the project before creating again.",
+        }}, 500)
+    if isinstance(exc, StorageUnavailable):
+        logging.exception("Blob storage operation failed")
+        return json_response({"error": {
+            "code": "storage_unavailable", "message": "Blob storage is unavailable; check access and saved state.",
+        }}, 503)
     if isinstance(exc, (ValidationError, CollageError, ValueError)):
         logging.info("Invalid API request: %s", type(exc).__name__)
         code, message, status = "invalid_request", "Invalid request ID, body or saved resource.", 400
@@ -108,6 +120,7 @@ def json_body(req: func.HttpRequest) -> object:
 def _dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpResponse:
     try:
         check_request(req)
+        reject_blob_conversation()
         flow = ConversationFlow(configured_store())
         project_id = req.route_params["project_id"]
         if operation == "conversation":

@@ -585,6 +585,7 @@ for the rationale behind the feature increments.
 | `ai_collage\evaluation` | Callable replay execution and offline evidence assessment | `tests\evaluation` |
 | `ai_collage\cli` | Argument parsing and terminal chat/presentation | `tests\cli` |
 | `ai_collage\application` | Application workflows coordinating existing engine and agent capabilities | `tests\application` |
+| `ai_collage\storage` | Initialized-project persistence contracts and Local/Blob adapters | `tests\storage` |
 | `api` | Functions HTTP adapters and local host launcher | `tests\api` |
 
 The agent depends on the engine; evaluation uses both, and CLI modules expose
@@ -614,11 +615,12 @@ the existing Python environment (no Functions SDK required):
 .\.venv\Scripts\python.exe -m pytest -q --tb=short -p no:cacheprovider
 ```
 
-API tests live in the same test tree but are excluded from that default suite.
-Run them separately with the API environment, which also has the Functions SDK:
+API tests and SDK-dependent Blob adapter tests are excluded from that default
+suite; Local adapter tests are included. Run API and Blob tests separately with
+the API environment, which has the Functions and Blob SDKs:
 
 ```powershell
-.\api\.venv\Scripts\python.exe -m pytest -q -c .\api\pytest.ini .\tests\api
+.\api\.venv\Scripts\python.exe -m pytest -q -c .\api\pytest.ini .\tests\api .\tests\storage\test_blob.py
 ```
 
 Both environments import the same application source. See the

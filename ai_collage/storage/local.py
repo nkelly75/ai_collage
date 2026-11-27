@@ -1,46 +1,17 @@
-"""Initialized-project persistence; conversation mutations remain local elsewhere."""
+"""Local initialized-project publication and read-only delivery."""
 
 from collections.abc import Mapping
 import os
 from pathlib import Path
 import tempfile
-from typing import BinaryIO, Protocol
+from typing import BinaryIO
 
-from .agent.files import child, save
-from .agent.models import ConversationState
-from .engine.imaging import load_photo
-from .engine.models import MAX_FILE_BYTES, CollageError, PhotoSizeError, Project
-from .engine.projects import ProjectStore, _write_json, read_json
-
-
-class ProjectNotFound(CollageError):
-    """No published project has this ID."""
-
-
-class ProjectExists(CollageError):
-    """Publication would replace an existing project entry."""
-
-
-class PhotoNotFound(CollageError):
-    """The project has no photo with this number."""
-
-
-class ProjectStorage(Protocol):
-    """Prepared-project IO; mutations require the caller's project guard."""
-
-    def exists(self, project_id: str) -> bool: ...
-
-    def publish(
-        self, project: Project, state: ConversationState, photos: Mapping[int, BinaryIO],
-    ) -> None:
-        """Publish a prepared project, consuming photo streams from their current positions."""
-        ...
-
-    def project_ids(self) -> list[str]: ...
-
-    def load(self, project_id: str) -> tuple[Project, ConversationState]: ...
-
-    def photo(self, project: Project, photo_id: int) -> tuple[bytes, str]: ...
+from ..agent.files import child, save
+from ..agent.models import ConversationState
+from ..engine.imaging import load_photo
+from ..engine.models import MAX_FILE_BYTES, CollageError, PhotoSizeError, Project
+from ..engine.projects import ProjectStore, _write_json, read_json
+from .contracts import PhotoNotFound, ProjectExists, ProjectNotFound
 
 
 class LocalProjectStorage:

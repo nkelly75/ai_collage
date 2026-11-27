@@ -4,7 +4,7 @@ import json
 import os
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from uuid import uuid4
 
 from .geometry import resolve_layout
@@ -83,6 +83,18 @@ def _contained(root: Path, path: Path) -> Path:
     return resolved
 
 
+def photo_extension(photo: Photo) -> str:
+    """Validate logical imported-asset metadata without resolving a host path."""
+    relative = PureWindowsPath(photo.imported_path)
+    if (
+        relative.parent != PureWindowsPath("uploads")
+        or relative.stem != photo.asset_id
+        or relative.suffix not in {".jpg", ".png"}
+    ):
+        raise CollageError(f"Invalid imported path for photo {photo.photo_id}.")
+    return relative.suffix
+
+
 class ProjectStore:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir.resolve()
@@ -110,12 +122,7 @@ class ProjectStore:
         paths = {}
         for photo in project.photos:
             relative = Path(photo.imported_path)
-            if (
-                relative.parent != Path("uploads")
-                or relative.stem != photo.asset_id
-                or relative.suffix not in {".jpg", ".png"}
-            ):
-                raise CollageError(f"Invalid imported path for photo {photo.photo_id}.")
+            photo_extension(photo)
             paths[photo.photo_id] = _contained(
                 self.uploads_dir, self.owner_dir / relative
             )

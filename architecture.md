@@ -16,10 +16,10 @@ status; the [README](README.md) is the usage entry point.
 | `ai_collage\engine` | Offline layout/project contracts, geometry, photo validation, deterministic rendering and project storage. | [Models](ai_collage/engine/models.py), [geometry](ai_collage/engine/geometry.py), [imaging](ai_collage/engine/imaging.py), [ProjectStore](ai_collage/engine/projects.py) |
 | `ai_collage\agent` | Conversation state, photo-reference memory, interpretation, proposals, local editing-source selection and acceptance; optional, bounded model requests. Uses the engine to validate and render, rather than generating replacement images. | [Conversation](ai_collage/agent/conversation.py), [requests](ai_collage/agent/requests.py), [provider](ai_collage/agent/provider.py) |
 | `ai_collage\application` | User-operation orchestration across engine and agent capabilities. Coordinates projects, durable split-stage/local-selection operations, read-only transcript/preview projection and local request claims. | [ProjectFlow](ai_collage/application/projects.py), [ConversationFlow](ai_collage/application/conversation.py) |
-| `ai_collage\storage.py` | Narrow initialized-project persistence contract and local implementation for publication, enumeration, project/state reads and original-photo delivery. Reuses engine/agent record helpers; does not implement conversation mutations. | [ProjectStorage / LocalProjectStorage](ai_collage/storage.py) |
+| `ai_collage\storage` | Narrow initialized-project persistence contract, Local adapter and opt-in immutable Blob adapter. Handles publication, enumeration, record reads and original-photo delivery, not conversation mutations. Azure SDK imports stay in the Blob module. | [Contracts](ai_collage/storage/contracts.py), [LocalProjectStorage](ai_collage/storage/local.py), [BlobProjectStorage](ai_collage/storage/blob.py) |
 | `ai_collage\cli` | Command parsing and terminal presentation for engine, conversation and evaluation operations. | [Main CLI](ai_collage/cli/main.py), [chat](ai_collage/cli/chat.py) |
 | `ai_collage\evaluation` | Scripted conversation replay and offline assessment of saved evidence; tooling, not part of an ordinary web request. Live replay requires separate authorization. | [Replay](ai_collage/evaluation/replay.py), [assessment](ai_collage/evaluation/assess.py) |
-| `api` | Thin Azure Functions HTTP adapter and local host configuration/launcher. Translates requests into application calls and results/errors into HTTP responses. | [Functions](api/function_app.py), [launcher](api/start.ps1) |
+| `api` | Thin Azure Functions HTTP adapter and local host configuration/launcher. Selects Local/default or API-only development Blob storage and translates application results/errors into HTTP responses. | [Functions](api/function_app.py), [storage selection](api/storage_config.py), [launcher](api/start.ps1) |
 | `web` | React/TypeScript UI, temporary selection previews and API client for real saved projects, not another renderer or language interpreter. | [App](web/src/App.tsx), [API client](web/src/api.ts), [workspace](web/src/RealWorkspace.tsx) |
 
 ## How the entry points fit together
@@ -64,7 +64,7 @@ internal agent contract, not authority to trust browser-supplied intent;
 HTTP operation storage and concurrency belong to `ConversationFlow`, not the
 agent handoff or a client-supplied intent.
 
-The real web path supports create/save/list/reopen, photo serving, conversation,
+The default Local-mode web path supports create/save/list/reopen, photo serving, conversation,
 backend-rendered proposals, historical thumbnail/modal viewing, explicit local
 source selection and stored full-resolution PNG downloads. One Send interprets,
 then generates if needed through separate HTTP requests. Questions, naming and
@@ -119,8 +119,33 @@ This boundary is deliberately partial. Conversation reads use its project
 validation through `ProjectFlow._load`, but history/proposal writes, request
 records, web operations/selections and CLI/replay persistence retain their
 existing local paths. The engine does not import the storage module or acquire
-agent/application dependencies. There is no Blob implementation, provider
-configuration switch or cloud credential initialization.
+agent/application dependencies.
+
+The API's request-scoped storage factory defaults to Local and imports no Azure
+storage implementation or credentials on that path. Explicit Blob mode uses
+the same preparation and `ProjectStorage` contract with `BlobProjectStorage`,
+subscription-scoped `AzureCliCredential` and the fixed development container.
+SDK retries are disabled, with finite token/connection/read timeouts.
+CLI/replay do not use this API-side selection.
+
+Blob publication uploads original photos and the normal project/initial-state
+records under a unique candidate attempt. A strict version-1 completion envelope
+is conditionally created last under `published`; all referenced keys derive from
+validated logical identities, not imported local paths. Independent local guards
+are not the cross-host guarantee: Azure create-if-absent publication prevents
+replacement. Definite losing/pre-publication attempts remove only confirmed-owned
+objects using ETags. An ambiguous completion preserves candidates and reports
+`outcome_unknown`; operational failures report `storage_unavailable`, with no
+local fallback. Bounded reads validate published records and original photos
+without repair. Durable state remains in Blob, not local project/photo copies.
+
+This opt-in mode is API-only: conversation/request/status/generation/selection/
+preview routes reject with `blob_slice_only` before accessing local conversation
+state or a model provider. The full browser workflow remains Local-only.
+There is no cloud deployment, production authentication or automatic orphan
+cleanup. The separately opt-in [proof runner](api/verify_blob_storage.py) starts
+owned local hosts with a cross-restart request ledger; it is not an ordinary
+application persistence or budget service.
 
 ## A conversation request, end to end
 
@@ -232,11 +257,15 @@ Node toolchain; it does not render collages.
 Python tests share the root `tests` tree. For example,
 [application tests](tests/application/test_project_flow.py) exercise workflows
 directly, while [API tests](tests/api/test_project_routes.py) exercise the HTTP
-adapter. Frontend tests remain under `web\src`. Suite/environment commands live
+adapter. [Storage tests](tests/storage) exercise the Local/Blob adapters; the
+Blob tests use the API environment for its SDK, not an API-owned test directory.
+The default root suite selects the Local storage tests without requiring Azure
+packages. Frontend tests remain under `web\src`. Suite/environment commands live
 in the [CLI guide](docs/cli-guide.md#verification) and [API README](api/README.md#offline-tests).
 
-The current host and storage are local development facilities. Anonymous
+The current host and default storage are local development facilities. Anonymous
 Functions routes and local-origin restrictions are not production
-authentication. Deployment packaging, authenticated cloud hosting and private
-Blob persistence remain future work; see the [API](api/README.md) and
+authentication. Opt-in Blob storage covers only initialized projects.
+Deployment packaging, authenticated cloud hosting and complete web Blob
+persistence remain future work; see the [API](api/README.md) and
 [UI](web/README.md) guides for current setup and limits.

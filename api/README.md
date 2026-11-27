@@ -3,10 +3,11 @@
 Loopback-only Azure Functions routes create, list and reopen local photo/canvas
 projects and expose real conversation/previews. Thin HTTP adapters call the
 project/conversation application workflows, coordinating the same engine and
-agent used by CLI/replay. No source copies, CLI subprocesses or cloud storage
-are used. Model access requires explicit `-Live`; creation, local source
-selection and reads never
-initialize credentials or make model calls.
+agent used by CLI/replay. No source copies or CLI subprocesses are used.
+**Local storage is the default** for the complete web workflow. An opt-in,
+API-only Blob mode supports initialized projects, not conversations.
+Model access requires explicit `-Live`. In Local mode, creation, source
+selection and reads never initialize credentials or make model calls.
 The routes are anonymous development endpoints, not a deployable authentication
 or ownership boundary.
 
@@ -109,7 +110,7 @@ Host/Origin, 404 missing project/photo, 409 duplicate/busy/invalid saved state,
 publication. The error code and saved operation matter, not HTTP status alone.
 Unexpected errors are logged without exposing local paths in responses.
 
-Creation stages photos and the normal empty conversation privately, publishing
+Local-mode creation stages photos and the normal empty conversation privately, publishing
 the project directory last. Canvas dimensions live only in existing conversation
 controls. An OS-held per-project lock rejects competing local creates and conversation
 mutations across tabs/worker processes.
@@ -256,6 +257,130 @@ Leave those copies alone unless their references have been checked; deleting a
 project directory is not complete disk cleanup. Original source photos are
 untouched. No deletion UI/API or garbage collector is provided.
 
+## API-only development Blob mode
+
+This mode supports only the four project routes in the storage-contract table.
+It is **not a Blob-backed web UI**. Conversation, request/status, generation,
+selection and preview routes return 501 `blob_slice_only`, after Host/Origin
+checks but before local conversation access or provider initialization.
+CLI/replay and ordinary `.\api\start.ps1` launches remain local.
+
+Use the existing development target from the
+[infrastructure record](../planning/019b-initial-blob-integration.md), with
+the already authorized Azure CLI identity. The launcher never signs in, creates
+resources or changes CLI defaults. Set backend-only variables before launch:
+
+```powershell
+$env:AI_COLLAGE_BLOB_ACCOUNT_URL = '<development Blob endpoint from the infrastructure record>'
+$env:AI_COLLAGE_BLOB_CONTAINER = 'collage'
+$env:AI_COLLAGE_BLOB_SUBSCRIPTION_ID = '<development subscription from the infrastructure record>'
+$env:AI_COLLAGE_BLOB_NAMESPACE = 'smoke-019b-' + [guid]::NewGuid().ToString('N')
+$env:AI_COLLAGE_DATA_DIR = Join-Path $env:TEMP ('collage-019b-' + [guid]::NewGuid().ToString('N'))
+.\api\start.ps1 -StorageBackend Blob
+```
+
+The endpoint, container and subscription must match that development target.
+Namespaces are 1-64 lowercase alphanumeric/hyphen characters, starting and
+ending with an alphanumeric character. Missing/invalid settings fail explicitly;
+there is no Local fallback. Direct workers select
+`AI_COLLAGE_STORAGE_BACKEND=Blob`; missing means Local, blank/unknown fails.
+Local launches clear inherited Blob configuration only in the worker and restore
+the caller's environment on exit. Blob plus `-Live`/trial settings is rejected.
+`AI_COLLAGE_DATA_DIR` is only a disposable local guard root in this mode, not the
+authority for saved project data. Temporary import/validation files are removed.
+
+Authentication uses subscription-scoped `AzureCliCredential` only: no credential
+chain, account key, SAS or browser credential. CLI-token process timeout is 10s;
+Blob connection/read timeouts are 10s/30s. SDK retries are disabled. This does
+not guarantee cancellation of a timed-out in-flight upload.
+Application Blob configuration never supplies Functions host storage.
+
+Original photos and existing project/state records are uploaded under a unique
+candidate attempt. A strict version-1 completion document, conditionally created
+last, is the visibility and duplicate-conflict boundary. Competing creates cannot
+replace a published ID, even with separate local roots. Reads list published
+projects only, validate existing records/assets and never initialize or repair.
+They retain the existing record, byte, pixel and HTTP limits.
+There are no durable local project/photo copies or automatic migrations.
+
+Known service/authentication/permission/container failures return
+`storage_unavailable`/503, not an empty list or a project 404. Invalid published
+state returns 409. An ambiguous completion write returns `outcome_unknown`/500
+and preserves its candidate objects; reconcile with GET, never automatic POST
+retry. Not-found while a create might still be running is not proof of rollback.
+Definite pre-publication failures clean only confirmed-owned objects using their
+ETags. Cleanup failures are logged without masking the original failure.
+There is no general Blob deletion API or orphan collector.
+
+### Separately approved real-account proof
+
+Ordinary pytest never runs this proof. After **separate explicit live approval**,
+from the repository root, choose a new absolute evidence directory whose parent
+already exists:
+
+```powershell
+.\api\.venv\Scripts\python.exe -m api.verify_blob_storage --allow-azure --output-dir C:\absolute\new-proof-directory
+```
+
+Use the module invocation, not the script path. This starts its own loopback
+Functions hosts, verifies listener ownership, generates two tiny JPEG/PNG photos
+(at most 1 MiB together), and exercises create/list/detail/originals, duplicate
+409 and unsupported-route 501. It restarts with a different empty local root and
+checks identical metadata and original bytes again, without model access.
+
+The fresh `proof-019b-<uuid>` namespace is limited to one project, **30 local HTTP
+requests and 200 Blob HTTP sends**, including readback and cleanup. An opt-in
+`AI_COLLAGE_BLOB_PROOF_LEDGER` absolute existing JSONL file counts SDK sends across
+worker restarts and cleanup; normal operation does not use it. The transport
+rejects other targets and blocks before send 201. The report, downloaded
+originals, request ledger and host logs remain in the evidence directory.
+
+On success, cleanup first validates an exact run-owned inventory, then deletes
+the completion document before its referenced objects using captured ETags.
+On uncertainty/failure, preserve the namespace and evidence; an incomplete
+inventory is **not** evidence that no objects exist. Do not clear the container,
+guess at cleanup or rerun without renewed approval.
+
+### User API smoke check
+
+019b is closed on explicit user acceptance of the real-account proof, with this
+manual repetition waived. The procedure remains a reference, not an outstanding
+acceptance requirement or authorization for another agent-run test.
+
+For a separately authorized manual check, use a **separate** `smoke-019b-...` namespace and disposable
+root as above. These checks access Azure and are not offline tests. In a second
+**PowerShell 7** terminal, use the two generated downloads from the proof:
+
+```powershell
+$base = 'http://127.0.0.1:7071/api/projects'
+$evidence = '<absolute evidence directory reported by the successful proof>'
+$form = @{
+    metadata = '{"project_id":"smoke","canvas":{"width":900,"height":1600}}'
+    photo_1 = Get-Item (Join-Path $evidence 'download-1.jpg')
+    photo_2 = Get-Item (Join-Path $evidence 'download-2.png')
+}
+Invoke-WebRequest -Method Post -Uri $base -Form $form
+Invoke-RestMethod $base
+Invoke-RestMethod "$base/smoke"
+Invoke-WebRequest "$base/smoke/photos/1" -OutFile "$env:TEMP\collage-019b-original.jpg"
+Get-FileHash $form.photo_1.FullName,"$env:TEMP\collage-019b-original.jpg"
+Invoke-WebRequest "$base/smoke/photos/2" -OutFile "$env:TEMP\collage-019b-original.png"
+Get-FileHash $form.photo_2.FullName,"$env:TEMP\collage-019b-original.png"
+Invoke-WebRequest -Method Post -Uri $base -Form $form -SkipHttpErrorCheck
+Invoke-WebRequest "$base/smoke/conversation" -SkipHttpErrorCheck
+```
+
+Expect create 201/Location, one listed project, canvas 900x1600 and photo
+dimensions 10x20/12x24, matching hash pairs, duplicate 409 and conversation 501.
+Stop the host, change only `AI_COLLAGE_DATA_DIR` to another fresh absolute root
+in its terminal, retain the same Blob namespace, and relaunch Blob mode.
+Repeat the list/detail/download/hash checks. There must be no local
+`users\local-dev\projects` tree in either root. Leave the separate smoke namespace
+for explicitly scoped cleanup; the automated proof does not own it.
+See [implementation results](../planning/019b_results.md#user-acceptance-and-closeout)
+for the actual verification and explicit acceptance. Offline or agent-run success
+alone is not user sign-off.
+
 ## Offline tests
 
 All Python tests live under the checkout's `tests` directory. From the
@@ -265,23 +390,32 @@ repository root, select the environment and suite explicitly:
 # Core/application tests: existing Python environment, no Functions SDK required.
 .\.venv\Scripts\python.exe -m pytest -q
 
-# HTTP adapters and Functions launcher: API environment with the Functions SDK.
-.\api\.venv\Scripts\python.exe -m pytest -q -c .\api\pytest.ini .\tests\api
+# HTTP adapters, launcher and Blob adapter: API environment with both SDKs.
+.\api\.venv\Scripts\python.exe -m pytest -q -c .\api\pytest.ini .\tests\api .\tests\storage\test_blob.py
 ```
 
 Tests use generated photos/temp roots and block unmocked external services.
 They cover multipart/JSON validation, original bytes/orientation, read-only
 reopening, split stages, durable claims, failure windows, limits and
-cross-process guards. Launcher tests use fake Core
+cross-process guards. Blob tests use SDK-boundary mocks and one real-SDK upload
+contract check with its HTTP transport replaced; no Azure account or emulator.
+Proof lifecycle tests use only disposable owned loopback listeners/processes.
+Launcher tests use fake Core
 Tools in installed Windows PowerShell/PowerShell 7 hosts. The default root
-configuration includes `tests\application` but excludes `tests\api`; the API
-command selects `tests\api` explicitly. Both environments import the same checkout
-source; moving tests does not require changing either environment.
+configuration includes `tests\application` and `tests\storage\test_local.py`,
+but excludes `tests\api` and SDK-dependent `tests\storage\test_blob.py`.
+From the repository root, the API command must select both API and Blob adapter
+tests explicitly. The API pytest configuration supplies both defaults only
+when pytest is invoked from the `api` directory; do not omit the explicit paths
+from the repository-root command.
+Test ownership follows the source responsibility, not its execution environment.
+Both environments import the same checkout source; no dependency changes are
+needed for this organization.
 
 Future deployment must package the entry point, host config, requirements and
 shared `ai_collage` source, with target-platform dependencies, not Windows
 venvs or reliance on this PowerShell import-path convenience. Deployment,
-private Blob persistence and authentication remain separately scoped.
+complete web Blob persistence and authentication remain separately scoped.
 
 ## Runtime storage-probe warning
 

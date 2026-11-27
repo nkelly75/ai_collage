@@ -2,6 +2,7 @@
 param(
     [ValidateRange(1, 65535)][int]$Port = 7071,
     [string]$UiOrigin = 'http://127.0.0.1:5173',
+    [ValidateSet('Local', 'Blob')][string]$StorageBackend = 'Local',
     [switch]$Live,
     [string]$CallBudgetPath,
     [ValidateRange(1, 200)][int]$MaxCalls = 12,
@@ -9,6 +10,34 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$blobNames = @(
+    'AI_COLLAGE_BLOB_ACCOUNT_URL', 'AI_COLLAGE_BLOB_CONTAINER',
+    'AI_COLLAGE_BLOB_SUBSCRIPTION_ID', 'AI_COLLAGE_BLOB_NAMESPACE',
+    'AI_COLLAGE_BLOB_PROOF_LEDGER'
+)
+if ($StorageBackend -eq 'Blob') {
+    if ($Live -or $CallBudgetPath -or $TrialProject -or $PSBoundParameters.ContainsKey('MaxCalls')) {
+        throw 'Blob slice mode cannot enable model/trial work.'
+    }
+    $target = @{
+        AI_COLLAGE_BLOB_ACCOUNT_URL = 'https://stclgdevbik2twby4e2zu.blob.core.windows.net'
+        AI_COLLAGE_BLOB_CONTAINER = 'collage'
+        AI_COLLAGE_BLOB_SUBSCRIPTION_ID = '0c6a09a0-a933-49df-9b6b-b8f65440332f'
+    }
+    foreach ($name in $target.Keys) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if ($name -eq 'AI_COLLAGE_BLOB_ACCOUNT_URL' -and $value -eq "$($target[$name])/") { continue }
+        if ($value -cne $target[$name]) { throw 'Configure the recorded development Blob target explicitly.' }
+    }
+    if ($env:AI_COLLAGE_BLOB_NAMESPACE -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$') {
+        throw 'Supply a valid isolated Blob namespace.'
+    }
+    $ledger = $env:AI_COLLAGE_BLOB_PROOF_LEDGER
+    if ($null -ne $ledger -and (
+        -not $ledger -or -not [IO.Path]::IsPathRooted($ledger) -or -not (Test-Path -LiteralPath $ledger -PathType Leaf) -or
+        -not $env:AI_COLLAGE_BLOB_NAMESPACE.StartsWith('proof-019b-')
+    )) { throw 'Invalid opt-in Blob proof ledger.' }
+}
 if ($CallBudgetPath -or $TrialProject -or $PSBoundParameters.ContainsKey('MaxCalls')) {
     if (-not $Live -or -not $CallBudgetPath -or -not $TrialProject -or
         [IO.Path]::GetPathRoot($CallBudgetPath) -notmatch '^(?:[A-Za-z]:\\|\\\\)') {
@@ -55,6 +84,12 @@ $settings = @{
     AI_COLLAGE_CALL_BUDGET_PATH = $(if ($CallBudgetPath) { $CallBudgetPath } else { $null })
     AI_COLLAGE_MAX_CALLS = $(if ($CallBudgetPath) { "$MaxCalls" } else { $null })
     AI_COLLAGE_TRIAL_PROJECT = $(if ($TrialProject) { $TrialProject } else { $null })
+    AI_COLLAGE_STORAGE_BACKEND = $StorageBackend.ToLowerInvariant()
+}
+foreach ($name in $blobNames) {
+    $settings[$name] = if ($StorageBackend -eq 'Blob') {
+        [Environment]::GetEnvironmentVariable($name, 'Process')
+    } else { $null }
 }
 $previous = @{}
 foreach ($name in $settings.Keys) {

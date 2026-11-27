@@ -1,12 +1,15 @@
 # 019b: Blob-backed initialized-project slice
 
-**Status:** Draft for review, not implementation authorization. The user selected
-API-only proof, Azure CLI authentication, and offline verification followed by
-one bounded agent-run live proof and a separate user smoke check/sign-off.
+**Status:** Complete and closed following offline verification, the separately
+approved real-account proof and explicit user acceptance on 2026-11-27; see
+[results](019b_results.md). The user waived the additional manual API repetition.
+Dependency installation was separately approved. The single agent-run allowance
+is consumed, not permission for another run.
 
 The [development infrastructure record](019b-initial-blob-integration.md)
 identifies the deployed account, resource-group portal link and verified access.
-Infrastructure is ready; application persistence still uses local files.
+Infrastructure is ready; ordinary application operation remains Local by default.
+The opt-in API-only Blob adapter is implemented and live-proven for this slice.
 See [019](019-storage-abstraction-and-blob-persistence.md) for the increment
 sequence and private single-owner delivery target.
 
@@ -75,7 +78,8 @@ a Blob client/credential or make Azure calls.
 
 Reuse `ProjectStorage`, `ProjectFlow`'s existing preparation/initialization and
 the current strict project/conversation models. Add one isolated Blob adapter,
-for example `ai_collage\blob_storage.py`, selected by a small API-side factory.
+now `ai_collage\storage\blob.py` alongside `contracts.py` and `local.py`,
+selected by a small API-side factory.
 Keep Azure-specific imports out of the engine, ordinary local storage imports,
 CLI and replay. No generic filesystem/provider framework or second importer.
 
@@ -202,13 +206,15 @@ Azurite or a storage emulator. Required cases:
 
 Run focused cases first, then the existing root and API offline suites before
 live proof. From the repository root, the API suite must explicitly select
-`tests\api` with its existing `api\pytest.ini`; do not accidentally collect the
-whole repository with the API interpreter. No frontend validation is required.
+`tests\api` and `tests\storage\test_blob.py` with `api\pytest.ini`; Local adapter
+tests belong to the default root suite. Do not accidentally collect the whole
+repository with the API interpreter. No frontend validation is required.
 
-### Proposed agent-run real-account allowance
+### Agent-run real-account allowance (consumed)
 
-This allowance is part of the draft, not permission to run it now. After
-implementation and explicit live-proof approval:
+The single separately approved run has completed within this allowance; see
+[results](019b_results.md). The following bounds are retained as its record, not
+permission for another run:
 
 | Limit | Allowance |
 |---|---|
@@ -236,9 +242,11 @@ inspection and safe owned cleanup may use the remaining allowance; further live
 runs need renewed approval. Record counts, outcomes and remaining test artifacts
 in a separate 019b results record, not as success claims in the architecture.
 
-Finally provide a short model-free API smoke-check procedure for the user, using
-a separate namespace. The user's manual result/sign-off closes 019b; offline or
-agent-run success alone does not. Do not imply that the browser conversation
+The original acceptance plan included a short model-free API smoke-check
+procedure in a separate namespace. At closeout, the user explicitly accepted
+the completed real-account proof and waived that manual repetition; see
+[results](019b_results.md#user-acceptance-and-closeout). Automated success alone
+was not treated as user sign-off. Do not imply that the browser conversation
 workflow is ready until the separately approved 019c work is complete.
 
 ## Documentation and stop rules

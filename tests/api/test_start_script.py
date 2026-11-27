@@ -19,6 +19,8 @@ ENV_NAMES = (
     "FUNCTIONS_REQUEST_BODY_SIZE_LIMIT",
     "AI_COLLAGE_LIVE", "AI_COLLAGE_CALL_BUDGET_PATH",
     "AI_COLLAGE_MAX_CALLS", "AI_COLLAGE_TRIAL_PROJECT",
+    "AI_COLLAGE_STORAGE_BACKEND", "AI_COLLAGE_BLOB_ACCOUNT_URL", "AI_COLLAGE_BLOB_CONTAINER",
+    "AI_COLLAGE_BLOB_SUBSCRIPTION_ID", "AI_COLLAGE_BLOB_NAMESPACE", "AI_COLLAGE_BLOB_PROOF_LEDGER",
 )
 
 
@@ -137,10 +139,13 @@ def test_launcher_configures_only_child_host_and_restores_caller(shell, launcher
     assert child["env"]["AI_COLLAGE_UI_ORIGIN"] == "http://127.0.0.1:5173"
     assert child["env"]["FUNCTIONS_REQUEST_BODY_SIZE_LIMIT"] == "167772160"
     assert child["env"]["AI_COLLAGE_LIVE"] == "0"
+    assert child["env"]["AI_COLLAGE_STORAGE_BACKEND"] == "local"
     for name in (
         "AzureWebJobsStorage", "AzureWebJobsDashboard",
         "APPLICATIONINSIGHTS_CONNECTION_STRING", "APPINSIGHTS_INSTRUMENTATIONKEY",
         "AI_COLLAGE_CALL_BUDGET_PATH", "AI_COLLAGE_MAX_CALLS", "AI_COLLAGE_TRIAL_PROJECT",
+        "AI_COLLAGE_BLOB_ACCOUNT_URL", "AI_COLLAGE_BLOB_CONTAINER",
+        "AI_COLLAGE_BLOB_SUBSCRIPTION_ID", "AI_COLLAGE_BLOB_NAMESPACE", "AI_COLLAGE_BLOB_PROOF_LEDGER",
     ):
         assert child["env"][name] is None
 
@@ -208,3 +213,42 @@ def test_launcher_rejects_unsupported_tools_before_starting_host(shell, launcher
     assert code == 1
     assert "4.17.0 or newer 4.x" in error
     assert not capture.exists()
+
+
+def blob_environment():
+    return {
+        "AI_COLLAGE_BLOB_ACCOUNT_URL": "https://stclgdevbik2twby4e2zu.blob.core.windows.net",
+        "AI_COLLAGE_BLOB_CONTAINER": "collage",
+        "AI_COLLAGE_BLOB_SUBSCRIPTION_ID": "0c6a09a0-a933-49df-9b6b-b8f65440332f",
+        "AI_COLLAGE_BLOB_NAMESPACE": "manual-019b-test",
+    }
+
+
+def test_blob_launcher_forwards_only_explicit_target_and_disables_inherited_live(shell, launcher):
+    code, error = run_launcher(
+        shell, launcher, arguments={"StorageBackend": "Blob"},
+        unset=("AI_COLLAGE_BLOB_PROOF_LEDGER",), **blob_environment(),
+    )
+    assert (code, error) == (0, None)
+    child = json.loads(launcher[2].read_text())
+    assert child["env"]["AI_COLLAGE_STORAGE_BACKEND"] == "blob"
+    assert child["env"]["AI_COLLAGE_LIVE"] == "0"
+    for name, value in blob_environment().items():
+        assert child["env"][name] == value
+    assert child["env"]["AzureWebJobsStorage"] is None
+
+
+@pytest.mark.parametrize("overrides,arguments", [
+    ({}, {"Live": True}),
+    ({}, {"TrialProject": "trip"}),
+    ({"AI_COLLAGE_BLOB_CONTAINER": "other"}, {}),
+    ({"AI_COLLAGE_BLOB_NAMESPACE": "../escape"}, {}),
+    ({"AI_COLLAGE_BLOB_ACCOUNT_URL": "https://elsewhere.example"}, {}),
+])
+def test_blob_launcher_rejects_unsafe_target_or_live_settings(shell, launcher, overrides, arguments):
+    code, error = run_launcher(
+        shell, launcher, arguments={"StorageBackend": "Blob", **arguments},
+        unset=("AI_COLLAGE_BLOB_PROOF_LEDGER",), **{**blob_environment(), **overrides},
+    )
+    assert code == 1 and error
+    assert not launcher[2].exists()

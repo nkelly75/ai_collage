@@ -7,7 +7,8 @@ guardrails. No Azure access, model calls, installations or Git writes.
 
 ## Implemented boundary
 
-[ProjectStorage and LocalProjectStorage](../ai_collage/storage.py) cover
+[ProjectStorage](../ai_collage/storage/contracts.py) and
+[LocalProjectStorage](../ai_collage/storage/local.py) cover
 existence checks, initialized-project publication, published project IDs,
 project/conversation-state reads and original-photo delivery.
 The interface uses logical IDs, existing typed records and photo streams,

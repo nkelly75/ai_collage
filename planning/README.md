@@ -153,7 +153,10 @@ verification and user acceptance; see [results](019a_results.md).
 019b proves that slice against Blob, 019c completes web persistence and 019d
 is optional measured performance work. Initial development
 [infrastructure](../infra/README.md) has been deployed with separate approval;
-application implementation of those later increments remains unapproved.
+019b's API-only implementation is separately approved and implemented;
+see [results](019b_results.md) for offline and successful real-account proof.
+019b is complete and closed with explicit user acceptance; the manual repetition
+was waived. 019c is next to specify, not yet approved for implementation.
 
 ## Planning records
 
@@ -192,8 +195,9 @@ and record 003 spans several feature increments.
 | [018f: Current collage, history and download](018f-current-collage-history-and-download.md) | Successfully completed and closed with manual sign-off and user-approved Demo retirement; [results](018f_results.md). | Simplified real-project workflow; future trials and Git writes remain separately authorized. |
 | [018g: Accumulated end-to-end validation](018g_results.md) | Satisfied and closed by existing user testing, focused fixes and acceptance; no repeated trial. | Closeout record, not a new implementation brief or model allowance. |
 | [019: Storage abstraction and Blob persistence](019-storage-abstraction-and-blob-persistence.md) | High-level direction: 019a local extraction, 019b initial Blob integration, 019c complete web persistence and optional 019d performance. | Detailed briefs and implementation approval remain separate. |
-| [019a: Initial local storage extraction](019a-initial-local-storage-extraction.md) | Complete and closed following offline verification and user acceptance. | See [results](019a_results.md); real Blob proof follows separately in unapproved 019b. |
-| [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Separate draft code specification: opt-in API-only proof using Azure CLI authentication. | [Infrastructure record](019b-initial-blob-integration.md) is verified; implementation, Python installation and live application tests remain separately gated. |
+| [019a: Initial local storage extraction](019a-initial-local-storage-extraction.md) | Complete and closed following offline verification and user acceptance. | See [results](019a_results.md); real Blob proof follows separately in 019b. |
+| [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Complete and closed with explicit user acceptance; manual API repetition waived. | [Results](019b_results.md) record successful offline and separately approved real-account proof and closeout. [Infrastructure record](019b-initial-blob-integration.md) retains deployment facts. |
+| [019c: Complete web persistence](019-storage-abstraction-and-blob-persistence.md#sequence-and-status) | Next phase to specify; no detailed brief or implementation approval yet. | Extend persistence across today's full web workflow; deployment and new features remain separately scoped. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

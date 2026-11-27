@@ -5,7 +5,11 @@ authorization. Granular briefs and approval will precede implementation.
 019a is complete and closed following offline verification and user acceptance;
 see [results](019a_results.md). Initial development
 [infrastructure](../infra/README.md) has been deployed with separate approval;
-019b application implementation and later increments remain unapproved.
+019b's separately approved API-only implementation has offline evidence in
+[results](019b_results.md), including its successful separately approved live
+application proof and explicit user acceptance. 019b is complete and closed;
+the user waived the manual repetition. 019c is next to specify, not yet approved
+for implementation.
 
 ## Goal and boundaries
 
@@ -40,9 +44,9 @@ Azurite is not a prerequisite.
 | Increment | Scope | Working outcome |
 |---|---|---|
 | [019a: Initial local extraction](019a-initial-local-storage-extraction.md) | Extract create/list/reopen/photo persistence behind a narrow storage boundary. Entirely offline. | Complete and closed following offline verification and the user's successful local smoke check. |
-| [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Implement and verify that same slice against the development Azure storage account through an opt-in API-only mode, using Azure CLI authentication. Do not extend into conversation editing yet. | Target: create/list/reopen/photo retrieval works with Blob. Infrastructure is ready; application integration is not implemented and the full conversational workflow is not yet cloud-ready. |
-| 019c: Complete web persistence | Extend the boundary and Blob implementation together across conversation state/history, proposals/previews, request records and source selections, including required concurrency safeguards. | Today's complete web functionality works with Blob-backed persistence. |
-| 019d: Optional performance work | Measure the complete Blob-backed workflow and fix demonstrated bottlenecks. | Targeted improvements without expanding product scope. |
+| [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Implement and verify that same slice against the development Azure storage account through an opt-in API-only mode, using Azure CLI authentication. Do not extend into conversation editing yet. | Complete and closed after offline/real-account verification and explicit user acceptance, with the manual repeat waived. See [results](019b_results.md). The full conversational workflow is not yet cloud-ready. |
+| 019c: Complete web persistence | Extend the boundary and Blob implementation together across conversation state/history, proposals/previews, request records and source selections, including required concurrency safeguards. | Next to specify; implementation is unapproved. Target: today's complete web functionality works with Blob-backed persistence. |
+| 019d: Optional performance work | Measure the complete Blob-backed workflow and fix demonstrated bottlenecks. | Deferred and unapproved. Target: measured improvements without expanding product scope. |
 
 The sequence is small local extraction, real Blob proof, then extension of both
 together; do not abstract all persistence before testing Blob. CLI/replay retain

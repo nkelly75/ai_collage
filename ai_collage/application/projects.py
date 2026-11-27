@@ -21,9 +21,8 @@ from ..engine.models import (
     Project, validate_project_id,
 )
 from ..engine.projects import ProjectStore
-from ..storage import (
-    LocalProjectStorage, PhotoNotFound, ProjectExists, ProjectNotFound, ProjectStorage,
-)
+from ..storage.contracts import PhotoNotFound, ProjectExists, ProjectNotFound, ProjectStorage
+from ..storage.local import LocalProjectStorage
 
 
 class FlowError(Exception):
