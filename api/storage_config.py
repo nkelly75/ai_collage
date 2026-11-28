@@ -8,6 +8,7 @@ import re
 
 from ai_collage.application.projects import FlowError, ProjectFlow, configured_store
 from ai_collage.application.conversation import ConversationFlow, ConversationSettings
+from request_metrics import current
 
 
 DEV_ACCOUNT_URL = "https://stclgdevbik2twby4e2zu.blob.core.windows.net"
@@ -81,12 +82,32 @@ def project_flow():
     if settings.ledger is not None:
         from blob_proof import ProofTransport
         options["transport"] = ProofTransport(settings.ledger)
+    metrics = current()
+    if metrics is not None:
+        from azure.core.pipeline.transport import RequestsTransport
+        from blob_metrics import MetricsTransport
+
+        transport = options.get("transport")
+        # A supplied transport must retain the Blob SDK's 256 KiB read blocks.
+        options["transport"] = MetricsTransport(
+            transport if transport is not None else RequestsTransport(
+                connection_timeout=10, read_timeout=30, connection_data_block_size=256 * 1024,
+            ),
+            metrics,
+        )
     with AzureCliCredential(subscription=DEV_SUBSCRIPTION, process_timeout=10) as credential:
         with ContainerClient(
             DEV_ACCOUNT_URL, DEV_CONTAINER, credential=credential, retry_total=0,
             connection_timeout=10, read_timeout=30, **options,
         ) as container:
-            yield ProjectFlow(configured_store(), BlobProjectStorage(container, settings.namespace))
+            if metrics is None:
+                storage = BlobProjectStorage(container, settings.namespace)
+            else:
+                from blob_metrics import MeasuredBlobProjectStorage
+
+                storage = MeasuredBlobProjectStorage(container, settings.namespace, metrics)
+            with storage.read_scope():
+                yield ProjectFlow(configured_store(), storage)
 
 
 @contextmanager

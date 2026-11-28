@@ -45,10 +45,46 @@ function selectedSnapshot() {
 }
 
 describe('real conversational workspace', () => {
+  it('keeps failed thumbnails explicit and opens the full preview only on request', async () => {
+    await open(conversation({ baseline: { proposal_id: 'P002' }, messages: history() }))
+    const button = screen.getByRole('button', { name: 'View collage P001' })
+    fireEvent.error(within(button).getByRole('img'))
+    expect(within(button).queryByRole('img')).not.toBeInTheDocument()
+    expect(button).toHaveTextContent('Thumbnail unavailable; open saved preview.')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(button)
+    expect(within(screen.getByRole('dialog')).getByAltText('Proposal P001')).toHaveAttribute('src',
+      'http://127.0.0.1:7071/api/projects/trip/proposals/P001/preview')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads once on ordinary mount/rerender and retains explicit refresh and project-switch reads', async () => {
+    const view = await open()
+    view.rerender(<RealWorkspace project={{ ...savedProject }} />)
+    await act(async () => {})
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const pendingRefresh = deferred()
+    vi.mocked(fetch).mockReturnValueOnce(pendingRefresh.promise)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh saved conversation and preview' }))
+    await act(async () => {})
+    expect(fetch).toHaveBeenCalledTimes(2)
+    const previous = vi.mocked(fetch).mock.calls[1][1]?.signal
+    vi.mocked(fetch).mockResolvedValueOnce(json(conversation({ project_id: 'other' })))
+    view.rerender(<RealWorkspace project={{ ...savedProject, id: 'other' }} />)
+    await act(async () => {})
+    expect(previous?.aborted).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(fetch).mock.calls[2][0]).toBe('http://127.0.0.1:7071/api/projects/other/conversation')
+    await act(async () => { pendingRefresh.resolve(json(conversation())) })
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
   it('views historical results transiently and restores keyboard focus without changing Current collage', async () => {
     await open(conversation({ baseline: { proposal_id: 'P002' }, messages: history() }))
     const user = userEvent.setup()
     const thumbnail = screen.getByRole('button', { name: 'View collage P001' })
+    expect(within(thumbnail).getByRole('img')).toHaveAttribute('src',
+      'http://127.0.0.1:7071/api/projects/trip/proposals/P001/thumbnail')
     await user.click(thumbnail)
     const modal = screen.getByRole('dialog', { name: 'Collage P001' })
     expect(within(modal).getByRole('button', { name: 'Edit from this collage' })).toHaveAccessibleDescription(
@@ -56,6 +92,8 @@ describe('real conversational workspace', () => {
     )
     expect(within(modal).queryByText('Future changes will start from this collage. Your later history stays saved.')).not.toBeInTheDocument()
     expect(within(modal).getByAltText('Proposal P001')).toBeVisible()
+    expect(within(modal).getByAltText('Proposal P001')).toHaveAttribute('src',
+      'http://127.0.0.1:7071/api/projects/trip/proposals/P001/preview')
     expect(within(screen.getByRole('region', { name: 'Current collage' })).getByAltText('Proposal P002')).toBeVisible()
     expect(fetch).toHaveBeenCalledTimes(1)
     await user.keyboard('{Escape}')
@@ -601,7 +639,7 @@ describe('bounded real observation', () => {
     vi.mocked(fetch).mockResolvedValueOnce(json(operation(), 201)).mockResolvedValueOnce(json(done()))
       .mockReturnValueOnce(refresh.promise)
     await act(async () => { send() })
-    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
     expect(screen.getByRole('status')).toHaveTextContent('Request completed. Saved conversation still needs refreshing.')
     expect(screen.getByRole('alert')).toHaveTextContent('Request completed as P002, but saved conversation could not refresh.')
     expect(screen.getByRole('alert')).not.toHaveTextContent('Outcome not confirmed')

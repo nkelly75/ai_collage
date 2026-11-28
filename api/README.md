@@ -130,6 +130,7 @@ GETs validate existing records without repair or initialization.
 | `GET /api/projects/<id>/conversation/requests/<uuid>` | Read an existing operation, including completed/failed results. |
 | `POST /api/projects/<id>/conversation/requests/<uuid>/generate` | Strict JSON `{revision}`. Claim the server-held prepared handoff once. HTTP 200; no browser intent/recipe/limit overrides. |
 | `GET /api/projects/<id>/proposals/<proposal_id>/preview` | Verified immutable published PNG, `no-store`/`nosniff`. Does not regenerate or accept it. |
+| `GET /api/projects/<id>/proposals/<proposal_id>/thumbnail` | Verified stored history PNG, at most 320px on its longest edge and 512 KiB, with the same guards/headers. Does not regenerate or fall back to a full PNG. |
 | `POST /api/projects/<id>/conversation/selections` | Strict JSON `{action_id,proposal_id,revision,abandon_pending}`. Canonical UUID and revision, exact published proposal ID and strict boolean. Model-free local source selection; 201/new or 200/recognized duplicate. |
 | `GET /api/projects/<id>/conversation/selections/<uuid>` | Read the original local action's status/outcome, without selecting again or repairing state. |
 
@@ -197,7 +198,8 @@ Model-stage limits remain **120s interpretation / 180s generation**, sharing
 correction budgets exactly as CLI/replay. HTTP work envelopes target
 **150s / 210s**, with checks before model work and before publication, including
 after rendering. The browser waits **160s / 220s**, including body parsing;
-ordinary reads wait 10s and creation 60s. The app-wide Functions execution
+ordinary JSON/download reads wait 20s, local selection POSTs 10s and creation
+60s. The app-wide Functions execution
 ceiling is 225s, not an increase to a model budget. The hosted 230s HTTP
 load-balancer limit is not a local Core Tools limit.
 
@@ -271,25 +273,33 @@ proof and explicit user acceptance; see [results](../planning/019c_results.md).
 
 Use the existing development target from the
 [infrastructure record](../planning/019b-initial-blob-integration.md), with
-the already authorized Azure CLI identity. The launcher never signs in, creates
-resources or changes CLI defaults. Set backend-only variables before launch:
+the already authorized Azure CLI identity. Explicit Blob launches supply that
+recorded target and the stable **`web-dev`** namespace without manual storage
+environment setup. The launcher prints the account/container/namespace and never
+signs in, creates resources or changes CLI defaults:
 
 ```powershell
-$env:AI_COLLAGE_BLOB_ACCOUNT_URL = '<development Blob endpoint from the infrastructure record>'
-$env:AI_COLLAGE_BLOB_CONTAINER = 'collage'
-$env:AI_COLLAGE_BLOB_SUBSCRIPTION_ID = '<development subscription from the infrastructure record>'
-$env:AI_COLLAGE_BLOB_NAMESPACE = 'web-019c-' + [guid]::NewGuid().ToString('N')
-$env:AI_COLLAGE_DATA_DIR = Join-Path $env:TEMP ('collage-019c-' + [guid]::NewGuid().ToString('N'))
 .\api\start.ps1 -StorageBackend Blob
-# For an explicitly authorized model-backed trial:
-# .\api\start.ps1 -StorageBackend Blob -Live
+# For explicitly authorized model calls:
+.\api\start.ps1 -StorageBackend Blob -Live
+# Optional isolated workspace:
+$trialNamespace = 'web-trial-' + [guid]::NewGuid().ToString('N')
+.\api\start.ps1 -StorageBackend Blob -BlobNamespace $trialNamespace
 ```
 
-The endpoint, container and subscription must match that development target.
+Keep `web-dev` for ordinary use; it does not import prior trial/local projects.
+Use `-BlobNamespace` to reopen a different workspace or isolate a trial, retaining
+the same value across restarts. The launcher deliberately ignores an inherited
+`AI_COLLAGE_BLOB_NAMESPACE`, so an old trial environment does not silently replace
+the stable default. `-BlobNamespace` is rejected for Local launches.
+
+Target environment variables may be absent; conflicting account/container/
+subscription values are rejected rather than redirected to another account.
 Namespaces are 1-64 lowercase alphanumeric/hyphen characters, starting and
-ending with an alphanumeric character. Missing/invalid settings fail explicitly;
-there is no Local fallback. Direct workers select
-`AI_COLLAGE_STORAGE_BACKEND=Blob`; missing means Local, blank/unknown fails.
+ending with an alphanumeric character; invalid overrides fail explicitly.
+There is no Local fallback. Direct workers still require the explicit target and
+namespace environment variables and select `AI_COLLAGE_STORAGE_BACKEND=Blob`;
+missing backend means Local, blank/unknown fails.
 Local launches clear inherited Blob configuration only in the worker and restore
 the caller's environment on exit. Blob accepts the existing explicit `-Live`
 and optional trial flags. Without `-Live`, model dispatch stays disabled, but
@@ -298,6 +308,9 @@ from storage authentication. Keep a trial's same external budget ledger and
 single-writer restriction across restarts; a different root never renews calls.
 `AI_COLLAGE_DATA_DIR` is not the authority for saved Blob projects. Import,
 decoding and rendering use owned temporary files, not a durable local project copy.
+An inherited proof ledger is never silently dropped: it still requires a valid
+proof namespace selected explicitly with `-BlobNamespace` and the normal
+proof-limit validation.
 
 Authentication uses subscription-scoped `AzureCliCredential` only: no credential
 chain, account key, SAS or browser credential. CLI-token process timeout is 10s;
@@ -305,8 +318,8 @@ Blob connection/read timeouts are 10s/30s. SDK retries are disabled. This does
 not guarantee cancellation of a timed-out in-flight upload.
 Application Blob configuration never supplies Functions host storage.
 
-One strict **version-2 storage head** references immutable project/photos,
-conversation state/events, attempts, operations/selections and proposals/PNGs.
+One strict **version-3 storage head** references immutable project/photos,
+conversation state/events, attempts, operations/selections and proposals/PNGs/thumbnails.
 Initial create is conditional; mutations hold a finite renewable 60s lease on
 the head and publish with lease ID plus expected ETag. Claims/reservations
 precede dispatch. Event/state, complete proposals and selection/abandonment
@@ -317,10 +330,26 @@ Reads bind one committed head, validate digests/identities and never initialize
 or repair. Historical committed objects remain so an older reader can finish.
 Canonical browser revisions do not include lease renewals or attempt diagnostics.
 Validated bytes are cached only within a request, up to 128 MiB.
-JSON records and the head are capped at 1 MiB, originals at 25 MiB each, and
-encoded PNG previews at 128 MiB. Canvas axes remain at most 4096.
-Version-1 Blob envelopes are rejected; use a fresh 019c namespace and preserve
-019b evidence. Project/layout format 3 and conversation record version 8 are unchanged.
+The API reuses one read snapshot per project within that request, including
+list/detail/photo preparation, rather than fetching the same head again.
+Original-photo presence/size checks run once during project loading; actual
+photo delivery still validates the bounded bytes, digest and decoded image.
+Read snapshots are discarded on request exit and invalidated around mutations;
+writer lease/ETag checks and fresh busy-state reads are unchanged.
+Downloaded objects use bounded GETs with size/ETag validation from that response,
+not HEAD then GET; subsequent SDK ranges are pinned to the first ETag.
+Conversation JSON checks history/recipe/reference integrity without image bodies.
+PNG/thumbnail GETs read only the committed target's state, event, proposal and
+requested asset, validating its bytes, digest, format and dimensions.
+Publication and mutation/source/acceptance paths still verify full previews.
+JSON records and the head are capped at 1 MiB, originals at 25 MiB each,
+encoded PNG previews at 128 MiB and thumbnails at 512 KiB.
+Thumbnails are stored PNGs with a maximum edge of 320 pixels, without upscaling.
+Canvas axes remain at most 4096.
+Older Blob heads and Proposal records are rejected; use fresh projects and an
+explicit fresh `-BlobNamespace` while preserving earlier evidence. Proposal record
+version 9 requires a thumbnail descriptor; other conversation records remain 8,
+and project/layout format 3 is unchanged. No backfill or legacy fallback is provided.
 
 Known service/authentication/permission/container failures return
 `storage_unavailable`/503, not an empty list or a project 404. Invalid published
@@ -332,6 +361,69 @@ new paid work; not-found while a create might still run is not proof of rollback
 Definite pre-publication failures clean only confirmed-owned objects using their
 ETags. Cleanup failures are logged without masking the original failure.
 There is no general Blob deletion API or orphan collector.
+
+### Lightweight local request metrics
+
+For an explicitly agreed user-led measurement run, add an absolute local
+`-MetricsPath` ending in `.jsonl`, with an existing parent directory:
+
+```powershell
+$metrics = Join-Path $env:TEMP ('collage-metrics-' + [guid]::NewGuid().ToString('N') + '.jsonl')
+.\api\start.ps1 -StorageBackend Blob -MetricsPath $metrics
+```
+
+Diagnostics are **off by default**, including when an old metrics environment
+variable is inherited. The launcher forwards `AI_COLLAGE_METRICS_PATH` only
+for this opt-in and restores the caller's setting on exit. Direct workers can
+set that variable explicitly. Local mode also supports metrics without Azure.
+Invalid paths or a shared call-budget/proof-ledger/inventory path fail before application
+work; append failures are logged in the API terminal without masking the
+application's result.
+
+Each completed adapter request appends one version-1 JSONL record containing
+a generated `request_id`, UTC timestamp, method, static route category, backend,
+HTTP status, `handler_ms`, `response_bytes`, `blob_requests` and `blob_read_ms`.
+`X-Collage-Metrics-Id` in the response matches that record. No request/response
+bodies, prompts, image bytes, project IDs, filenames, URLs or credentials are
+recorded. Requests which leave the adapter without a response have null status/
+response bytes and incomplete timings; host-level rejections/CORS preflights
+are not recorded.
+
+`handler_ms` includes Python processing and the async worker-thread wait, but
+excludes Functions host overhead, browser transfer and image decoding/paint.
+`response_bytes` is the body length, not compressed wire traffic.
+`blob_requests` counts SDK transport attempts, including failures or attempts
+rejected by an existing proof guard; it is not a service billing/request budget.
+`blob_read_ms` covers metadata checks, project listing and complete reads through
+the last streamed chunk, including authentication and in-operation validation.
+Nested reads are not double-counted. It is not pure network time and does not
+include upload/lease duration. The original proof transport/limits remain intact.
+
+Use one local Functions worker/host per log. Writes are serialized across its
+request threads and appended, never truncated; sequential restarts can reuse a
+log after the previous host is stopped. Prefer a fresh log for a fresh experiment.
+These are lightweight diagnostics, not a statistically controlled benchmark.
+
+For a model-free browser run, omit `-Live` and select a namespace containing
+supported projects with `-BlobNamespace`. Older head/proposal versions cannot be
+used for the thumbnail milestone: start a fresh namespace and separately authorize
+creating its saved proposals before read-only browsing. Preserve old namespaces.
+Start Vite in a second repository-root terminal
+with `npm --prefix .\web run dev`, then open **http://127.0.0.1:5173**.
+For a production-UI comparison, stop Vite first and use the
+[local production preview](../web/README.md#local-production-ui-measurements)
+on the same origin. Restart the patched API with a fresh metrics file, retaining
+the agreed Blob namespace and omitting `-Live`. This does not deploy Functions
+or change the storage region.
+Open DevTools **Network**, keep recording enabled, filter to API traffic and
+keep **Disable cache** consistent across rounds. Do not export a full HAR.
+After the scope is agreed, open Projects, reopen the saved project, wait for
+photos/current/history previews, view a historical collage and download its PNG.
+Do not create projects, Send, Continue generation or select a different editing
+source. Keep the first pass separate from a couple of repeated passes, and note
+errors or conspicuous browser wait/transfer times. Share the printed local log
+path and signal each round's end for offline analysis; that analysis needs no
+extra Azure reads. Metrics do not impose or renew any live allowance.
 
 ### Separately approved real-account proof
 

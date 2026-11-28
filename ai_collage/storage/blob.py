@@ -3,6 +3,7 @@
 from collections import OrderedDict
 from collections.abc import Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 import logging
 from pathlib import Path
 import re
@@ -18,7 +19,7 @@ from azure.storage.blob import ContainerClient, ContentSettings
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..agent.files import canonical, digest
-from ..agent.models import ConversationState, Digest, Proposal
+from ..agent.models import MAX_THUMBNAIL_BYTES, ConversationState, Digest, Proposal
 from ..engine.imaging import load_photo
 from ..engine.models import (
     MAX_FILE_BYTES, MAX_JSON_BYTES, OWNER_ID, CollageError, PhotoSizeError, Project,
@@ -29,7 +30,8 @@ from .contracts import (
     MAX_PREVIEW_BYTES, PhotoNotFound, ProjectExists, ProjectNotFound, RecordKind,
     StorageBusy, StorageOutcomeUnknown, StorageUnavailable,
 )
-from .local import read_preview, record_parts
+from .local import record_parts
+from .assets import read_image, read_preview, validate_preview, validate_thumbnail
 
 
 LEASE_SECONDS = 60
@@ -46,7 +48,7 @@ class ObjectReference(BaseModel):
 
 class Completion(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     owner_id: Literal["local-dev"]
     project_id: str
     attempt_id: CandidateId
@@ -54,6 +56,7 @@ class Completion(BaseModel):
     photos: dict[str, ObjectReference]
     records: dict[RecordKind, dict[str, ObjectReference]]
     previews: dict[str, ObjectReference] = Field(default_factory=dict)
+    thumbnails: dict[str, ObjectReference]
 
     @field_validator("project_id")
     @classmethod
@@ -73,8 +76,10 @@ class Completion(BaseModel):
                     raise ValueError("Record reference exceeds 1 MiB.")
         if self.project.size > MAX_JSON_BYTES:
             raise ValueError("Project reference exceeds 1 MiB.")
-        if set(self.previews) != set(self.records["proposal"]):
-            raise ValueError("Proposal/preview references differ.")
+        if set(self.previews) != set(self.records["proposal"]) or set(self.thumbnails) != set(self.previews):
+            raise ValueError("Proposal/preview/thumbnail references differ.")
+        if any(reference.size > MAX_THUMBNAIL_BYTES for reference in self.thumbnails.values()):
+            raise ValueError("Thumbnail reference exceeds 512 KiB.")
         for identity in self.previews:
             record_parts("proposal", identity)
         for asset, reference in self.photos.items():
@@ -89,6 +94,17 @@ class BlobProjectStorage:
             raise ValueError("Invalid Blob namespace.")
         self.container = container
         self.prefix = f"{namespace}/users/{OWNER_ID}/"
+        self._read_sessions: ContextVar[dict[str, "BlobConversationStorage"] | None] = ContextVar(
+            "blob_read_sessions", default=None,
+        )
+
+    @contextmanager
+    def read_scope(self):
+        token = self._read_sessions.set({})
+        try:
+            yield
+        finally:
+            self._read_sessions.reset(token)
 
     def completion_key(self, project_id: str) -> str:
         return f"{self.prefix}published/{validate_project_id(project_id)}.json"
@@ -112,14 +128,17 @@ class BlobProjectStorage:
             raise StorageUnavailable("Blob storage is unavailable.") from exc
 
     def _read_etag(self, key: str, limit: int, *, published: bool = False) -> tuple[bytes, str]:
-        properties = self._properties(key, published=published)
-        if type(properties.size) is not int or not 0 < properties.size <= limit:
-            raise CollageError("Saved Blob object is empty or exceeds its size limit.")
         try:
             download = self.container.get_blob_client(key).download_blob(
                 offset=0, length=limit + 1, max_concurrency=1,
-                etag=properties.etag, match_condition=MatchConditions.IfNotModified,
+                etag="*", match_condition=MatchConditions.IfNotModified,
             )
+            # The SDK pins later ranges to the first response's ETag.
+            properties = download.properties
+            if type(properties.size) is not int or not 0 < properties.size <= limit:
+                raise CollageError("Saved Blob object is empty or exceeds its size limit.")
+            if not isinstance(properties.etag, str) or not properties.etag:
+                raise CollageError("Saved Blob object has no response ETag.")
             raw = bytearray()
             for chunk in download.chunks():
                 if len(raw) + len(chunk) > limit:
@@ -130,6 +149,8 @@ class BlobProjectStorage:
             return bytes(raw), properties.etag
         except ResourceNotFoundError as exc:
             if getattr(exc, "error_code", None) == "BlobNotFound":
+                if published:
+                    raise ProjectNotFound("Project not found.") from exc
                 raise CollageError("Saved Blob object disappeared during a read.") from exc
             raise StorageUnavailable("Blob container is unavailable.") from exc
         except AzureError as exc:
@@ -146,7 +167,7 @@ class BlobProjectStorage:
         return head, etag
 
     def completion(self, project_id: str) -> Completion:
-        return self._head(project_id)[0]
+        return self.conversation(project_id).head
 
     def exists(self, project_id: str) -> bool:
         try:
@@ -173,8 +194,14 @@ class BlobProjectStorage:
             raise CollageError("Published project is missing or invalid.") from exc
 
     def conversation(self, project_id: str):
+        sessions = self._read_sessions.get()
+        if sessions is not None and project_id in sessions:
+            return sessions[project_id]
         head, etag = self._head(project_id)
-        return BlobConversationStorage(self, head, etag)
+        session = BlobConversationStorage(self, head, etag)
+        if sessions is not None:
+            sessions[project_id] = session
+        return session
 
     def load(self, project_id: str) -> tuple[Project, ConversationState]:
         session = self.conversation(project_id)
@@ -186,10 +213,6 @@ class BlobProjectStorage:
             raise CollageError("Project photo references differ.")
         for photo in project.photos:
             photo_extension(photo)
-            reference = session.head.photos[photo.asset_id]
-            properties = self._properties(self.object_key(project_id, reference, "photos", photo.asset_id))
-            if properties.size != reference.size:
-                raise CollageError("Saved photo size changed.")
         return project, state
 
     def photo(self, project: Project, photo_id: int) -> tuple[bytes, str]:
@@ -201,6 +224,9 @@ class BlobProjectStorage:
 
     @contextmanager
     def mutation(self, project_id: str):
+        sessions = self._read_sessions.get()
+        if sessions is not None:
+            sessions.pop(project_id, None)
         key = self.completion_key(project_id)
         self._properties(key, published=True)
         try:
@@ -230,6 +256,8 @@ class BlobProjectStorage:
             thread.start()
             yield session
         finally:
+            if sessions is not None:
+                sessions.pop(project_id, None)
             stop.set()
             if thread is not None:
                 thread.join()
@@ -291,8 +319,9 @@ class BlobProjectStorage:
             project_ref = upload(("project.json",), project_raw, "application/json")
             state_ref = upload(record_parts("state", "state"), state_raw, "application/json")
             head = Completion(
-                schema_version=2, owner_id=OWNER_ID, project_id=project.project_id,
+                schema_version=3, owner_id=OWNER_ID, project_id=project.project_id,
                 attempt_id=attempt_id, project=project_ref, photos=references,
+                thumbnails={},
                 records={"state": {"state": state_ref}, "event": {}, "proposal": {},
                          "attempt": {}, "operation": {}, "selection": {}},
             )
@@ -462,29 +491,26 @@ class BlobConversationStorage:
 
     def publish_proposal(self, proposal: Proposal, preview: Path) -> None:
         raw = read_preview(preview)
-        self._validate_preview(proposal, raw)
+        thumbnail_raw = read_image(preview.with_name("thumbnail.png"), MAX_THUMBNAIL_BYTES)
+        validate_preview(proposal, raw)
+        validate_thumbnail(proposal, thumbnail_raw)
         with self.checkpoint():
             self.write("proposal", proposal.proposal_id, proposal)
             self.head.previews[proposal.proposal_id] = self._candidate(
                 raw, ("conversation", "proposals", proposal.proposal_id, "preview.png"), "image/png",
             )
+            self.head.thumbnails[proposal.proposal_id] = self._candidate(
+                thumbnail_raw, ("conversation", "proposals", proposal.proposal_id, "thumbnail.png"), "image/png",
+            )
 
-    @staticmethod
-    def _validate_preview(proposal: Proposal, raw: bytes) -> None:
-        if len(raw) > MAX_PREVIEW_BYTES or digest(raw) != proposal.preview_digest:
-            raise CollageError("Preview size/digest mismatch.")
-        import io
-        from PIL import Image
-
-        try:
-            with Image.open(io.BytesIO(raw)) as image:
-                if image.format != "PNG" or image.size != (
-                    proposal.recipe.canvas.width, proposal.recipe.canvas.height,
-                ) or getattr(image, "n_frames", 1) != 1:
-                    raise CollageError("Preview format/dimensions mismatch.")
-                image.verify()
-        except (OSError, ValueError) as exc:
-            raise CollageError("Saved preview is not a valid PNG.") from exc
+    def validate_assets(self, proposal: Proposal) -> None:
+        preview = self.head.previews.get(proposal.proposal_id)
+        thumbnail = self.head.thumbnails.get(proposal.proposal_id)
+        if (
+            preview is None or thumbnail is None or preview.sha256 != proposal.preview_digest
+            or thumbnail.sha256 != proposal.thumbnail.sha256 or thumbnail.size != proposal.thumbnail.size
+        ):
+            raise CollageError("Published proposal image references differ.")
 
     def preview(self, proposal_id: str) -> bytes:
         record_parts("proposal", proposal_id)
@@ -492,8 +518,20 @@ class BlobConversationStorage:
         if reference is None:
             raise CollageError("Unknown or unpublished proposal ID.")
         proposal = Proposal.model_validate(self.read("proposal", proposal_id))
+        self.validate_assets(proposal)
         raw = self._referenced(reference, "conversation", "proposals", proposal_id, "preview.png")
-        self._validate_preview(proposal, raw)
+        validate_preview(proposal, raw)
+        return raw
+
+    def thumbnail(self, proposal_id: str) -> bytes:
+        record_parts("proposal", proposal_id)
+        reference = self.head.thumbnails.get(proposal_id)
+        if reference is None:
+            raise CollageError("Unknown or unpublished proposal ID.")
+        proposal = Proposal.model_validate(self.read("proposal", proposal_id))
+        self.validate_assets(proposal)
+        raw = self._referenced(reference, "conversation", "proposals", proposal_id, "thumbnail.png")
+        validate_thumbnail(proposal, raw)
         return raw
 
     def photo(self, project: Project, photo_id: int) -> tuple[bytes, str]:

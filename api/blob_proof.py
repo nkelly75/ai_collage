@@ -34,7 +34,7 @@ def owned_key(namespace: str, key: str) -> bool:
     return re.fullmatch(
         r"candidates/proof/[0-9a-f]{32}/(?:project\.json|photos/[0-9a-f]{32}|"
         r"conversation/(?:state\.json|events/[0-9]{6,}\.json|requests/attempt-[0-9]{4,}\.json|"
-        r"proposals/P[0-9]{3,}/(?:proposal\.json|preview\.png))|"
+        r"proposals/P[0-9]{3,}/(?:proposal\.json|preview\.png|thumbnail\.png))|"
         r"web-(?:operations|selections)/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.json)",
         key.removeprefix(prefix),
     ) is not None

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, listProjects, loadProject, saveProject } from './api'
+import { ApiError, listProjects, loadProject, request, saveProject } from './api'
 
 const size = { width: 1600, height: 900 }
 const detail = {
@@ -19,9 +19,28 @@ describe('bounded API requests', () => {
       status: 200, json: () => new Promise(() => {}),
     } as Response)
     const result = expect(listProjects(signal())).rejects.toMatchObject({ message: 'Backend request timed out.' })
-    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.advanceTimersByTimeAsync(19_999)
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
     await result
     expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true)
+  })
+
+  it('allows a slow PNG body to finish beyond ten seconds without another fetch', async () => {
+    let finish: (body: Blob) => void = () => {}
+    vi.mocked(fetch).mockResolvedValue({
+      status: 200, headers: new Headers({ 'Content-Type': 'image/png' }),
+      blob: () => new Promise<Blob>((resolve) => { finish = resolve }),
+    } as Response)
+    const controller = new AbortController()
+    const pending = request('/api/projects/trip/proposals/P001/preview', controller.signal, { binary: true })
+    await vi.advanceTimersByTimeAsync(10_500)
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false)
+    const png = new Blob(['png'], { type: 'image/png' })
+    finish(png)
+    expect(await pending).toBe(png)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('marks a timed-out create as uncertain without retrying', async () => {

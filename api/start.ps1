@@ -3,6 +3,8 @@ param(
     [ValidateRange(1, 65535)][int]$Port = 7071,
     [string]$UiOrigin = 'http://127.0.0.1:5173',
     [ValidateSet('Local', 'Blob')][string]$StorageBackend = 'Local',
+    [string]$BlobNamespace = 'web-dev',
+    [string]$MetricsPath,
     [switch]$Live,
     [string]$CallBudgetPath,
     [ValidateRange(1, 200)][int]$MaxCalls = 12,
@@ -15,6 +17,10 @@ $blobNames = @(
     'AI_COLLAGE_BLOB_SUBSCRIPTION_ID', 'AI_COLLAGE_BLOB_NAMESPACE',
     'AI_COLLAGE_BLOB_PROOF_LEDGER'
 )
+if ($StorageBackend -ne 'Blob' -and $PSBoundParameters.ContainsKey('BlobNamespace')) {
+    throw 'BlobNamespace requires -StorageBackend Blob.'
+}
+$blobSettings = @{}
 if ($StorageBackend -eq 'Blob') {
     $target = @{
         AI_COLLAGE_BLOB_ACCOUNT_URL = 'https://stclgdevbik2twby4e2zu.blob.core.windows.net'
@@ -23,22 +29,45 @@ if ($StorageBackend -eq 'Blob') {
     }
     foreach ($name in $target.Keys) {
         $value = [Environment]::GetEnvironmentVariable($name, 'Process')
-        if ($name -eq 'AI_COLLAGE_BLOB_ACCOUNT_URL' -and $value -eq "$($target[$name])/") { continue }
-        if ($value -cne $target[$name]) { throw 'Configure the recorded development Blob target explicitly.' }
+        if ($null -ne $value -and $value -cne $target[$name] -and
+            -not ($name -eq 'AI_COLLAGE_BLOB_ACCOUNT_URL' -and $value -ceq "$($target[$name])/")) {
+            throw 'Blob launches require the recorded development target; conflicting environment setting.'
+        }
+        $blobSettings[$name] = $target[$name]
     }
-    if ($env:AI_COLLAGE_BLOB_NAMESPACE -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$') {
-        throw 'Supply a valid isolated Blob namespace.'
+    if ($BlobNamespace -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$') {
+        throw 'Supply a valid BlobNamespace.'
     }
+    $blobSettings['AI_COLLAGE_BLOB_NAMESPACE'] = $BlobNamespace
     $ledger = $env:AI_COLLAGE_BLOB_PROOF_LEDGER
     if ($null -ne $ledger -and (
         -not $ledger -or -not [IO.Path]::IsPathRooted($ledger) -or -not (Test-Path -LiteralPath $ledger -PathType Leaf) -or
-        -not $env:AI_COLLAGE_BLOB_NAMESPACE.StartsWith('proof-019c-')
+        -not $BlobNamespace.StartsWith('proof-019c-')
     )) { throw 'Invalid opt-in Blob proof ledger.' }
+    $blobSettings['AI_COLLAGE_BLOB_PROOF_LEDGER'] = $ledger
 }
 if ($CallBudgetPath -or $TrialProject -or $PSBoundParameters.ContainsKey('MaxCalls')) {
     if (-not $Live -or -not $CallBudgetPath -or -not $TrialProject -or
         [IO.Path]::GetPathRoot($CallBudgetPath) -notmatch '^(?:[A-Za-z]:\\|\\\\)') {
         throw 'Trial configuration requires -Live, -TrialProject and an absolute -CallBudgetPath (optional -MaxCalls).'
+    }
+}
+if ($PSBoundParameters.ContainsKey('MetricsPath')) {
+    if (
+        -not $MetricsPath -or
+        [IO.Path]::GetPathRoot($MetricsPath) -notmatch '^(?:[A-Za-z]:\\|\\\\)' -or
+        [IO.Path]::GetExtension($MetricsPath) -ne '.jsonl' -or
+        -not (Test-Path -LiteralPath ([IO.Path]::GetDirectoryName($MetricsPath)) -PathType Container) -or
+        ((Test-Path -LiteralPath $MetricsPath) -and -not (Test-Path -LiteralPath $MetricsPath -PathType Leaf))
+    ) { throw 'MetricsPath requires an absolute .jsonl file in an existing directory.' }
+    $reservedPaths = @($CallBudgetPath, $blobSettings['AI_COLLAGE_BLOB_PROOF_LEDGER'])
+    if ($blobSettings['AI_COLLAGE_BLOB_PROOF_LEDGER']) {
+        $reservedPaths += [IO.Path]::ChangeExtension($blobSettings['AI_COLLAGE_BLOB_PROOF_LEDGER'], '.objects.jsonl')
+    }
+    foreach ($reserved in $reservedPaths) {
+        if ($reserved -and [IO.Path]::GetFullPath($reserved) -eq [IO.Path]::GetFullPath($MetricsPath)) {
+            throw 'MetricsPath must not share a call-budget or proof ledger.'
+        }
     }
 }
 $origin = $null
@@ -83,10 +112,11 @@ $settings = @{
     AI_COLLAGE_MAX_CALLS = $(if ($CallBudgetPath) { "$MaxCalls" } else { $null })
     AI_COLLAGE_TRIAL_PROJECT = $(if ($TrialProject) { $TrialProject } else { $null })
     AI_COLLAGE_STORAGE_BACKEND = $StorageBackend.ToLowerInvariant()
+    AI_COLLAGE_METRICS_PATH = $(if ($MetricsPath) { $MetricsPath } else { $null })
 }
 foreach ($name in $blobNames) {
     $settings[$name] = if ($StorageBackend -eq 'Blob') {
-        [Environment]::GetEnvironmentVariable($name, 'Process')
+        $blobSettings[$name]
     } else { $null }
 }
 $previous = @{}
@@ -110,6 +140,13 @@ try {
         throw 'Use Azure Functions Core Tools 4.17.0 or newer 4.x for loopback address support.'
     }
 
+    if ($StorageBackend -eq 'Blob') {
+        Write-Host "Storage: Blob; account: $($settings['AI_COLLAGE_BLOB_ACCOUNT_URL'])"
+        Write-Host "Container: $($settings['AI_COLLAGE_BLOB_CONTAINER']); namespace: $BlobNamespace"
+    } else {
+        Write-Host 'Storage: Local'
+    }
+    if ($MetricsPath) { Write-Host "Local request metrics: $MetricsPath" }
     & $func start --address 127.0.0.1 --port $Port --cors $UiOrigin
     if ($LASTEXITCODE -ne 0) { throw "Functions host exited with code $LASTEXITCODE." }
 } finally {

@@ -32,6 +32,9 @@ The complete web workflow supports Local storage by default or explicitly
 selected [development Blob storage](api/README.md#development-blob-mode),
 including conversations, history, Current collage and saved PNG downloads.
 Blob mode keeps authoritative data in Azure while the API/UI run locally.
+Start it with `.\api\start.ps1 -StorageBackend Blob` to use the recorded development
+account and stable `web-dev` workspace without manual storage environment setup;
+add `-Live` only for explicitly authorized model calls.
 CLI/replay remain local; cloud hosting and authentication are not implemented.
 019c is complete following real-account verification and user acceptance;
 see [results](planning/019c_results.md).

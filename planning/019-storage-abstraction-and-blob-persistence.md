@@ -1,7 +1,8 @@
 # 019: Storage abstraction and Blob persistence
 
-**Status:** High-level direction only, not an implementation specification or
-authorization. Granular briefs and approval will precede implementation.
+**Status:** Complete and closed for bounded 019a-019d with the user's acceptance
+on 2026-11-28. Granular briefs/results record the separately approved increments;
+this high-level tracker is not authorization for further implementation.
 019a is complete and closed following offline verification and user acceptance;
 see [results](019a_results.md). Initial development
 [infrastructure](../infra/README.md) has been deployed with separate approval;
@@ -12,6 +13,9 @@ the user waived the manual repetition. [019c](019c-complete-web-persistence.md)
 is complete and closed after offline verification, its separately approved
 model-free real-account proof and successful user-led web testing with explicit
 acceptance; see [019c results](019c_results.md).
+019d is complete after offline verification, user-led browser measurements and
+explicit acceptance; see [019d results](019d_results.md). Azure hosting and
+end-user authentication remain separate, unimplemented work.
 
 ## Goal and boundaries
 
@@ -48,13 +52,15 @@ Azurite is not a prerequisite.
 | [019a: Initial local extraction](019a-initial-local-storage-extraction.md) | Extract create/list/reopen/photo persistence behind a narrow storage boundary. Entirely offline. | Complete and closed following offline verification and the user's successful local smoke check. |
 | [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Implement and verify that same slice against the development Azure storage account through an opt-in API-only mode, using Azure CLI authentication. Do not extend into conversation editing yet. | Complete and closed after offline/real-account verification and explicit user acceptance, with the manual repeat waived. See [results](019b_results.md). The full conversational workflow is not yet cloud-ready. |
 | [019c: Complete web persistence](019c-complete-web-persistence.md) | Extend the boundary and Blob implementation together across conversation state/history, proposals/previews, request records and source selections, including required concurrency safeguards. | Complete and closed after offline/real-account verification and successful user-led web testing with explicit acceptance; [results](019c_results.md). |
-| 019d: Optional performance work | Measure the complete Blob-backed workflow and fix demonstrated bottlenecks. | Deferred and unapproved. Target: measured improvements without expanding product scope. |
+| 019d: Development launch and measured performance | Simplify explicit development Blob launches, then measure the complete workflow and apply demonstrated low-risk quick wins. | Complete and closed with user acceptance after offline verification and user-led browser testing. The approved [read-path/thumbnail work](019d-measured-read-and-thumbnail-improvements.md) meets the measured gates; [results](019d_results.md) preserve offline/browser evidence and deferred opportunities. Further live measurements require separate approval. |
 
 The sequence is small local extraction, real Blob proof, then extension of both
 together; do not abstract all persistence before testing Blob. CLI/replay retain
 local storage throughout. 019b runs local Functions against Azure in an API-only
 proof mode; 019c extends Blob support to the complete locally hosted web workflow.
 Functions deployment and end-user authentication remain separate work.
+019 is closed following verification and acceptance of all four increments.
+SAS image delivery and broad architectural optimization are not part of 019d.
 
 Detailed boundaries remain subject to each brief's approval. Storage abstraction
 is not itself a performance improvement or proof of cloud readiness.

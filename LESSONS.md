@@ -40,8 +40,8 @@ authorization; this tooling change does not authorize service calls.
 ### Saved evidence
 
 Find the cursor and execution summaries in the project's `replay\report.json`,
-sequence snapshots/contexts/results in `replay\steps`, and immutable JSON/PNG
-proposals in `conversation\proposals`. Unattempted messages may be edited before
+sequence snapshots/contexts/results in `replay\steps`, and immutable proposal JSON,
+full PNGs and stored thumbnails in `conversation\proposals`. Unattempted messages may be edited before
 resuming. See the [full syntax and safeguards](docs/cli-guide.md#repeatable-prompt-sequences).
 Request usage is recorded automatically in the project's `conversation\requests`.
 Interactive chat remains local-only unless started with `--live`.

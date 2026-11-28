@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { downloadCollage, generateRequest, interpretRequest, loadConversation, loadOperation, loadSelection, previewUrl, selectCollage } from './conversationApi'
+import { downloadCollage, generateRequest, interpretRequest, loadConversation, loadOperation, loadSelection, previewUrl, selectCollage, thumbnailUrl } from './conversationApi'
 import { conversation, json, operation, preparedRevision, requestId, revision, selection } from './test/conversation'
 
 const signal = () => new AbortController().signal
@@ -98,6 +98,9 @@ describe('strict conversation API boundary', () => {
     expect(previewUrl('trip', 'P001')).toBe('http://127.0.0.1:7071/api/projects/trip/proposals/P001/preview')
     expect(() => previewUrl('trip', '../P001')).toThrow()
     expect(() => previewUrl('../trip', 'P001')).toThrow()
+    expect(thumbnailUrl('trip', 'P001')).toBe('http://127.0.0.1:7071/api/projects/trip/proposals/P001/thumbnail')
+    expect(() => thumbnailUrl('trip', '../P001')).toThrow()
+    expect(() => thumbnailUrl('../trip', 'P001')).toThrow()
     await expect(interpretRequest('trip', requestId, ' ', revision, signal())).rejects.toThrow('nonempty')
     await expect(interpretRequest('trip', requestId, 'é'.repeat(131_073), revision, signal())).rejects.toThrow('256 KiB')
     await expect(interpretRequest('trip', 'not-a-uuid', 'hello', revision, signal())).rejects.toThrow('Invalid request ID')

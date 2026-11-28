@@ -322,7 +322,7 @@ class ConversationFlow:
         return (
             canonical(conversation.persistence.project()) + canonical(conversation.state)
             + b"".join(canonical(event) for event in history)
-            + b"".join(canonical(conversation.proposal(event.proposal_id))
+            + b"".join(canonical(conversation.proposal_metadata(event.proposal_id))
                        for event in history
                        if isinstance(event, Exchange) and event.outcome == "proposal")
         )
@@ -343,7 +343,7 @@ class ConversationFlow:
         ):
             raise FlowError("invalid_operation_state", "Saved operation result conflicts with conversation history.", 409)
         if result.proposal_id is not None:
-            conversation.proposal(result.proposal_id)
+            conversation.proposal_metadata(result.proposal_id)
 
     def _operation_view(self, operation: Operation, revision: str, *, owns_guard: bool = False) -> dict:
         status = operation.status
@@ -414,8 +414,8 @@ class ConversationFlow:
             if operations and operations[-1].status in UNRESOLVED else None,
             "proposals": [
                 {"proposal_id": event.proposal_id,
-                 "width": conversation.proposal(event.proposal_id).recipe.canvas.width,
-                 "height": conversation.proposal(event.proposal_id).recipe.canvas.height}
+                 "width": conversation.proposal_metadata(event.proposal_id).recipe.canvas.width,
+                 "height": conversation.proposal_metadata(event.proposal_id).recipe.canvas.height}
                 for event in conversation.history()
                 if isinstance(event, Exchange) and event.outcome == "proposal"
             ],
@@ -529,12 +529,26 @@ class ConversationFlow:
         raise FlowError("not_found", "Conversation request not found.", 404)
 
     def preview(self, project_id: str, proposal_id: str) -> bytes:
-        conversation, _, _, _ = self._snapshot(project_id)
-        proposal = conversation.proposal(proposal_id)
-        raw = conversation.persistence.preview(proposal_id)
-        if digest(raw) != proposal.preview_digest:
-            raise FlowError("invalid_preview", "Published preview changed; no image was returned.", 409)
-        return raw
+        return self._image(project_id, proposal_id, thumbnail=False)
+
+    def thumbnail(self, project_id: str, proposal_id: str) -> bytes:
+        return self._image(project_id, proposal_id, thumbnail=True)
+
+    def _image(self, project_id: str, proposal_id: str, *, thumbnail: bool) -> bytes:
+        from ..storage.assets import committed_proposal
+        from ..storage.contracts import ProposalNotFound
+        from ..storage.local import record_parts
+
+        record_parts("proposal", proposal_id)
+        with self._access(project_id) as records:
+            try:
+                committed_proposal(records, proposal_id)
+                return records.thumbnail(proposal_id) if thumbnail else records.preview(proposal_id)
+            except ProposalNotFound as exc:
+                raise FlowError("not_found", "Proposal not found.", 404) from exc
+            except (CollageError, ValidationError, FileNotFoundError) as exc:
+                logging.info("Published proposal image unavailable: %s", type(exc).__name__)
+                raise FlowError("invalid_preview", "Published proposal image is invalid; no image was returned.", 409) from exc
 
     async def interpret(self, project_id: str, submission: Submission) -> tuple[dict, bool]:
         with self._access(project_id, write=True):

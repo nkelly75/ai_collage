@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from time import monotonic
 from unittest.mock import Mock
 from uuid import uuid4
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import azure.functions as func
 from azure.core import MatchConditions
@@ -19,6 +19,7 @@ import pytest
 from requests.structures import CaseInsensitiveDict
 from PIL import Image
 import httpx
+from pydantic import ValidationError
 
 from ai_collage.agent.conversation import Conversation
 from ai_collage.application.projects import FlowError, ProjectFlow, ProjectSetup
@@ -37,6 +38,9 @@ from ai_collage.engine.models import InputLayout
 from ai_collage.storage.contracts import MAX_PREVIEW_BYTES
 from api.proof_fixture import PROMPTS, ScriptedModel, generated_photos
 from ..agent.test_agent import asyncio_wakeup_pair
+from ai_collage.agent.models import MAX_THUMBNAIL_BYTES, Proposal
+from ai_collage.storage.assets import create_thumbnail
+from ai_collage.agent.files import canonical, digest
 
 
 def azure_error(kind, code, status):
@@ -53,6 +57,7 @@ def blobs():
     container = Mock(spec=ContainerClient)
     leases = {}
     container.leases = leases
+    container.etags = etags
     sequence = 0
 
     def upload(key, data, **kwargs):
@@ -98,9 +103,9 @@ def blobs():
 
         def download(**kwargs):
             assert kwargs["match_condition"] == MatchConditions.IfNotModified
-            assert kwargs["etag"] == etags[key]
+            assert kwargs["etag"] == "*"
             assert kwargs["length"] <= MAX_PREVIEW_BYTES + 1
-            return SimpleNamespace(chunks=lambda: iter([objects[key]]))
+            return SimpleNamespace(properties=properties(), chunks=lambda: iter([objects[key]]))
 
         return SimpleNamespace(
             get_blob_properties=properties, download_blob=download,
@@ -137,6 +142,293 @@ def publish(storage, prepared):
         storage.publish(project, state, streams)
 
 
+@pytest.fixture
+def offline_sdk(monkeypatch):
+    @contextmanager
+    def open_sdk(container, objects, **config):
+        sent = []
+
+        class Response(HttpResponse):
+            def __init__(self, request, status, headers, raw=b""):
+                super().__init__(request, None)
+                self.status_code = status
+                self.headers = CaseInsensitiveDict(headers)
+                self.content_type = headers.get("Content-Type")
+                self.raw = raw
+
+            def body(self):
+                return self.raw
+
+            def read(self):
+                return self.raw
+
+            def stream_download(self, pipeline, **kwargs):
+                raw = self.raw
+
+                class Stream:
+                    def __iter__(self):
+                        return iter([raw])
+
+                stream = Stream()
+                stream.response = self
+                stream.content_length = int(self.headers.get("Content-Length", 0))
+                return stream
+
+        def send(transport, request, **kwargs):
+            sent.append(request)
+            url = urlsplit(request.url)
+            query = parse_qs(url.query)
+            if query.get("comp") == ["list"]:
+                assert request.method == "GET"
+                names = [key for key in objects if key.startswith(query["prefix"][0])]
+                raw = ('<EnumerationResults><Blobs>' + ''.join(
+                    f'<Blob><Name>{name}</Name><Properties><Content-Length>{len(objects[name])}</Content-Length>'
+                    '<BlobType>BlockBlob</BlobType></Properties></Blob>' for name in names
+                ) + '</Blobs><NextMarker/></EnumerationResults>').encode()
+                return Response(request, 200, {"Content-Type": "application/xml"}, raw)
+            key = unquote(url.path).removeprefix("/collage/")
+            assert request.method in {"GET", "HEAD"}, "Read-only SDK fixture attempted a mutation."
+            if key not in objects:
+                return Response(request, 404, {"x-ms-error-code": "BlobNotFound"})
+            raw = objects[key]
+            etag = f'"{container.etags[key]}"'
+            if request.headers.get("If-Match") not in {None, "*", etag}:
+                return Response(request, 412, {"x-ms-error-code": "ConditionNotMet"})
+            headers = {
+                "ETag": etag, "Content-Length": str(len(raw)), "x-ms-blob-type": "BlockBlob",
+                "Last-Modified": "Fri, 27 Nov 2026 10:00:00 GMT",
+                "x-ms-lease-status": "unlocked", "x-ms-lease-state": "available",
+                "Content-Type": "application/octet-stream",
+            }
+            if request.method == "HEAD":
+                return Response(request, 200, headers)
+            requested = request.headers.get("x-ms-range", "bytes=0-").removeprefix("bytes=").split("-")
+            start, end = int(requested[0]), min(int(requested[1]) if requested[1] else len(raw) - 1, len(raw) - 1)
+            if start >= len(raw):
+                return Response(request, 416, {"x-ms-error-code": "InvalidRange"})
+            body = raw[start:end + 1]
+            headers.update({"Content-Length": str(len(body)), "Content-Range": f"bytes {start}-{end}/{len(raw)}"})
+            return Response(request, 206, headers, body)
+
+        monkeypatch.setattr(RequestsTransport, "send", send)
+        credential = SimpleNamespace(get_token=lambda *args, **kwargs: AccessToken("offline-token", 4000000000))
+        with ContainerClient(
+            "https://offline.blob.core.windows.net", "collage", credential=credential,
+            retry_total=0, **config,
+        ) as client:
+            yield client, sent
+    return open_sdk
+
+
+@pytest.mark.parametrize("operation,limit", [("list", 8), ("detail", 7), ("photo", 8)])
+def test_real_sdk_project_reads_meet_transport_gates(web_blob, offline_sdk, operation, limit):
+    flow, container, objects, _ = web_blob
+    with offline_sdk(container, objects) as (client, sent):
+        storage = BlobProjectStorage(client, "test-019c")
+        projects = ProjectFlow(flow.store, storage)
+        with storage.read_scope():
+            if operation == "list":
+                assert projects.list()[0]["photo_count"] == 4
+            elif operation == "detail":
+                assert len(projects.detail("proof")["photos"]) == 4
+            else:
+                assert projects.photo("proof", 1)[0]
+        assert len(sent) == limit
+        assert sum(request.method == "HEAD" and "/photos/" in request.url for request in sent) == 4
+
+
+def test_real_sdk_json_and_targeted_images_do_not_fan_out(web_blob, offline_sdk, monkeypatch):
+    flow, container, objects, _ = web_blob
+    for prompt in PROMPTS:
+        submission, _, _ = scripted_send(flow, prompt)
+    expected = flow.detail("proof")
+    png = flow.preview("proof", "P001")
+    thumbnail = flow.thumbnail("proof", "P001")
+    monkeypatch.setattr("ai_collage.agent.conversation.render_layout", lambda *args: pytest.fail("GET rendered an image."))
+    monkeypatch.setattr("ai_collage.agent.conversation.create_thumbnail", lambda *args: pytest.fail("GET resized an image."))
+    with offline_sdk(container, objects) as (client, sent):
+        storage = BlobProjectStorage(client, "test-019c")
+        restored = ConversationFlow(flow.store, flow.settings, storage=storage)
+        with storage.read_scope():
+            assert restored.detail("proof") == expected
+        assert all(
+            request.method != "GET" or not any(part in request.url for part in ["/photos/", "preview.png", "thumbnail.png"])
+            for request in sent
+        )
+        print(f"\n019d offline conversation: {len(sent)} sends, 2 proposals, 4 photos")
+        sent.clear()
+        with storage.read_scope():
+            assert restored.operation("proof", submission.request_id) == flow.operation("proof", submission.request_id)
+        assert all(
+            request.method != "GET" or not any(part in request.url for part in ["/photos/", "preview.png", "thumbnail.png"])
+            for request in sent
+        )
+        for kind, raw in [("preview", png), ("thumbnail", thumbnail)]:
+            sent.clear()
+            with storage.read_scope():
+                assert getattr(restored, kind)("proof", "P001") == raw
+            assert len(sent) == 5
+            assert all(request.method == "GET" for request in sent)
+            assert not any("/P002/" in request.url or "/photos/" in request.url for request in sent)
+            assert sum(request.url.endswith(f"/{kind}.png") for request in sent) == 1
+            print(f"019d offline {kind}: {len(sent)} sends, {len(raw)} response bytes")
+
+
+def test_real_sdk_ranges_pin_the_first_etag_and_read_only_bounded_bytes(blobs, prepared, offline_sdk):
+    container, objects = blobs
+    storage = BlobProjectStorage(container, "test-019d")
+    publish(storage, prepared)
+    key = storage.completion_key("trip")
+    expected = objects[key]
+    with offline_sdk(container, objects, max_single_get_size=32, max_chunk_get_size=16) as (client, sent):
+        raw, etag = BlobProjectStorage(client, "test-019d")._read_etag(key, len(expected))
+        assert raw == expected
+        assert len(sent) > 1
+        assert sent[0].headers["If-Match"] == "*"
+        assert all(request.headers["If-Match"] == etag for request in sent[1:])
+        sent.clear()
+        with pytest.raises(CollageError, match="size limit"):
+            BlobProjectStorage(client, "test-019d")._read_etag(key, 8)
+        assert len(sent) == 1
+
+
+def test_real_sdk_changed_etag_during_ranges_fails_without_mixing_snapshots(blobs, prepared, offline_sdk, monkeypatch):
+    container, objects = blobs
+    storage = BlobProjectStorage(container, "test-019d")
+    publish(storage, prepared)
+    key = storage.completion_key("trip")
+    with offline_sdk(container, objects, max_single_get_size=32, max_chunk_get_size=16) as (client, sent):
+        original = RequestsTransport.send
+
+        def change(transport, request, **kwargs):
+            response = original(transport, request, **kwargs)
+            if len(sent) == 1:
+                container.etags[key] = "changed-after-first-range"
+            return response
+
+        monkeypatch.setattr(RequestsTransport, "send", change)
+        with pytest.raises(StorageUnavailable):
+            BlobProjectStorage(client, "test-019d")._read_etag(key, len(objects[key]))
+        assert len(sent) == 2 and sent[1].headers["If-Match"] != "*"
+
+
+@pytest.mark.parametrize("size,expected", [
+    ((900, 1600), (180, 320)), ((1600, 900), (320, 180)),
+    ((100, 50), (100, 50)), ((4096, 4096), (320, 320)), ((1, 4096), (1, 320)),
+])
+def test_thumbnail_generation_is_bounded_and_deterministic(tmp_path, size, expected):
+    path = tmp_path / "preview.png"
+    with Image.new("RGBA", size, (32, 64, 96, 255)) as image:
+        image.save(path)
+    descriptor, raw = create_thumbnail(path)
+    assert (descriptor.width, descriptor.height) == expected
+    assert descriptor.size == len(raw) <= MAX_THUMBNAIL_BYTES
+    assert create_thumbnail(path) == (descriptor, raw)
+    with Image.open(io.BytesIO(raw)) as image:
+        assert image.size == expected and image.format == "PNG"
+
+
+def test_json_survives_unrelated_image_corruption_but_asset_and_selection_fail_closed(web_blob):
+    flow, _, objects, _ = web_blob
+    for prompt in PROMPTS:
+        scripted_send(flow, prompt)
+    expected = flow.detail("proof")
+    second = flow.preview("proof", "P002")
+    session = flow.storage.conversation("proof")
+    key = flow.storage.object_key("proof", session.head.previews["P001"],
+                                  "conversation", "proposals", "P001", "preview.png")
+    objects[key] = b"!" + objects[key][1:]
+    assert flow.detail("proof") == expected
+    assert flow.preview("proof", "P002") == second
+    with pytest.raises(FlowError, match="no image") as failure:
+        flow.preview("proof", "P001")
+    assert failure.value.code == "invalid_preview" and failure.value.status == 409
+    with pytest.raises(CollageError):
+        flow.select("proof", SelectionSubmission(
+            action_id=str(uuid4()), proposal_id="P001", revision=expected["revision"], abandon_pending=False,
+        ))
+
+
+def test_required_thumbnail_references_and_old_proposals_are_rejected(web_blob):
+    flow, _, objects, _ = web_blob
+    scripted_send(flow, PROMPTS[0])
+    head_key = flow.storage.completion_key("proof")
+    original = objects[head_key]
+    head = json.loads(original)
+    head["thumbnails"] = {}
+    objects[head_key] = json.dumps(head).encode()
+    with pytest.raises(FlowError, match="invalid"):
+        flow.detail("proof")
+    head = json.loads(original)
+    head["schema_version"] = 2
+    objects[head_key] = json.dumps(head).encode()
+    with pytest.raises(FlowError, match="invalid"):
+        flow.detail("proof")
+    objects[head_key] = original
+    session = flow.storage.conversation("proof")
+    raw = session.read("proposal", "P001")
+    with pytest.raises(ValidationError) as failure:
+        Proposal.model_validate({**raw, "record_version": 8})
+    assert "record_version" in str(failure.value)
+
+
+@pytest.mark.parametrize("kind", ["preview", "thumbnail"])
+def test_image_dimensions_are_checked_even_when_metadata_digests_match(web_blob, kind):
+    flow, _, objects, _ = web_blob
+    scripted_send(flow, PROMPTS[0])
+    session = flow.storage.conversation("proof")
+    proposal = Proposal.model_validate(session.read("proposal", "P001"))
+    output = io.BytesIO()
+    with Image.new("RGBA", (10, 10)) as image:
+        image.save(output, format="PNG")
+    raw = output.getvalue()
+    references = session.head.previews if kind == "preview" else session.head.thumbnails
+    reference = references["P001"]
+    objects[flow.storage.object_key("proof", reference, "conversation", "proposals", "P001", f"{kind}.png")] = raw
+    references["P001"] = reference.model_copy(update={"sha256": digest(raw), "size": len(raw)})
+    thumbnail = proposal.thumbnail.model_copy(update=(
+        {"source_preview_digest": digest(raw)} if kind == "preview" else {"sha256": digest(raw), "size": len(raw)}
+    ))
+    proposal = proposal.model_copy(update={
+        "thumbnail": thumbnail, **({"preview_digest": digest(raw)} if kind == "preview" else {}),
+    })
+    proposal_raw = canonical(proposal)
+    reference = session.head.records["proposal"]["P001"]
+    objects[flow.storage.object_key("proof", reference, "conversation", "proposals", "P001", "proposal.json")] = proposal_raw
+    session.head.records["proposal"]["P001"] = reference.model_copy(update={
+        "sha256": digest(proposal_raw), "size": len(proposal_raw),
+    })
+    objects[flow.storage.completion_key("proof")] = canonical(session.head)
+    assert len(flow.detail("proof")["proposals"]) == 1
+    with pytest.raises(FlowError, match="no image"):
+        getattr(flow, kind)("proof", "P001")
+
+
+def test_thumbnail_upload_failure_does_not_publish_half_a_proposal_or_repeat_paid_work(web_blob):
+    flow, container, objects, _ = web_blob
+    scripted_send(flow, PROMPTS[0])
+    second = Submission(request_id=str(uuid4()), prompt=PROMPTS[1], revision=flow.detail("proof")["revision"])
+    prepared, _ = asyncio.run(flow.interpret("proof", second))
+    original = container.uploads.side_effect
+
+    def fail_thumbnail(key, data, **kwargs):
+        if key.endswith("/P002/thumbnail.png"):
+            raise ServiceRequestError("injected thumbnail upload failure")
+        return original(key, data, **kwargs)
+
+    container.uploads.side_effect = fail_thumbnail
+    request = GenerationRequest(revision=prepared["revision"])
+    with pytest.raises(StorageUnavailable):
+        asyncio.run(flow.generate("proof", second.request_id, request))
+    head = flow.storage.completion("proof")
+    assert set(head.previews) == set(head.thumbnails) == set(head.records["proposal"]) == {"P001"}
+    assert flow.operation("proof", second.request_id)["status"] == "uncertain"
+    before = dict(objects)
+    assert asyncio.run(flow.generate("proof", second.request_id, request))["status"] == "uncertain"
+    assert objects == before
+    assert len(RequestLog(flow.store, "proof", persistence=flow.storage.conversation("proof")).attempts()) == 4
+
+
 def test_blob_lifecycle_uses_conditional_publication_and_reopens_without_local_data(blobs, prepared, tmp_path):
     container, objects = blobs
     storage = BlobProjectStorage(container, "test-019b")
@@ -157,6 +449,63 @@ def test_blob_lifecycle_uses_conditional_publication_and_reopens_without_local_d
     assert writes == container.uploads.call_count
     assert not flow.store.data_dir.exists()
     assert not any("uploads" in key or "\\" in key for key in objects)
+
+
+@pytest.mark.parametrize("operation", ["list", "detail", "photo"])
+@pytest.mark.parametrize("photo_count", [2, 4])
+def test_read_scope_reuses_one_head_and_checks_original_presence_once(
+    blobs, prepared, tmp_path, monkeypatch, operation, photo_count,
+):
+    if photo_count == 4:
+        store = ProjectStore(tmp_path / "four-photo-preparation")
+        project = store.create("trip", list(prepared[0].photo_paths(prepared[1]).values()) * 2)
+        state = Conversation(store, "trip", canvas=(900, 1600)).state
+        prepared = store, project, state
+    container, _ = blobs
+    storage = BlobProjectStorage(container, "test-019d")
+    publish(storage, prepared)
+    properties = Mock(wraps=storage._properties)
+    monkeypatch.setattr(storage, "_properties", properties)
+    container.get_blob_client.reset_mock()
+    container.list_blobs.reset_mock()
+    flow = ProjectFlow(ProjectStore(tmp_path / "guards"), storage)
+    with storage.read_scope():
+        if operation == "list":
+            assert flow.list()[0]["project_id"] == "trip"
+        elif operation == "detail":
+            assert flow.detail("trip")["project_id"] == "trip"
+        else:
+            assert flow.photo("trip", 1)[0] == prepared[0].photo_paths(prepared[1])[1].read_bytes()
+    keys = [call.args[0] for call in properties.call_args_list]
+    assert keys.count(storage.completion_key("trip")) == 0
+    photo_calls = [key for key in keys if "/photos/" in key]
+    assert len(photo_calls) == len(prepared[1].photos)
+    assert container.get_blob_client.call_count + container.list_blobs.call_count == (
+        3 + len(prepared[1].photos) + (operation == "list") + (operation == "photo")
+    )
+
+
+def test_read_scope_does_not_reuse_snapshots_after_a_mutation_or_another_request(blobs, prepared):
+    container, _ = blobs
+    storage = BlobProjectStorage(container, "test-019d")
+    publish(storage, prepared)
+    with storage.read_scope():
+        before = storage.conversation("trip")
+        assert storage.conversation("trip") is before
+        assert storage.completion("trip") is before.head
+        with storage.mutation("trip") as writer:
+            state = prepared[2].model_copy(update={
+                "controls": prepared[2].controls.model_copy(update={"width": 800}),
+            })
+            writer.write("state", "state", state)
+        after = storage.conversation("trip")
+        assert after is not before
+        assert after.read("state", "state")["controls"]["width"] == 800
+        assert before.read("state", "state")["controls"]["width"] == 900
+    with storage.read_scope():
+        next_request = storage.conversation("trip")
+        assert next_request is not after
+        assert next_request.read("state", "state")["controls"]["width"] == 800
 
 
 def test_unpublished_candidates_are_not_projects_and_duplicate_cannot_replace_winner(blobs, prepared):
@@ -576,7 +925,9 @@ def test_download_bounds_actual_chunks_even_when_size_metadata_lies(blobs):
     container.get_blob_client.side_effect = None
     client = container.get_blob_client.return_value
     client.get_blob_properties.return_value = SimpleNamespace(size=1, etag="unchanged")
-    client.download_blob.return_value = SimpleNamespace(chunks=lambda: iter([b"too much"]))
+    client.download_blob.return_value = SimpleNamespace(
+        properties=SimpleNamespace(size=1, etag="unchanged"), chunks=lambda: iter([b"too much"]),
+    )
     with pytest.raises(CollageError, match="size limit"):
         BlobProjectStorage(container, "test-019b")._read("bounded", 4)
 
@@ -834,10 +1185,19 @@ def test_missing_or_exhausted_fixture_responses_never_fall_back_to_foundry(web_b
     assert len(RequestLog(flow.store, "proof", persistence=session).attempts()) == (4 if exhausted else 0)
 
 
-def test_full_proof_journey_uses_normal_http_handlers_offline(blobs, tmp_path, monkeypatch):
+@pytest.mark.parametrize("metrics_enabled", [False, True])
+def test_full_proof_journey_uses_normal_http_handlers_offline(blobs, tmp_path, monkeypatch, metrics_enabled):
     import importlib
     import function_app
     import api.verify_blob_storage as verification
+    from blob_metrics import MeasuredBlobProjectStorage
+    from request_metrics import current
+
+    metrics_path = tmp_path / "metrics.jsonl"
+    monkeypatch.delenv("AI_COLLAGE_METRICS_PATH", raising=False)
+    if metrics_enabled:
+        monkeypatch.setenv("AI_COLLAGE_METRICS_PATH", str(metrics_path))
+        monkeypatch.setenv("AI_COLLAGE_STORAGE_BACKEND", "blob")
 
     monkeypatch.setattr(function_app, "conversation_flow", function_app.conversation_flow)
     proof_app = importlib.import_module("api.proof_function_app")
@@ -860,7 +1220,13 @@ def test_full_proof_journey_uses_normal_http_handlers_offline(blobs, tmp_path, m
 
     @contextmanager
     def factory():
-        yield ProjectFlow(ProjectStore(proof.output / phase), BlobProjectStorage(container, proof.namespace))
+        metrics = current()
+        storage = (
+            BlobProjectStorage(container, proof.namespace) if metrics is None
+            else MeasuredBlobProjectStorage(container, proof.namespace, metrics)
+        )
+        with storage.read_scope():
+            yield ProjectFlow(ProjectStore(proof.output / phase), storage)
 
     monkeypatch.setattr(function_app, "project_flow", factory)
     monkeypatch.setattr(proof_app, "project_flow", factory)
@@ -922,3 +1288,11 @@ def test_full_proof_journey_uses_normal_http_handlers_offline(blobs, tmp_path, m
     assert proof.report["status"] == "passed" and proof.report["model_calls"] == 0
     assert proof.report["cleanup_complete"] and objects == {} and not container.leases
     assert proof.report["http_requests"] <= proof.limits.http_requests
+    if metrics_enabled:
+        rows = [json.loads(line) for line in metrics_path.read_text().splitlines()]
+        assert len(rows) == proof.report["http_requests"]
+        assert all(row["status"] is not None and row["backend"] == "blob" for row in rows)
+        assert {row["route"] for row in rows} >= {"collection", "photo", "conversation", "generate", "preview", "selections"}
+        assert any(row["blob_read_ms"] > 0 for row in rows)
+    else:
+        assert not metrics_path.exists()

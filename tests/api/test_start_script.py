@@ -21,6 +21,7 @@ ENV_NAMES = (
     "AI_COLLAGE_MAX_CALLS", "AI_COLLAGE_TRIAL_PROJECT",
     "AI_COLLAGE_STORAGE_BACKEND", "AI_COLLAGE_BLOB_ACCOUNT_URL", "AI_COLLAGE_BLOB_CONTAINER",
     "AI_COLLAGE_BLOB_SUBSCRIPTION_ID", "AI_COLLAGE_BLOB_NAMESPACE", "AI_COLLAGE_BLOB_PROOF_LEDGER",
+    "AI_COLLAGE_METRICS_PATH",
 )
 
 
@@ -147,6 +148,7 @@ def test_launcher_configures_only_child_host_and_restores_caller(shell, launcher
         "AI_COLLAGE_CALL_BUDGET_PATH", "AI_COLLAGE_MAX_CALLS", "AI_COLLAGE_TRIAL_PROJECT",
         "AI_COLLAGE_BLOB_ACCOUNT_URL", "AI_COLLAGE_BLOB_CONTAINER",
         "AI_COLLAGE_BLOB_SUBSCRIPTION_ID", "AI_COLLAGE_BLOB_NAMESPACE", "AI_COLLAGE_BLOB_PROOF_LEDGER",
+        "AI_COLLAGE_METRICS_PATH",
     ):
         assert child["env"][name] is None
 
@@ -163,6 +165,47 @@ def test_launcher_live_trial_forwarding_and_restoration(shell, launcher):
     assert child["env"]["AI_COLLAGE_CALL_BUDGET_PATH"] == ledger
     assert child["env"]["AI_COLLAGE_MAX_CALLS"] == "12"
     assert child["env"]["AI_COLLAGE_TRIAL_PROJECT"] == "trial"
+
+
+def test_launcher_forwards_opt_in_metrics_and_restores_caller(shell, launcher):
+    path = str(launcher[0].parent / "request metrics.jsonl")
+    code, error = run_launcher(shell, launcher, arguments={"MetricsPath": path})
+    assert (code, error) == (0, None)
+    child = json.loads(launcher[2].read_text())["env"]
+    assert child["AI_COLLAGE_METRICS_PATH"] == path
+    assert child["AI_COLLAGE_LIVE"] == "0"
+
+
+@pytest.mark.parametrize("path", ["relative.jsonl", "", "C:\\absent-metrics-directory\\metrics.jsonl"])
+def test_launcher_rejects_invalid_metrics_path_without_starting_host(shell, launcher, path):
+    code, error = run_launcher(shell, launcher, arguments={"MetricsPath": path})
+    assert code == 1 and "MetricsPath requires" in error
+    assert not launcher[2].exists()
+
+
+def test_launcher_rejects_metrics_overwriting_call_budget(shell, launcher):
+    path = str(launcher[0].parent / "calls.jsonl")
+    code, error = run_launcher(shell, launcher, arguments={
+        "MetricsPath": path, "Live": True, "CallBudgetPath": path, "TrialProject": "trial",
+    })
+    assert code == 1 and "must not share" in error
+    assert not launcher[2].exists()
+
+
+def test_launcher_rejects_metrics_overwriting_proof_inventory(shell, launcher):
+    ledger = launcher[0].parent / "proof.jsonl"
+    ledger.write_text("")
+    code, error = run_launcher(
+        shell, launcher,
+        unset=("AI_COLLAGE_BLOB_ACCOUNT_URL", "AI_COLLAGE_BLOB_CONTAINER", "AI_COLLAGE_BLOB_SUBSCRIPTION_ID"),
+        arguments={
+            "StorageBackend": "Blob", "BlobNamespace": "proof-019c-" + "a" * 32,
+            "MetricsPath": str(ledger.with_suffix(".objects.jsonl")),
+        },
+        AI_COLLAGE_BLOB_PROOF_LEDGER=str(ledger),
+    )
+    assert code == 1 and "must not share" in error
+    assert not launcher[2].exists()
 
 
 @pytest.mark.parametrize("arguments", [
@@ -225,7 +268,7 @@ def blob_environment():
     }
 
 
-def test_blob_launcher_forwards_only_explicit_target_and_disables_inherited_live(shell, launcher):
+def test_blob_launcher_uses_stable_namespace_and_disables_inherited_live(shell, launcher):
     code, error = run_launcher(
         shell, launcher, arguments={"StorageBackend": "Blob"},
         unset=("AI_COLLAGE_BLOB_PROOF_LEDGER",), **blob_environment(),
@@ -235,15 +278,72 @@ def test_blob_launcher_forwards_only_explicit_target_and_disables_inherited_live
     assert child["env"]["AI_COLLAGE_STORAGE_BACKEND"] == "blob"
     assert child["env"]["AI_COLLAGE_LIVE"] == "0"
     for name, value in blob_environment().items():
-        assert child["env"][name] == value
+        assert child["env"][name] == ("web-dev" if name == "AI_COLLAGE_BLOB_NAMESPACE" else value)
     assert child["env"]["AzureWebJobsStorage"] is None
+
+
+@pytest.mark.parametrize("exit_code", [0, 9])
+def test_blob_launcher_supplies_recorded_target_without_manual_configuration(shell, launcher, exit_code):
+    code, error = run_launcher(
+        shell, launcher, arguments={"StorageBackend": "Blob"},
+        unset=tuple(name for name in ENV_NAMES if name.startswith("AI_COLLAGE_BLOB_")),
+        TEST_FUNC_EXIT=str(exit_code),
+    )
+    assert code == (0 if exit_code == 0 else 1)
+    assert error is None if exit_code == 0 else "exited with code 9" in error
+    child = json.loads(launcher[2].read_text())["env"]
+    for name, value in blob_environment().items():
+        assert child[name] == ("web-dev" if name == "AI_COLLAGE_BLOB_NAMESPACE" else value)
+    assert child["AI_COLLAGE_BLOB_PROOF_LEDGER"] is None
+    assert child["AI_COLLAGE_LIVE"] == "0"
+
+
+def test_blob_launcher_namespace_argument_overrides_inherited_trial_namespace(shell, launcher):
+    code, error = run_launcher(
+        shell, launcher, arguments={"StorageBackend": "Blob", "BlobNamespace": "isolated-trial"},
+        unset=("AI_COLLAGE_BLOB_PROOF_LEDGER",), **blob_environment(),
+    )
+    assert (code, error) == (0, None)
+    assert json.loads(launcher[2].read_text())["env"]["AI_COLLAGE_BLOB_NAMESPACE"] == "isolated-trial"
+
+
+def test_local_launcher_rejects_blob_namespace_argument(shell, launcher):
+    code, error = run_launcher(shell, launcher, arguments={"BlobNamespace": "isolated-trial"})
+    assert code == 1 and "BlobNamespace requires -StorageBackend Blob" in error
+    assert not launcher[2].exists()
+
+
+@pytest.mark.parametrize("explicit_namespace", [False, True])
+def test_blob_launcher_preserves_proof_ledger_scope_guard(shell, launcher, explicit_namespace):
+    namespace = "proof-019c-" + "a" * 32
+    ledger = launcher[0].parent / "requests.jsonl"
+    ledger.touch()
+    arguments = {"StorageBackend": "Blob"}
+    if explicit_namespace:
+        arguments["BlobNamespace"] = namespace
+    code, error = run_launcher(
+        shell, launcher, arguments=arguments,
+        **{**blob_environment(), "AI_COLLAGE_BLOB_NAMESPACE": namespace,
+           "AI_COLLAGE_BLOB_PROOF_LEDGER": str(ledger)},
+    )
+    if explicit_namespace:
+        assert (code, error) == (0, None)
+        child = json.loads(launcher[2].read_text())["env"]
+        assert child["AI_COLLAGE_BLOB_PROOF_LEDGER"] == str(ledger)
+        assert child["AI_COLLAGE_BLOB_NAMESPACE"] == namespace
+    else:
+        assert code == 1 and "Invalid opt-in Blob proof ledger" in error
+        assert not launcher[2].exists()
 
 
 @pytest.mark.parametrize("overrides,arguments", [
     ({}, {"TrialProject": "trip"}),
     ({"AI_COLLAGE_BLOB_CONTAINER": "other"}, {}),
-    ({"AI_COLLAGE_BLOB_NAMESPACE": "../escape"}, {}),
+    ({}, {"BlobNamespace": "../escape"}),
+    ({}, {"BlobNamespace": "Uppercase"}),
+    ({}, {"BlobNamespace": ""}),
     ({"AI_COLLAGE_BLOB_ACCOUNT_URL": "https://elsewhere.example"}, {}),
+    ({"AI_COLLAGE_BLOB_SUBSCRIPTION_ID": "other"}, {}),
 ])
 def test_blob_launcher_rejects_unsafe_target_or_live_settings(shell, launcher, overrides, arguments):
     code, error = run_launcher(

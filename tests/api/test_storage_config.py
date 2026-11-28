@@ -74,6 +74,59 @@ def test_blob_factory_scopes_cli_identity_and_disables_retries(blob_environment,
     assert container.call_args.kwargs["read_timeout"] == 30
 
 
+def test_metrics_transport_keeps_normal_blob_timeouts_and_read_blocks(blob_environment, monkeypatch, tmp_path):
+    from request_metrics import measure_request
+    from azure.storage.blob import ContainerClient
+
+    reference = ContainerClient(storage_config.DEV_ACCOUNT_URL, "collage", credential=MagicMock())
+    normal_block_size = reference._config.transport.connection_config.data_block_size
+    reference.close()
+
+    monkeypatch.setenv("AI_COLLAGE_METRICS_PATH", str(tmp_path / "metrics.jsonl"))
+    credential, container = MagicMock(), MagicMock()
+    monkeypatch.setattr("azure.identity.AzureCliCredential", credential)
+    monkeypatch.setattr("azure.storage.blob.ContainerClient", container)
+    with measure_request("GET", "collection"):
+        with storage_config.project_flow():
+            transport = container.call_args.kwargs["transport"].transport
+            assert transport.connection_config.timeout == 10
+            assert transport.connection_config.read_timeout == 30
+            assert transport.connection_config.data_block_size == normal_block_size
+
+
+def test_metrics_compose_with_proof_guard_without_bypassing_allowance(blob_environment, monkeypatch, tmp_path):
+    from blob_metrics import MeasuredBlobProjectStorage, MetricsTransport
+    from request_metrics import measure_request
+
+    namespace = "proof-019c-" + "a" * 32
+    ledger = tmp_path / "proof.jsonl"
+    ledger.write_text("")
+    limits_path(ledger).write_text(ProofLimits(
+        namespace=namespace, http_requests=40, blob_requests=1,
+    ).model_dump_json())
+    monkeypatch.setenv("AI_COLLAGE_BLOB_NAMESPACE", namespace)
+    monkeypatch.setenv("AI_COLLAGE_BLOB_PROOF_LEDGER", str(ledger))
+    monkeypatch.setenv("AI_COLLAGE_METRICS_PATH", str(tmp_path / "metrics.jsonl"))
+    credential, container = MagicMock(), MagicMock()
+    send = Mock(return_value=object())
+    monkeypatch.setattr("azure.identity.AzureCliCredential", credential)
+    monkeypatch.setattr("azure.storage.blob.ContainerClient", container)
+    monkeypatch.setattr(RequestsTransport, "send", send)
+    with measure_request("GET", "collection") as metrics:
+        with storage_config.project_flow() as flow:
+            assert isinstance(flow.storage, MeasuredBlobProjectStorage)
+            transport = container.call_args.kwargs["transport"]
+            assert isinstance(transport, MetricsTransport)
+            assert isinstance(transport.transport, ProofTransport)
+            request = HttpRequest("GET", storage_config.DEV_ACCOUNT_URL + f"/collage/{namespace}/users/local-dev/published/proof.json")
+            transport.send(request)
+            with pytest.raises(StorageUnavailable, match="allowance is exhausted"):
+                transport.send(request)
+            assert metrics.blob_requests == 2
+    send.assert_called_once()
+    assert len(ledger.read_text().splitlines()) == 1
+
+
 def test_blob_conversation_routes_use_selected_backend(
     blob_environment, monkeypatch,
 ):

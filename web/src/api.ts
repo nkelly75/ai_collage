@@ -56,7 +56,7 @@ interface RequestOptions {
 }
 
 export async function request(path: string, signal: AbortSignal, options: RequestOptions = {}): Promise<unknown> {
-  const { body, timeout = body ? 60_000 : 10_000, statuses = [body ? 201 : 200], json = false } = options
+  const { body, timeout = body ? 60_000 : 20_000, statuses = [body ? 201 : 200], json = false } = options
   const url = apiUrl(path)
   const controller = new AbortController()
   if (signal.aborted) throw new DOMException('Request cancelled.', 'AbortError')

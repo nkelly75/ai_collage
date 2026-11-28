@@ -23,6 +23,7 @@ from ..engine.imaging import render_layout
 from ..engine.models import MAX_JSON_BYTES, CollageError, InputLayout, ResolvedLayout
 from ..engine.projects import ProjectStore, parse_json, read_json
 from ..storage.contracts import ConversationStorage
+from ..storage.assets import create_thumbnail, read_preview, validate_preview, validate_thumbnail
 from .photo_references import (
     PhotoReferenceError, active_names, check_forgotten, conflicting_names, ground_references, memory_changes,
     memory_message, name_history, names_digest, names_message, receipt_question,
@@ -115,7 +116,8 @@ class Conversation:
             raise CollageError("Pending naming pointer does not match its history.")
         self._check_name_writes()
         self._pending_names()
-        self.baseline()
+        if self.state.baseline is not None:
+            self.proposal_metadata(self.state.baseline)
         self.tasks()
 
     def _commit(self, state: ConversationState) -> None:
@@ -190,6 +192,13 @@ class Conversation:
     def proposal(
         self, proposal_id: str, *, _events: dict[int, Exchange | LocalEvent | LocalSelection] | None = None,
     ) -> Proposal:
+        proposal = self.proposal_metadata(proposal_id, _events=_events)
+        self.persistence.preview(proposal_id)
+        return proposal
+
+    def proposal_metadata(
+        self, proposal_id: str, *, _events: dict[int, Exchange | LocalEvent | LocalSelection] | None = None,
+    ) -> Proposal:
         history = _events if _events is not None else dict(zip(
             self.state.history, self.history(), strict=True,
         ))
@@ -201,14 +210,21 @@ class Conversation:
         if proposal_id not in committed:
             raise CollageError("Unknown or unpublished proposal ID.")
         proposal = Proposal.model_validate(self.persistence.read("proposal", proposal_id))
-        preview = self.persistence.preview(proposal_id)
         number, event = committed[proposal_id]
-        self._validate_proposal(proposal, proposal_id, number, event, history, preview)
+        self._validate_proposal_metadata(proposal, proposal_id, number, event, history)
+        self.persistence.validate_assets(proposal)
         return proposal
 
     def _validate_proposal(
         self, proposal: Proposal, proposal_id: str, number: int, event: Exchange,
         history: dict[int, Exchange | LocalEvent | LocalSelection], preview: Path | bytes,
+    ) -> None:
+        self._validate_proposal_metadata(proposal, proposal_id, number, event, history)
+        validate_preview(proposal, read_preview(preview) if isinstance(preview, Path) else preview)
+
+    def _validate_proposal_metadata(
+        self, proposal: Proposal, proposal_id: str, number: int, event: Exchange,
+        history: dict[int, Exchange | LocalEvent | LocalSelection],
     ) -> None:
         committed = {
             entry.proposal_id: turn for turn, entry in history.items()
@@ -244,7 +260,6 @@ class Conversation:
             or proposal.parent != event.parent
             or proposal.geometry != expected.geometry
             or proposal.recipe_digest != digest(canonical(proposal.recipe))
-            or proposal.preview_digest != digest(preview.read_bytes() if isinstance(preview, Path) else preview)
             or proposal.parent != (
                 proposal.intent.source.proposal_id if proposal.intent.source else None
             )
@@ -539,7 +554,7 @@ class Conversation:
     def tasks(self) -> list[TaskRecord]:
         events = dict(zip(self.state.history, self.history(), strict=True))
         proposals = {
-            event.proposal_id: self.proposal(event.proposal_id, _events=events)
+            event.proposal_id: self.proposal_metadata(event.proposal_id, _events=events)
             for event in events.values()
             if isinstance(event, Exchange) and event.outcome == "proposal"
         }
@@ -1172,12 +1187,14 @@ class Conversation:
             with self.persistence.photo_paths() as paths:
                 render_layout(resolved, project.photos, paths, preview)
             requests.check_work_deadline()
+            thumbnail, thumbnail_raw = create_thumbnail(preview)
+            (staging / "thumbnail.png").write_bytes(thumbnail_raw)
             proposal = Proposal(
                 proposal_id=proposal_id, turn_id=event_id,
                 parent=intent.source.proposal_id if intent.source else None, intent=intent,
                 controls=self.state.controls, recipe=resolved.recipe, geometry=resolved.geometry,
                 recipe_digest=digest(canonical(resolved.recipe)),
-                preview_digest=digest(preview.read_bytes()),
+                preview_digest=thumbnail.source_preview_digest, thumbnail=thumbnail,
             )
             save(staging / "proposal.json", proposal)
             self._validate_proposal(
@@ -1186,6 +1203,7 @@ class Conversation:
                 {**dict(zip(self.state.history, self.history(), strict=True)), event_id: event},
                 preview,
             )
+            validate_thumbnail(proposal, thumbnail_raw)
             self._fresh()
             requests.check_work_deadline()
             with self.persistence.checkpoint():

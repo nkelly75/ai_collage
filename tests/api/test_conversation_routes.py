@@ -73,6 +73,14 @@ def test_real_stage_http_contract_duplicate_posts_and_png(api_flow):
     assert png.status_code == 200 and png.mimetype == "image/png"
     assert png.get_body().startswith(b"\x89PNG")
     assert png.headers["X-Content-Type-Options"] == "nosniff"
+    thumbnail = call(function_app.proposal_thumbnail, proposal_id="P001")
+    assert thumbnail.status_code == 200 and thumbnail.mimetype == "image/png"
+    assert thumbnail.headers["Cache-Control"] == "no-store"
+    assert thumbnail.headers["X-Content-Type-Options"] == "nosniff"
+    assert thumbnail.get_body() == ConversationFlow(store).thumbnail("trip", "P001")
+    assert call(function_app.proposal_thumbnail, proposal_id="P999").status_code == 404
+    assert call(function_app.proposal_thumbnail, proposal_id="../secret").status_code == 400
+    assert call(function_app.proposal_thumbnail, proposal_id="P001", Host="foreign.example").status_code == 403
     view = payload(call(function_app.conversation))
     assert view["baseline"]["proposal_id"] == "P001"
     assert view["messages"][-1]["text"] == "Created P001."

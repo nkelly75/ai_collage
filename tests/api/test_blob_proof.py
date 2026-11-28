@@ -85,6 +85,8 @@ def test_cleanup_refuses_unexpected_inventory_and_deletes_completion_first(tmp_p
     (verification.DEV_ACCOUNT_URL + "/collage?restype=container&comp=list&prefix={namespace}/users/local-dev/published-elsewhere/", False),
     (verification.DEV_ACCOUNT_URL + "/collage?restype=container&comp=list&prefix={namespace}/users/", False),
     (verification.DEV_ACCOUNT_URL + "/collage/{namespace}/users/local-dev/published/proof.json", True),
+    (verification.DEV_ACCOUNT_URL + "/collage/{namespace}/users/local-dev/candidates/proof/" + "b" * 32 + "/conversation/proposals/P001/thumbnail.png", True),
+    (verification.DEV_ACCOUNT_URL + "/collage/{namespace}/users/local-dev/candidates/proof/" + "b" * 32 + "/conversation/proposals/P001/thumbnail-other.png", False),
     (verification.DEV_ACCOUNT_URL + "/other/blob", False),
     ("https://other.example/collage/blob", False),
 ])

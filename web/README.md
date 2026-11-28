@@ -37,6 +37,51 @@ Tests/lint are separate. `npm run dev` serves source with live updates;
 `npm run preview` serves the production build on loopback for inspection,
 not as a production server.
 
+### Local production UI measurements
+
+Stop the Vite development server with Ctrl+C first. From the repository root:
+
+```powershell
+$env:VITE_API_BASE_URL = 'http://127.0.0.1:7071'
+npm --prefix .\web run build
+npm --prefix .\web run preview -- --port 5173 --strictPort
+```
+
+Open **http://127.0.0.1:5173**, using the same browser/Network settings across
+rounds. The production bundle avoids React's development-only Strict Mode
+effect replay; preview still runs locally and is not Azure hosting.
+API configuration is captured when building, not when starting preview.
+Use the separately restarted API with a fresh `-MetricsPath` and `-Live` omitted.
+The stored-thumbnail milestone requires fresh supported projects in an explicit
+fresh Blob namespace; old Proposal/head versions are archives, not readable trial
+data. Keep `web-dev` and earlier trial namespaces untouched. For example, after
+separate authorization for the browser experiment:
+
+```powershell
+.\api\start.ps1 -StorageBackend Blob -BlobNamespace web-019d-thumbnails `
+  -MetricsPath "$env:TEMP\collage-019d-$([guid]::NewGuid().ToString('N')).jsonl"
+```
+
+Choose another fresh namespace if that example has already been used.
+Creating supported saved proposals first requires separate model-call authorization;
+this read-only launch does not seed a project or enable paid work.
+
+For an agreed read-only experiment, repeat Projects, reopen the saved project,
+view P001 and download its PNG, keeping the first pass separate from two
+repeats. Do not create, Send, Continue generation or change the editing source.
+Include a cold image load and distinguish history `/thumbnail` requests from
+Current collage/modal/download `/preview` requests. For duplicate conversation
+GETs, retain Network initiator stacks and the loaded production asset names.
+Compare Blob attempts **per route**, not only the grand total: development-only
+duplicate requests and browser image reuse can change request counts.
+Backend metrics do not establish browser transfer/paint time; retain Network
+observations and any timeout/recovery report as the cross-check.
+
+History uses persisted thumbnails; opening a historical modal, Current collage
+and Download PNG use the original full-resolution preview. An unavailable
+thumbnail stays explicit and can still be opened; it does not silently download
+full images for the history list.
+
 ## What to try
 
 1. **Projects** (`/`) loads saved IDs, photo counts and canvas dimensions from
@@ -58,7 +103,9 @@ not as a production server.
    `.collage-data-web` in default Local mode, separate from CLI stores.
    Explicit [Blob mode](../api/README.md#development-blob-mode) instead restores
    the same experience from the API's Blob namespace; Vite needs no storage
-   credentials or separate backend selector. Missing/invalid state and
+   credentials or separate backend selector. `.\api\start.ps1 -StorageBackend Blob`
+   uses the recorded development account and stable `web-dev` namespace;
+   `-BlobNamespace` selects a different workspace. Missing/invalid state and
    photo-load failures are visible. With live requests enabled, describe a
    layout using numbered photos or saved names, then **Send**. The UI shows
    **Understanding your request**, then the saved action/source/photo summary
@@ -165,8 +212,8 @@ or building to change it, then restart Vite. Values must be absolute HTTP(S)
 URLs without credentials. API addresses are public configuration, never secrets.
 There is no Vite proxy, credentialed fetch or redirect following.
 
-JSON/image-download reads and local selection POSTs are bounded to 10 seconds,
-creation to 60 seconds, interpretation
+JSON/image-download reads are bounded to 20 seconds, local selection POSTs
+to 10 seconds, creation to 60 seconds, interpretation
 POSTs to 160 seconds and generation POSTs to 220 seconds, including response
 body parsing. These are browser deadlines, not promises of model cancellation.
 The split JSON POST client sends only prompt/request identity/revision, or a

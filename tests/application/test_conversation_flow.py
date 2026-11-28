@@ -68,6 +68,51 @@ def two_proposals(flow):
         generate(flow, prepared, reply())
 
 
+def test_orphan_proposal_directory_is_not_a_committed_image(flow, monkeypatch):
+    prepared, _ = send(flow, "Make a collage", intent("fresh"))
+    original = Conversation._append
+
+    def fail_event(conversation, event, **updates):
+        if getattr(event, "outcome", None) == "proposal":
+            raise OSError("injected proposal event failure")
+        return original(conversation, event, **updates)
+
+    monkeypatch.setattr(Conversation, "_append", fail_event)
+    with pytest.raises(FlowError) as publication:
+        generate(flow, prepared, reply())
+    assert publication.value.code == "outcome_unknown" and publication.value.status == 500
+    directory = flow.store.project_dir("demo") / "conversation" / "proposals" / "P001"
+    assert (directory / "preview.png").exists() and (directory / "thumbnail.png").exists()
+    assert flow.detail("demo")["proposals"] == []
+    assert generate(flow, prepared)["status"] == "uncertain" and not flow.client.contexts
+    before = snapshot(flow.store.data_dir)
+    for delivery in (flow.preview, flow.thumbnail):
+        with pytest.raises(FlowError) as failure:
+            delivery("demo", "P001")
+        assert failure.value.status == 409 and failure.value.code == "invalid_preview"
+    assert snapshot(flow.store.data_dir) == before
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt", "oversized"])
+def test_local_thumbnail_errors_are_explicit_without_regeneration(flow, failure):
+    from ai_collage.agent.models import MAX_THUMBNAIL_BYTES
+
+    prepared, _ = send(flow, "Make a collage", intent("fresh"))
+    generate(flow, prepared, reply())
+    expected = flow.detail("demo")
+    path = flow.store.project_dir("demo") / "conversation" / "proposals" / "P001" / "thumbnail.png"
+    if failure == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(b"!" + path.read_bytes()[1:] if failure == "corrupt" else b"x" * (MAX_THUMBNAIL_BYTES + 1))
+        assert flow.detail("demo") == expected
+    before = snapshot(flow.store.data_dir)
+    with pytest.raises(FlowError) as unavailable:
+        flow.thumbnail("demo", "P001")
+    assert unavailable.value.code == "invalid_preview" and unavailable.value.status == 409
+    assert snapshot(flow.store.data_dir) == before
+
+
 def test_transcript_keeps_selection_activity_with_its_snapshot(flow, monkeypatch):
     two_proposals(flow)
     before = flow.detail("demo")

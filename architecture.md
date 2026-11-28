@@ -129,13 +129,32 @@ subscription-scoped `AzureCliCredential` and the fixed development container.
 SDK retries are disabled, with finite token/connection/read timeouts.
 CLI/replay do not use this API-side selection.
 
+The local launcher keeps Local as its default. Explicit `-StorageBackend Blob`
+supplies the recorded development target and stable `web-dev` namespace;
+`-BlobNamespace` selects an alternate workspace instead of inheriting a prior
+trial's namespace. Conflicting target environment settings are rejected.
+These values are process-local and restored on exit; the launcher performs no
+account discovery, sign-in or model preflight. Direct workers still require
+explicit Blob environment configuration.
+
+Opt-in local diagnostics belong to the API adapter, not the engine or
+persistence contracts. `request_metrics.py` uses request-local context across
+the async worker handoff and appends safe route/status/size/timing records to
+the launcher-selected JSONL file. `blob_metrics.py` decorates the existing
+transport (including any proof guard) and times complete metadata/list/read
+operations without changing retries, validation or storage behavior. Nested
+reads are not double-counted; transport attempts are not billing/budget counts.
+The browser Network panel supplies the separate host/transfer cross-check.
+Metrics are disabled normally and never send telemetry.
+
 Blob publication initially uploads original photos and normal project/state
 records under a unique candidate attempt, then conditionally creates one strict
-**version-2 storage head** under `published`. The head references immutable
-project/photos, state/events, attempts, operations/selections and proposal/PNG
+**version-3 storage head** under `published`. The head references immutable
+project/photos, state/events, attempts, operations/selections and proposal/PNG/thumbnail
 packages with digests and byte sizes. Keys derive from logical identities inside
-the selected owner/project namespace. Version 1 is rejected; old evidence stays
-untouched. Project/layout format 3 and conversation record version 8 are unchanged.
+the selected owner/project namespace. Older head versions are rejected; old evidence stays
+untouched. Proposal records use version 9; other conversation records remain version 8,
+and project/layout format 3 is unchanged.
 
 Each conversation mutation acquires a finite 60s lease on that head, with a
 bounded renewal helper while the request owns it. Every head update carries
@@ -149,8 +168,27 @@ browser revisions still exclude internal lease/ETag/attempt diagnostics.
 Validated bytes are reused in a request-local cache capped at 128 MiB; no
 persistent local cache is authoritative. Rendering uses owned temporary photo
 paths and the unchanged renderer, then removes scratch files.
-JSON/head IO is capped at 1 MiB, originals at 25 MiB and encoded previews at
-128 MiB; canvas axes remain at most 4096.
+The API's storage factory also bounds read-snapshot reuse to one request.
+Listing, detail loading and photo delivery reuse the same per-project head/
+session; project loading does not repeat the session's original-photo checks.
+Mutations discard any cached reader for that project before and after their
+fresh leased writer, and busy checks still read current lease status.
+Downloads use a bounded initial GET rather than a preceding HEAD, obtaining size
+and ETag from the same response. Subsequent SDK ranges stay pinned to that ETag.
+Original-photo property and fresh ownership checks remain separate HEADs.
+JSON/head IO is capped at 1 MiB, originals at 25 MiB, encoded previews at
+128 MiB and thumbnails at 512 KiB; canvas axes remain at most 4096.
+
+`storage.assets` provides shared bounded PNG validation, targeted commitment
+checks and deterministic Pillow thumbnail generation. Every new proposal publishes
+its full PNG, required thumbnail descriptor and stored thumbnail together. Thumbnails
+preserve aspect ratio, have a maximum edge of 320 pixels and never upscale.
+Conversation JSON validates logical history, recipes and asset references without
+reading image bodies. Image routes bind only the head/state/target event/proposal
+and requested asset; they do not reconstruct unrelated history or inspect originals.
+Local proves commitment from state/event membership, not a proposal directory.
+Asset delivery validates bytes, digest, format and dimensions; publication and
+mutation/source/acceptance paths retain full preview verification.
 
 Losing writers cannot publish or dispatch again; expired ownership does not
 reset paid claims. An ambiguous head response preserves potentially referenced
@@ -178,9 +216,10 @@ It is not an application budget service or evidence of user acceptance.
 3. Only the still-active initiating Send automatically POSTs generation. The
    application claims the saved handoff once, verifies its revision/source
    binding and invokes `Conversation.generate()` with captured limits.
-4. The agent validates/renders/publishes the ordinary immutable proposal.
+4. The agent validates/renders/publishes the ordinary immutable proposal package,
+   including its stored thumbnail.
    The application records its result reference, and read-only routes project
-   the transcript/current baseline and serve verified preview bytes.
+   the transcript/current baseline and serve verified preview or thumbnail bytes.
 
 Web-only, version-1 records under `web-operations` preserve submission identity,
 stage claims and result references. They are not another agent memory or a

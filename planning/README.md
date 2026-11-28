@@ -145,13 +145,13 @@ and user's acceptance**, without an additional trial. This closes the bounded
 018 local experience; storage/cloud work requires a separate scope and approval.
 
 [019: Storage abstraction and Blob persistence](019-storage-abstraction-and-blob-persistence.md)
-captures the next high-level direction and tentative increments; it is not an
-implementation specification or authorization. The
+is **complete and closed for bounded 019a-019d with user acceptance**;
+Azure hosting and authentication remain separate work. The
 [019a brief](019a-initial-local-storage-extraction.md) bounds an offline
 create/list/reopen/photo extraction, now complete and closed following offline
 verification and user acceptance; see [results](019a_results.md).
 019b proves that slice against Blob, 019c completes web persistence and 019d
-is optional measured performance work. Initial development
+finishes development launch convenience and measured performance work. Initial development
 [infrastructure](../infra/README.md) has been deployed with separate approval;
 019b's API-only implementation is separately approved and implemented;
 see [results](019b_results.md) for offline and successful real-account proof.
@@ -159,7 +159,21 @@ see [results](019b_results.md) for offline and successful real-account proof.
 was waived. [019c](019c-complete-web-persistence.md) is complete and closed
 following offline verification, its separately approved model-free real-account
 proof and successful user-led web testing with explicit acceptance.
-See [019c results](019c_results.md). Optional 019d remains deferred and unapproved.
+See [019c results](019c_results.md). 019d's launcher convenience and
+[opt-in request diagnostics](../api/README.md#lightweight-local-request-metrics)
+are approved and implemented offline. First user-led measurements identified
+expensive Blob read fan-out and a browser timeout. The approved small patch
+extends ordinary reads to 20s and removes duplicate metadata/head reads;
+the production-UI repeat is complete, with
+[initial results and improvement candidates](019d_results.md).
+The
+[read-path and stored-thumbnail brief](019d-measured-read-and-thumbnail-improvements.md)
+is **complete and closed**, following offline verification, fresh-project
+browser testing and the user's explicit closeout request. See the
+[results](019d_results.md) for controlled reductions, real-photo thumbnail
+measurements and production request observations. This closes overall 019,
+not authenticated deployment. Optional performance follow-ups are deferred;
+further implementation and live measurements require separate approval.
 
 ## Planning records
 
@@ -197,10 +211,12 @@ and record 003 spans several feature increments.
 | [018: Local conversation-and-preview experience](018-local-conversation-and-preview.md) | Complete and closed for the agreed local workflow; 018g satisfied by accumulated testing and user acceptance. | See the [018 tracker](018-local-conversation-and-preview.md); storage/cloud readiness remains separately scoped. |
 | [018f: Current collage, history and download](018f-current-collage-history-and-download.md) | Successfully completed and closed with manual sign-off and user-approved Demo retirement; [results](018f_results.md). | Simplified real-project workflow; future trials and Git writes remain separately authorized. |
 | [018g: Accumulated end-to-end validation](018g_results.md) | Satisfied and closed by existing user testing, focused fixes and acceptance; no repeated trial. | Closeout record, not a new implementation brief or model allowance. |
-| [019: Storage abstraction and Blob persistence](019-storage-abstraction-and-blob-persistence.md) | High-level direction: 019a local extraction, 019b initial Blob integration, 019c complete web persistence and optional 019d performance. | Detailed briefs and implementation approval remain separate. |
+| [019: Storage abstraction and Blob persistence](019-storage-abstraction-and-blob-persistence.md) | Complete and closed with user acceptance for 019a-019d. | Local/Blob persistence and measured performance complete; authentication and Azure hosting remain separate work. |
 | [019a: Initial local storage extraction](019a-initial-local-storage-extraction.md) | Complete and closed following offline verification and user acceptance. | See [results](019a_results.md); real Blob proof follows separately in 019b. |
 | [019b: Initial Blob integration](019b-blob-storage-implementation.md) | Complete and closed with explicit user acceptance; manual API repetition waived. | [Results](019b_results.md) record successful offline and separately approved real-account proof and closeout. [Infrastructure record](019b-initial-blob-integration.md) retains deployment facts. |
-| [019c: Complete web persistence](019c-complete-web-persistence.md) | Implemented and verified offline; not closed. | [Results](019c_results.md); full existing web workflow, fresh projects only. Real-account approval/proof and user-driven acceptance separately gated. |
+| [019c: Complete web persistence](019c-complete-web-persistence.md) | Complete and closed after offline/real-account verification and user acceptance. | [Results](019c_results.md); complete locally hosted web workflow with Blob persistence. |
+| [019d: Performance results](019d_results.md) | Complete and closed with user acceptance following offline/browser verification. | Preserved raw evidence, controlled transport reductions, real-photo thumbnails and production request observations. |
+| [019d: Measured reads and stored thumbnails](019d-measured-read-and-thumbnail-improvements.md) | Complete and closed with user acceptance. | Metadata-only snapshots, targeted image reads, bounded GETs and stored thumbnails; later optimization remains separate. |
 
 Historical status statements, instructions, and budgets apply only to their
 recorded increments. They do not authorize new implementation, service calls,

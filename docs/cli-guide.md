@@ -258,10 +258,14 @@ estimated. Machine-readable `unknown_usage_attempts` contains IDs, not a count.
 Model context includes up to three recent logical tasks plus up to twelve
 relevant compact task records, not the full audit log. Saved names persist separately.
 
-Current record versions: conversation/event/proposal/acceptance intent **8**,
+Current record versions: proposal **9**, conversation/event/acceptance intent **8**,
 replay report **9**, replay step/assessment **7**, request attempt **2**.
 Unsupported versions are untouched archives: use fresh conversational projects,
-not a migration. Supported format-3 deterministic recipes/snapshots remain usable.
+not a migration. Every new proposal includes its full PNG and a stored PNG thumbnail
+with a required size/dimension/digest descriptor bound to the full preview.
+Thumbnails preserve aspect ratio, do not upscale, have a maximum edge of 320 pixels
+and an encoded ceiling of 512 KiB. Reads never generate or backfill them.
+Supported format-3 deterministic recipes/snapshots remain usable.
 
 ### Repeatable prompt sequences
 
@@ -350,6 +354,7 @@ replay\steps\0001\context-0001.json
 replay\steps\0001\result.json
 conversation\proposals\P001\proposal.json
 conversation\proposals\P001\preview.png
+conversation\proposals\P001\thumbnail.png
 conversation\requests\attempt-0001.json
 ```
 

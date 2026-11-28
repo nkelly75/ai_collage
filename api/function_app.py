@@ -12,6 +12,7 @@ from ai_collage.application.projects import FlowError, ProjectFlow, ProjectSetup
 from ai_collage.application.conversation import ConversationFlow, GenerationRequest, SelectionSubmission, Submission
 from ai_collage.storage.contracts import StorageOutcomeUnknown, StorageUnavailable
 from storage_config import conversation_flow, project_flow
+from request_metrics import measure_request
 
 
 MAX_BODY_BYTES = 160 * 1024 * 1024
@@ -61,6 +62,18 @@ def create_project(req: func.HttpRequest, flow: ProjectFlow) -> dict:
 
 
 def dispatch(req: func.HttpRequest, operation: str) -> func.HttpResponse:
+    try:
+        with measure_request(req.method, operation) as metrics:
+            response = _dispatch_project(req, operation)
+            if metrics is not None:
+                metrics.complete(response.status_code, len(response.get_body()))
+                response.headers["X-Collage-Metrics-Id"] = metrics.identifier
+            return response
+    except FlowError as exc:
+        return request_error(exc)
+
+
+def _dispatch_project(req: func.HttpRequest, operation: str) -> func.HttpResponse:
     try:
         check_request(req)
         with project_flow() as flow:
@@ -139,7 +152,10 @@ def _dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpRe
                 return json_response(result, 201 if created else 200)
             if operation == "selection":
                 return json_response(flow.selection(project_id, req.route_params["action_id"]))
-            raw = flow.preview(project_id, req.route_params["proposal_id"])
+            raw = (
+                flow.thumbnail(project_id, req.route_params["proposal_id"]) if operation == "thumbnail"
+                else flow.preview(project_id, req.route_params["proposal_id"])
+            )
             return func.HttpResponse(raw, mimetype="image/png", headers={
                 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
             })
@@ -149,7 +165,15 @@ def _dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpRe
 
 async def dispatch_conversation(req: func.HttpRequest, operation: str) -> func.HttpResponse:
     # Rendering and snapshot validation must not occupy the Functions event loop.
-    return await asyncio.to_thread(_dispatch_conversation, req, operation)
+    try:
+        with measure_request(req.method, operation) as metrics:
+            response = await asyncio.to_thread(_dispatch_conversation, req, operation)
+            if metrics is not None:
+                metrics.complete(response.status_code, len(response.get_body()))
+                response.headers["X-Collage-Metrics-Id"] = metrics.identifier
+            return response
+    except FlowError as exc:
+        return request_error(exc)
 
 
 @app.route(route="projects", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -200,3 +224,8 @@ async def conversation_selection(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="projects/{project_id}/proposals/{proposal_id}/preview", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 async def proposal_preview(req: func.HttpRequest) -> func.HttpResponse:
     return await dispatch_conversation(req, "preview")
+
+
+@app.route(route="projects/{project_id}/proposals/{proposal_id}/thumbnail", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+async def proposal_thumbnail(req: func.HttpRequest) -> func.HttpResponse:
+    return await dispatch_conversation(req, "thumbnail")

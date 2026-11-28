@@ -206,3 +206,8 @@ export function previewUrl(id: string, proposalIdValue: string): string {
   if (!proposalId(proposalIdValue)) throw new ApiError('Invalid proposal ID.')
   return apiUrl(`${projectPath(id)}/proposals/${proposalIdValue}/preview`)
 }
+
+export function thumbnailUrl(id: string, proposalIdValue: string): string {
+  if (!proposalId(proposalIdValue)) throw new ApiError('Invalid proposal ID.')
+  return apiUrl(`${projectPath(id)}/proposals/${proposalIdValue}/thumbnail`)
+}

@@ -212,4 +212,6 @@ or additional scope were approved or implemented as part of closeout.
 
 Acceptance updates are documentation-only and unstaged. The user's staging,
 original photos, archived projects and earlier proof evidence are untouched.
-019c is accepted and closed; optional 019d remains deferred and unapproved.
+019c is accepted and closed. At closeout, optional 019d was deferred;
+subsequent development-launch/measurement scope is tracked in
+[019](019-storage-abstraction-and-blob-persistence.md).

@@ -17,6 +17,8 @@ from ..engine.projects import ProjectStore, read_json
 from ..agent.photo_references import memory_message, name_history, name_key, names_message, receipt_question
 from ..agent.task_history import task_records
 from .replay import ReplayReport, StepResult, authored_changes
+from ..storage.assets import read_image, read_preview, validate_preview, validate_thumbnail
+from ..agent.models import MAX_THUMBNAIL_BYTES
 
 Profile = Literal["integrity", "dark-portrait-adjustments", "photo-identity-memory"]
 
@@ -240,9 +242,10 @@ def _proposal(
     if (
         proposal.geometry != resolved.geometry
         or proposal.recipe_digest != digest(canonical(recipe))
-        or proposal.preview_digest != digest(child(directory, "preview.png").read_bytes())
     ):
         raise CollageError("Proposal geometry, recipe or preview identity mismatch.")
+    validate_preview(proposal, read_preview(child(directory, "preview.png")))
+    validate_thumbnail(proposal, read_image(child(directory, "thumbnail.png"), MAX_THUMBNAIL_BYTES))
     return resolved
 
 

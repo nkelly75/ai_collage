@@ -23,6 +23,10 @@ class PhotoNotFound(CollageError):
     """The project has no photo with this number."""
 
 
+class ProposalNotFound(CollageError):
+    """The project has no committed proposal with this ID."""
+
+
 class StorageUnavailable(Exception):
     """A storage operation failed without publishing a new project."""
 
@@ -58,6 +62,10 @@ class ConversationStorage(Protocol):
     def publish_proposal(self, proposal: Proposal, preview: Path) -> None: ...
 
     def preview(self, proposal_id: str) -> bytes: ...
+
+    def thumbnail(self, proposal_id: str) -> bytes: ...
+
+    def validate_assets(self, proposal: Proposal) -> None: ...
 
     def photo_paths(self) -> AbstractContextManager[Mapping[int, Path]]: ...
 

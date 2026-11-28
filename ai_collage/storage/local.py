@@ -17,19 +17,10 @@ from ..engine.imaging import load_photo
 from ..engine.models import MAX_FILE_BYTES, CollageError, PhotoSizeError, Project
 from ..engine.projects import ProjectStore, _write_json, read_json
 from .contracts import (
-    MAX_PREVIEW_BYTES, PhotoNotFound, ProjectExists, ProjectNotFound, RecordKind,
+    PhotoNotFound, ProjectExists, ProjectNotFound, RecordKind,
 )
-
-
-def read_preview(path: Path) -> bytes:
-    with path.open("rb") as stream:
-        size = os.fstat(stream.fileno()).st_size
-        if size > MAX_PREVIEW_BYTES:
-            raise CollageError("Preview exceeds the 128 MiB limit.")
-        raw = stream.read(size + 1)
-    if len(raw) != size:
-        raise CollageError("Preview changed during its bounded read.")
-    return raw
+from ..agent.models import MAX_THUMBNAIL_BYTES
+from .assets import read_image, read_preview, validate_preview, validate_thumbnail
 
 
 def record_parts(kind: RecordKind, identity: str) -> tuple[str, ...]:
@@ -93,13 +84,29 @@ class LocalConversationStorage:
         return nullcontext()
 
     def publish_proposal(self, proposal: Proposal, preview: Path) -> None:
+        validate_preview(proposal, read_preview(preview))
+        validate_thumbnail(proposal, read_image(preview.with_name("thumbnail.png"), MAX_THUMBNAIL_BYTES))
         destination = self.path("proposal", proposal.proposal_id).parent
         destination.parent.mkdir(parents=True, exist_ok=True)
         save(preview.parent / "proposal.json", proposal)
         preview.parent.rename(destination)
 
     def preview(self, proposal_id: str) -> bytes:
-        return read_preview(self.path("proposal", proposal_id).with_name("preview.png"))
+        proposal = Proposal.model_validate(self.read("proposal", proposal_id))
+        raw = read_preview(self.path("proposal", proposal_id).with_name("preview.png"))
+        validate_preview(proposal, raw)
+        return raw
+
+    def thumbnail(self, proposal_id: str) -> bytes:
+        proposal = Proposal.model_validate(self.read("proposal", proposal_id))
+        raw = read_image(self.path("proposal", proposal_id).with_name("thumbnail.png"), MAX_THUMBNAIL_BYTES)
+        validate_thumbnail(proposal, raw)
+        return raw
+
+    def validate_assets(self, proposal: Proposal) -> None:
+        directory = self.path("proposal", proposal.proposal_id).parent
+        if not (directory / "preview.png").is_file() or not (directory / "thumbnail.png").is_file():
+            raise CollageError("Published proposal image is missing.")
 
     @contextmanager
     def photo_paths(self):

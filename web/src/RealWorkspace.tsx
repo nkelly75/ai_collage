@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Badge, Button, Form, Modal, Spinner } from 'react-bootstrap'
-import { downloadCollage, previewUrl } from './conversationApi'
+import { downloadCollage, previewUrl, thumbnailUrl } from './conversationApi'
 import { PhotoStrip } from './PhotoStrip'
 import type { Project } from './projects'
 import { useConversation } from './useConversation'
@@ -60,7 +60,7 @@ function Thumbnail({ projectId, proposalId, onOpen }: { projectId: string; propo
   const [failed, setFailed] = useState(false)
   return <Button variant="link" className="history-thumbnail" aria-label={`View collage ${proposalId}`} onClick={onOpen}>
     {failed ? <span>Thumbnail unavailable; open saved preview.</span>
-      : <img loading="lazy" crossOrigin="anonymous" src={previewUrl(projectId, proposalId)}
+      : <img loading="lazy" crossOrigin="anonymous" src={thumbnailUrl(projectId, proposalId)}
         alt={`Collage ${proposalId} thumbnail`} onError={() => setFailed(true)} />}
     <span>Collage {proposalId}</span>
   </Button>

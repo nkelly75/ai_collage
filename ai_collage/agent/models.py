@@ -29,6 +29,22 @@ class Controls(Record):
 ProposalId = Annotated[str, Field(pattern=r"^P[0-9]{3,}$")]
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 Question = Annotated[str, Field(min_length=1, max_length=1000, pattern=r"\S")]
+THUMBNAIL_EDGE = 320
+MAX_THUMBNAIL_BYTES = 512 * 1024
+
+
+def thumbnail_dimensions(width: int, height: int) -> tuple[int, int]:
+    scale = min(1, THUMBNAIL_EDGE / max(width, height))
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+class Thumbnail(BaseModel):
+    model_config = Record.model_config
+    width: Annotated[int, Field(ge=1, le=THUMBNAIL_EDGE)]
+    height: Annotated[int, Field(ge=1, le=THUMBNAIL_EDGE)]
+    size: Annotated[int, Field(ge=1, le=MAX_THUMBNAIL_BYTES)]
+    sha256: Digest
+    source_preview_digest: Digest
 
 
 class PhotoReference(BaseModel):
@@ -262,6 +278,7 @@ class ConversationState(ConversationRecord):
 
 
 class Proposal(ConversationRecord):
+    record_version: Literal[9] = 9
     proposal_id: ProposalId
     turn_id: PositiveInt
     parent: ProposalId | None
@@ -271,6 +288,18 @@ class Proposal(ConversationRecord):
     geometry: list[LayerGeometry]
     recipe_digest: Digest
     preview_digest: Digest
+    thumbnail: Thumbnail
+
+    @model_validator(mode="after")
+    def thumbnail_identity(self) -> "Proposal":
+        if (
+            self.thumbnail.source_preview_digest != self.preview_digest
+            or (self.thumbnail.width, self.thumbnail.height) != thumbnail_dimensions(
+                self.recipe.canvas.width, self.recipe.canvas.height,
+            )
+        ):
+            raise ValueError("Thumbnail source or dimensions differ from its proposal.")
+        return self
 
 
 class Exchange(ConversationRecord):
